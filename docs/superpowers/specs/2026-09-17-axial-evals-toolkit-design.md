@@ -147,6 +147,11 @@ backoff, cost accounting from the response's own `usage`, caching, and — criti
 deterministic `FakeModel` for tests. The protocol is what keeps every other module ignorant
 of providers. Default judge model `claude-opus-5`, configurable per judge.
 
+Where a call must return JSON — a verdict, a taxonomy proposal — it is requested as a
+schema-validated structured output, falling back to a text parse for providers that cannot
+enforce one. The fallback is not vestigial: `unparseable` has to remain a real error class,
+because a judge that returned prose is a failed call, not a verdict.
+
 The served model is asserted against the requested model on every call; a provider fallback
 or capacity reroute fails the attempt loudly rather than quietly scoring a different model.
 
@@ -224,7 +229,9 @@ Test-driven, and hermetic by construction.
 ## Decisions taken
 
 - Package and CLI named `axial`; repo directory `evals`.
-- Python 3.11+, managed by uv. The system Python here is 3.9.6 and is not a target.
+- Python 3.14, managed by uv and pinned in `.python-version`; the published floor is
+  `>=3.13` so the package stays installable one version back, and CI tests both.
+  3.15 is still at beta, so it is not a target.
 - pytest, ruff, mypy. MIT licence.
 - `litellm` for model access, per explicit instruction, wrapped in a local protocol.
 - FastAPI + a single static HTML page for annotation — long multi-turn traces and JSON
