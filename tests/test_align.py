@@ -99,10 +99,11 @@ def test_ci_contains_every_key_even_when_a_metric_is_undefined():
 
 
 def test_wilson_interval_for_rare_positive_class_is_honestly_wide():
-    # Exactly the scenario the review measured: n=20 with a single real positive,
-    # where the old bootstrap censored roughly 36% of draws (any resample missing
-    # that one positive made tpr undefined). The point estimate is a deceptive 1.0;
-    # the interval must stay wide instead of quietly narrowing around it.
+    # The predicted series catches the single positive, so tp=1, fn=0, which means
+    # the TPR Wilson interval is computed at n=1 trial, not n=20. The interval's
+    # width comes from that single trial; the n_boot and seed arguments are
+    # decorative—Wilson does not resample. This ensures the interval stays wide
+    # instead of narrowing deceptively around the point estimate of 1.0.
     y_true = [True] + [False] * 19
     y_pred = [True] + [False] * 19
     a = align(y_true, y_pred, n_boot=500, seed=2)

@@ -200,10 +200,10 @@ def align(
         bt = [y_true[i] for i in idx]
         bp = [y_pred[i] for i in idx]
         sample = _point_estimates(bt, bp)
-        for key in boot_draws:
+        for key, values in boot_draws.items():
             value = sample[key]
             if not math.isnan(value):
-                boot_draws[key].append(value)
+                values.append(value)
 
     min_surviving = _MIN_SURVIVING_FRACTION * n_boot
     for key, values in boot_draws.items():
