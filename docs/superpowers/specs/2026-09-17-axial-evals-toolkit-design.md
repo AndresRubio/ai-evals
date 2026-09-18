@@ -36,6 +36,14 @@ The name is after axial coding, the step the tool exists to support.
   do not remove the human.
 - **EvalGen / "Who Validates the Validators?"** (Shankar et al., UIST 2024) established
   criteria drift and demonstrated the judge-alignment loop. Research prototype, unmaintained.
+- **Pydantic Evals** (MIT, part of Pydantic AI, usable offline — Logfire is optional) is the
+  best-engineered instance of the pattern this project is a reaction to. `Case`, `Dataset`,
+  `Evaluator`, an `LLMJudge` graded against a rubric you write, `generate_dataset()` for
+  synthesis, and span-based evaluators over OpenTelemetry. Verified absent: any discovery of
+  failure modes from traces, any human labelling surface, any train/dev/test split, and any
+  judge/human agreement measurement. Its LLM-judge page advises validating judges against
+  human-labelled sets in a single sentence of prose, with no API behind it. That sentence is
+  this project's scope.
 
 ## Sources
 
