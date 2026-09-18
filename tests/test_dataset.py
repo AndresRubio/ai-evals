@@ -145,6 +145,7 @@ MACHINE_LOOKING_ANNOTATORS = [
     "gemma-2-9b",
     "nova-pro",
     "titan-text",
+    "grok4",
     "llm-labeler",
     "model-output",
     "machine-labeled",
@@ -154,11 +155,14 @@ MACHINE_LOOKING_ANNOTATORS = [
     "judge-v2",
     "synthetic",
     "generated-label",
-    "ai",
     "axial-judge",
     "GPT_4o",
     "anthropic/claude",
 ]
+
+# "ai" used to be here, but it's a real Japanese given name and is no longer
+# refused on its own — see the "ai" rationale in axial/dataset.py, where it
+# was dropped from `_MACHINE_SEGMENT_TERMS` entirely (fix round 2, Fix 3).
 
 
 @pytest.mark.parametrize("annotator", MACHINE_LOOKING_ANNOTATORS)
@@ -168,7 +172,46 @@ def test_machine_looking_annotators_are_refused(tmp_path: Path, annotator: str):
         add_labels(store, "merged", labels(1, 1, annotator=annotator))
 
 
-PLAUSIBLE_HUMAN_ANNOTATORS = ["Aisha", "Kaito", "andres", "Ai Nakamura", "Roberto"]
+PLAUSIBLE_HUMAN_ANNOTATORS = [
+    "Aisha",
+    "Kaito",
+    "andres",
+    "Ai Nakamura",
+    "Roberto",
+    # Guard against a future widening of the vendor/segment term lists
+    # quietly refusing real names again (fix round 2, Fix 4). These are all
+    # real given/family names that happen to contain or equal a machine term.
+    "Sophie",
+    "Sophia",
+    "Philippa",
+    "Delphine",
+    "Josephine",
+    "Nova",
+    "Novak",
+    "Gemma",
+    "Palmer",
+    "Falconer",
+    "Bardia",
+    "Titania",
+    "Cohen",
+    "Autumn",
+    "Abbott",
+    "Talbot",
+    "Agnes",
+    "Modelina",
+    "Aiden",
+    "Naomi",
+    "Ai",
+    "Oliver",
+    "Bernard",
+    "s.philips",
+    "p.nova",
+    "d.palmer",
+    "j.falconer",
+    "a.nakamura",
+    "jsmith",
+    "m-patel",
+]
 
 
 @pytest.mark.parametrize("annotator", PLAUSIBLE_HUMAN_ANNOTATORS)

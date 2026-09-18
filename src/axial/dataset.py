@@ -33,6 +33,9 @@ from axial.store import Store
 # stripped), because they are unlikely to appear inside a real human name and
 # stripping digits catches version suffixes and mild obfuscation ("gpt-4o",
 # "cla8ude", "llama-3-70b") without having to enumerate every version number.
+# An empirical probe of real human names found no false positive from any of
+# these (notably "cohere" does not match "Cohen") — the ones that did collide
+# with real names live in `_MACHINE_VENDOR_SEGMENT_TERMS` below instead.
 _MACHINE_SUBSTRING_TERMS = frozenset(
     {
         "gpt",
@@ -41,39 +44,80 @@ _MACHINE_SUBSTRING_TERMS = frozenset(
         "sonnet",
         "haiku",
         "gemini",
-        "bard",
-        "palm",
         "llama",
         "mistral",
         "mixtral",
-        "grok",
         "deepseek",
         "qwen",
-        "command",
         "cohere",
-        "phi",
-        "falcon",
         "vicuna",
-        "gemma",
-        "nova",
-        "titan",
     }
 )
 
-# OpenAI's "o" series is a family of its own, and it cannot be folded into the
-# digit-stripped substring check above: stripping the digit from "o1"/"o3"/"o4"
-# would leave the single letter "o", which is far too common to match safely.
-# So these are matched as literal substrings (digit included) against the
-# *un-stripped* normalised annotator instead.
-_MACHINE_RAW_SUBSTRING_TERMS = frozenset({"o1", "o3", "o4"})
+# OpenAI's "o" series is a family of its own. It used to be matched as a raw,
+# digit-included substring, but that refused any name that merely *contained*
+# "o1"/"o3"/"o4" as a run of characters, with no regard for word boundaries —
+# e.g. "o1iver" or "Theo3dore". Matched as a whole "-"-delimited segment
+# instead, so the digits have to stand on their own. Digit-stripping isn't an
+# option here: stripping the digit from "o1"/"o3"/"o4" would leave the single
+# letter "o", far too common to trust, so these are compared against the
+# *un-stripped* segment and (unlike the vendor-family terms below) match
+# wherever they appear, single segment or not — a bare "o3" is exactly as
+# suspicious as "o3" inside "o3-mini".
+_MACHINE_RAW_SEGMENT_TERMS = frozenset({"o1", "o3", "o4"})
+
+# Vendor/family terms that collide with real given and family names when
+# matched as a plain substring or a plain segment: an empirical probe found
+# "phi" refusing the entire Soph-/Phil-/-phine family, and "nova", "gemma",
+# "palm", "bard", "titan", "falcon", "command", and "grok" refusing Nova,
+# Novak, Gemma, Palmer, Bardia, Titania, Falconer, Grokowski, and usernames
+# like "p.nova" and "d.palmer". Every real model name in this family is
+# separator-delimited with the family name leading a version/qualifier
+# segment ("phi-3-mini", "nova-pro", "falcon-40b", "command-r-plus", ...), so
+# a match here requires *all* of:
+#   - the term equals the FIRST "-"-delimited segment, digit-stripped (so
+#     "grok-4" and the run-together "grok4" both match on "grok", but a
+#     trailing/inner occurrence — "p-nova", "d-palmer" — does not, because
+#     real vendor names never trail an unrelated segment); and
+#   - either there is more than one segment (so "nova-pro" matches), or this
+#     lone segment needed digit-stripping to reach the term (so "grok4"
+#     matches). A clean, undecorated single-word match ("Nova", "Gemma") is
+#     just as likely to be a genuine given name as a machine label, so it is
+#     not trusted on its own — see the module docstring's false-positive/
+#     false-negative tradeoff.
+# Unseparated run-together forms like "phi3mini" escape this; that's
+# acceptable and squarely inside the "speed bump, not a security boundary"
+# framing above.
+_MACHINE_VENDOR_SEGMENT_TERMS = frozenset(
+    {
+        "phi",
+        "nova",
+        "gemma",
+        "palm",
+        "bard",
+        "titan",
+        "falcon",
+        "command",
+        "grok",
+    }
+)
 
 # Generic markers, short or common enough that a substring match would catch
-# plain human names mid-word (e.g. "ai" inside "Aisha" or "Kaito", "bot" inside
-# "Abbott"). These are only refused when they appear as a whole "-"-delimited
+# plain human names mid-word (e.g. "bot" inside "Abbott", "auto" inside
+# "Autumn"). These are only refused when they appear as a whole "-"-delimited
 # segment of the normalised annotator name, never as a raw substring.
+#
+# "ai" used to live in this set too, matched only when it was the *entire*
+# annotator name — refusing bare "Ai" (a real Japanese given name) while
+# letting "Ai Nakamura" through unrefused. That's backwards: the single-
+# segment case is exactly the one most likely to be a genuine short given
+# name, not less likely. Rather than flip the asymmetry the other way (which
+# would start refusing "Ai Nakamura" instead), "ai" is no longer trusted as
+# machine-name evidence in either shape. It is too short and too common a
+# name/initial to carry this signal on its own, and a quiet false negative
+# here is exactly the tradeoff this module's docstring says to accept.
 _MACHINE_SEGMENT_TERMS = frozenset(
     {
-        "ai",
         "llm",
         "model",
         "machine",
@@ -87,17 +131,13 @@ _MACHINE_SEGMENT_TERMS = frozenset(
     }
 )
 
-# Segment terms of two characters or fewer ("ai") are themselves real given
-# names or initials (e.g. "Ai Nakamura"), so a whole-segment match on one of
-# these is only trusted when it is the *entire* annotator name, not one token
-# among several. Longer segment terms ("judge", "synthetic", ...) are safe to
-# match as a segment anywhere in the name.
-_SHORT_SEGMENT_TERM_MAX_LEN = 2
-
 # Kept for backward compatibility / introspection: the full family of terms
-# this module refuses, across all three matching strategies above.
+# this module refuses, across all matching strategies above.
 MACHINE_ANNOTATORS = frozenset(
-    _MACHINE_SUBSTRING_TERMS | _MACHINE_RAW_SUBSTRING_TERMS | _MACHINE_SEGMENT_TERMS
+    _MACHINE_SUBSTRING_TERMS
+    | _MACHINE_RAW_SEGMENT_TERMS
+    | _MACHINE_VENDOR_SEGMENT_TERMS
+    | _MACHINE_SEGMENT_TERMS
 )
 
 MIN_USABLE_LABELS = 60
@@ -119,14 +159,17 @@ def _looks_machine(annotator: str) -> bool:
 
     if any(term in digit_stripped for term in _MACHINE_SUBSTRING_TERMS):
         return True
-    if any(term in normalized for term in _MACHINE_RAW_SUBSTRING_TERMS):
+    if any(term in segments for term in _MACHINE_RAW_SEGMENT_TERMS):
         return True
-    for term in _MACHINE_SEGMENT_TERMS:
-        if term not in segments:
-            continue
-        if len(term) <= _SHORT_SEGMENT_TERM_MAX_LEN and len(segments) != 1:
-            continue
+    if any(term in segments for term in _MACHINE_SEGMENT_TERMS):
         return True
+    if segments:
+        first_raw = segments[0]
+        first_stripped = re.sub(r"\d+", "", first_raw)
+        if first_stripped in _MACHINE_VENDOR_SEGMENT_TERMS and (
+            len(segments) > 1 or first_raw != first_stripped
+        ):
+            return True
     return False
 
 
