@@ -117,3 +117,91 @@ def test_make_splits_warns_below_the_usable_floor(tmp_path: Path):
     store = Store(tmp_path)
     with pytest.warns(UserWarning, match="60"):
         make_splits(store, labels(5, 5), seed=1)
+
+
+MACHINE_LOOKING_ANNOTATORS = [
+    "gpt4o",
+    "gpt-4",
+    "o1-preview",
+    "o3",
+    "o4-mini",
+    "claude-opus-5",
+    "claude-sonnet-4",
+    "claude-haiku",
+    "gemini-2.5-pro",
+    "bard-legacy",
+    "palm-2",
+    "llama-3-70b",
+    "mistral-large",
+    "mixtral-8x7b",
+    "grok-4",
+    "deepseek-v3",
+    "qwen-72b",
+    "command-r-plus",
+    "cohere-classify",
+    "phi-3-mini",
+    "falcon-40b",
+    "vicuna-13b",
+    "gemma-2-9b",
+    "nova-pro",
+    "titan-text",
+    "llm-labeler",
+    "model-output",
+    "machine-labeled",
+    "auto-generated",
+    "review-bot",
+    "agent-x",
+    "judge-v2",
+    "synthetic",
+    "generated-label",
+    "ai",
+    "axial-judge",
+    "GPT_4o",
+    "anthropic/claude",
+]
+
+
+@pytest.mark.parametrize("annotator", MACHINE_LOOKING_ANNOTATORS)
+def test_machine_looking_annotators_are_refused(tmp_path: Path, annotator: str):
+    store = Store(tmp_path)
+    with pytest.raises(InvariantViolation, match="human"):
+        add_labels(store, "merged", labels(1, 1, annotator=annotator))
+
+
+PLAUSIBLE_HUMAN_ANNOTATORS = ["Aisha", "Kaito", "andres", "Ai Nakamura", "Roberto"]
+
+
+@pytest.mark.parametrize("annotator", PLAUSIBLE_HUMAN_ANNOTATORS)
+def test_plausible_human_names_are_not_refused(tmp_path: Path, annotator: str):
+    store = Store(tmp_path)
+    add_labels(store, "merged", labels(1, 1, annotator=annotator))  # no raise
+
+
+def test_validation_happens_before_any_write(tmp_path: Path):
+    store = Store(tmp_path)
+    batch = [
+        Label(trace_id="ok", label=True, critique="a real critique", annotator="andres"),
+        Label(trace_id="bad", label=False, critique="", annotator="andres"),
+    ]
+    labels_path = store.dataset_dir("merged") / "labels.jsonl"
+    with pytest.raises(InvariantViolation, match="critique"):
+        add_labels(store, "merged", batch)
+    assert not labels_path.exists()
+
+
+def test_save_raises_when_supplied_test_hash_disagrees_with_ids(tmp_path: Path):
+    store = Store(tmp_path)
+    splits = make_splits(store, labels(40, 40), seed=1)
+    tampered = splits.model_copy(update={"test_hash": "not-the-real-hash"})
+    with pytest.raises(InvariantViolation, match="test_hash"):
+        tampered.save(store, "merged")
+
+
+def test_save_recomputes_hash_when_given_an_empty_test_hash(tmp_path: Path):
+    store = Store(tmp_path)
+    splits = make_splits(store, labels(40, 40), seed=1)
+    blank = splits.model_copy(update={"test_hash": ""})
+    blank.save(store, "merged")
+    loaded = Splits.load(store, "merged")
+    assert loaded.test_hash == store.hash_ids(splits.test)
+    assert loaded.test_hash != ""

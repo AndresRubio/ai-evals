@@ -5,10 +5,20 @@ judge aligned to machine labels is aligned to itself. And the test split is
 write-once: once saved, it can only be re-saved identically, so a number reported
 against test cannot quietly become a number reported against a split redrawn until
 it flattered the judge.
+
+The machine-annotator check is a speed bump, not a security boundary. It is a
+name-pattern match against a family list of known model/vendor terms, and it errs
+broad on purpose: a false negative here silently poisons ground truth, so every
+downstream alignment number becomes self-referential. A false positive is loud and
+a human can work around it by picking a different annotator name. But name-pattern
+matching cannot stop someone determined to record machine output under a human
+name — if that is a real risk for your team, label the data yourself, or record the
+machine's output as a judge run to be validated, not as ground truth.
 """
 
 from __future__ import annotations
 
+import re
 import warnings
 from datetime import UTC, datetime
 
@@ -18,11 +28,106 @@ from pydantic import BaseModel, Field
 from axial.errors import InvariantViolation
 from axial.store import Store
 
+# Distinctive vendor/model terms. These are matched as a substring of the
+# annotator name (after separators are normalised to "-" and digits are
+# stripped), because they are unlikely to appear inside a real human name and
+# stripping digits catches version suffixes and mild obfuscation ("gpt-4o",
+# "cla8ude", "llama-3-70b") without having to enumerate every version number.
+_MACHINE_SUBSTRING_TERMS = frozenset(
+    {
+        "gpt",
+        "claude",
+        "opus",
+        "sonnet",
+        "haiku",
+        "gemini",
+        "bard",
+        "palm",
+        "llama",
+        "mistral",
+        "mixtral",
+        "grok",
+        "deepseek",
+        "qwen",
+        "command",
+        "cohere",
+        "phi",
+        "falcon",
+        "vicuna",
+        "gemma",
+        "nova",
+        "titan",
+    }
+)
+
+# OpenAI's "o" series is a family of its own, and it cannot be folded into the
+# digit-stripped substring check above: stripping the digit from "o1"/"o3"/"o4"
+# would leave the single letter "o", which is far too common to match safely.
+# So these are matched as literal substrings (digit included) against the
+# *un-stripped* normalised annotator instead.
+_MACHINE_RAW_SUBSTRING_TERMS = frozenset({"o1", "o3", "o4"})
+
+# Generic markers, short or common enough that a substring match would catch
+# plain human names mid-word (e.g. "ai" inside "Aisha" or "Kaito", "bot" inside
+# "Abbott"). These are only refused when they appear as a whole "-"-delimited
+# segment of the normalised annotator name, never as a raw substring.
+_MACHINE_SEGMENT_TERMS = frozenset(
+    {
+        "ai",
+        "llm",
+        "model",
+        "machine",
+        "auto",
+        "bot",
+        "agent",
+        "judge",
+        "synthetic",
+        "generated",
+        "axial",
+    }
+)
+
+# Segment terms of two characters or fewer ("ai") are themselves real given
+# names or initials (e.g. "Ai Nakamura"), so a whole-segment match on one of
+# these is only trusted when it is the *entire* annotator name, not one token
+# among several. Longer segment terms ("judge", "synthetic", ...) are safe to
+# match as a segment anywhere in the name.
+_SHORT_SEGMENT_TERM_MAX_LEN = 2
+
+# Kept for backward compatibility / introspection: the full family of terms
+# this module refuses, across all three matching strategies above.
 MACHINE_ANNOTATORS = frozenset(
-    {"gpt", "gpt-4", "gpt-4o", "claude", "llm", "model", "machine", "auto", "axial"}
+    _MACHINE_SUBSTRING_TERMS | _MACHINE_RAW_SUBSTRING_TERMS | _MACHINE_SEGMENT_TERMS
 )
 
 MIN_USABLE_LABELS = 60
+
+_SEPARATOR_RE = re.compile(r"[_/.\s]+")
+
+
+def _looks_machine(annotator: str) -> bool:
+    """Return True if `annotator` matches the machine-annotator family list.
+
+    This is a name-pattern heuristic, not proof of authorship: it exists to
+    catch the obvious, common cases (a model's own name or an obvious
+    "bot"/"synthetic"/"judge" label left in the annotator field), not to
+    withstand someone determined to record machine output under a human name.
+    """
+    normalized = _SEPARATOR_RE.sub("-", annotator.strip().lower())
+    segments = [s for s in normalized.split("-") if s]
+    digit_stripped = re.sub(r"\d+", "", normalized)
+
+    if any(term in digit_stripped for term in _MACHINE_SUBSTRING_TERMS):
+        return True
+    if any(term in normalized for term in _MACHINE_RAW_SUBSTRING_TERMS):
+        return True
+    for term in _MACHINE_SEGMENT_TERMS:
+        if term not in segments:
+            continue
+        if len(term) <= _SHORT_SEGMENT_TERM_MAX_LEN and len(segments) != 1:
+            continue
+        return True
+    return False
 
 
 def _now() -> str:
@@ -44,11 +149,15 @@ def _check_human(label: Label) -> None:
             f"label for {label.trace_id!r} has no annotator; every label must name the "
             "human who made it"
         )
-    stem = annotator.lower().split("-")[0].split("/")[-1]
-    if stem in MACHINE_ANNOTATORS or annotator.lower() in MACHINE_ANNOTATORS:
+    if _looks_machine(annotator):
         raise InvariantViolation(
             f"annotator {annotator!r} looks like a model, not a human. Ground-truth labels "
-            "must be human. A judge aligned to machine labels is aligned to itself."
+            "must be human, because a judge aligned to machine labels is aligned to itself. "
+            "This is a name-pattern speed bump, not a security boundary — it catches the "
+            "obvious cases and nothing more; someone determined to record machine labels "
+            "under a human name can. If that's a real concern here, label the data yourself, "
+            "or record the machine's output as a judge run to be validated, not as ground "
+            "truth."
         )
     if not label.critique.strip():
         raise InvariantViolation(
@@ -85,6 +194,15 @@ class Splits(BaseModel):
     test_hash: str = ""
 
     def save(self, store: Store, mode: str) -> None:
+        recomputed_hash = store.hash_ids(self.test)
+        if self.test_hash and self.test_hash != recomputed_hash:
+            raise InvariantViolation(
+                f"the supplied test_hash {self.test_hash!r} does not match the hash "
+                f"recomputed from this split's own test ids ({recomputed_hash!r}). A "
+                "caller who supplies a test_hash means something by it, so this is refused "
+                "rather than silently repaired — pass an empty test_hash to have it "
+                "computed for you, or fix the mismatch."
+            )
         path = store.dataset_dir(mode) / "splits.json"
         if path.exists():
             previous = Splits.model_validate(store.read_json(path))
@@ -94,7 +212,8 @@ class Splits(BaseModel):
                     "Redrawing it invalidates every number previously reported against it. "
                     "Delete it deliberately if you really mean to start over."
                 )
-        store.write_json(path, self.model_dump())
+        to_store = self.model_copy(update={"test_hash": recomputed_hash})
+        store.write_json(path, to_store.model_dump())
 
     @classmethod
     def load(cls, store: Store, mode: str) -> Splits:
@@ -144,11 +263,23 @@ def make_splits(
 
 
 def verify_test_manifest(store: Store, mode: str) -> None:
+    """Check that the saved test split's ids still match its recorded hash.
+
+    Both the ids and the hash live in the same file, and the hash is an unkeyed,
+    truncated sha256 of the ids — so this can only catch a *partial* edit, one
+    that adds or removes an id without recomputing test_hash to match. It
+    cannot catch a full rewrite that recomputes the hash correctly, deletion
+    and regeneration of the whole split, or drift from a number published
+    elsewhere. It is a tripwire for accidental or careless edits, not
+    cryptographic tamper evidence.
+    """
     splits = Splits.load(store, mode)
     if store.hash_ids(splits.test) != splits.test_hash:
         raise InvariantViolation(
-            f"the test split for {mode!r} does not match its recorded hash — it has been "
-            "edited since it was frozen. Every number reported against it is suspect."
+            f"the test split for {mode!r} does not match its recorded hash — some ids were "
+            "added or removed without updating test_hash to match. This only catches that "
+            "kind of partial edit, not a full rewrite with a recomputed hash, so treat this "
+            "as a sign of accidental tampering, not proof there was none."
         )
 
 
