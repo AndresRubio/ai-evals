@@ -8,6 +8,7 @@ served-model check in a single place instead of scattered through the pipeline.
 from __future__ import annotations
 
 import random
+import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -28,13 +29,52 @@ class ServedModelMismatch(AxialError):
 
 @dataclass(frozen=True)
 class Completion:
+    """A model response.
+
+    `stop_reason` values follow litellm's normalised OpenAI shape (e.g. "stop",
+    "length"), not Anthropic-native naming, since `LiteLLMModel` is the only
+    real producer of this field and never emits the latter.
+    """
+
     text: str
     model: str
     usage: dict[str, int] = field(default_factory=dict)
-    stop_reason: str = "end_turn"
+    stop_reason: str = "stop"
     truncated: bool = False
     attempts: int = 1
     latency_s: float = 0.0
+
+
+_DATED_SNAPSHOT_SUFFIX = re.compile(r"^(?P<base>.+)-\d{8}$")
+
+
+def _normalise_model_id(model_id: str) -> str:
+    """Strip a provider/routing prefix from a model id.
+
+    `anthropic/claude-opus-5` and `bedrock.claude-opus-5` both reduce to
+    `claude-opus-5` by taking the segment after the last `/` and after the
+    last `.`.
+    """
+    return model_id.rsplit("/", 1)[-1].rsplit(".", 1)[-1]
+
+
+def _served_model_matches(requested: str, served: str) -> bool:
+    """Check whether a served model id is an acceptable match for the requested one.
+
+    A bare prefix match (`served.startswith(requested)`) is not enough: it lets a
+    genuinely different model through whenever it shares a prefix, e.g. requested
+    `gpt-4` served `gpt-4o`, or requested `claude-opus-5` served
+    `claude-opus-5-legacy` — exactly the substitution this check exists to catch.
+    So both sides are normalised the same way and compared for exact equality,
+    with one documented exception: a served id equal to the requested id plus a
+    trailing `-YYYYMMDD` is an accepted alias-to-snapshot resolution.
+    """
+    norm_requested = _normalise_model_id(requested)
+    norm_served = _normalise_model_id(served)
+    if norm_served == norm_requested:
+        return True
+    match = _DATED_SNAPSHOT_SUFFIX.match(norm_served)
+    return bool(match) and match.group("base") == norm_requested
 
 
 class Model(Protocol):
@@ -56,10 +96,12 @@ class FakeModel:
         *,
         model: str = "fake",
         fail_times: int = 0,
+        truncated: bool = False,
     ) -> None:
         self._responses = responses
         self._model = model
         self._fail_times = fail_times
+        self._truncated = truncated
         self.calls: list[str] = []
         self.schemas: list[type[BaseModel] | None] = []
 
@@ -81,6 +123,8 @@ class FakeModel:
             text=text,
             model=self._model,
             usage={"input_tokens": max(1, len(prompt) // 4), "output_tokens": max(1, len(text) // 4)},
+            stop_reason="length" if self._truncated else "stop",
+            truncated=self._truncated,
             attempts=attempts,
         )
 
@@ -94,11 +138,15 @@ class LiteLLMModel:
         *,
         max_retries: int = 3,
         timeout_s: float = 120.0,
-        seed: int = 0,
+        seed: int | None = None,
     ) -> None:
         self.model = model
         self.max_retries = max_retries
         self.timeout_s = timeout_s
+        # `seed=None` (the production default) seeds `random.Random` from OS entropy,
+        # so concurrent instances draw independent backoff sequences instead of
+        # retrying in lockstep against a shared rate limit. Pass an int only in
+        # tests, where a reproducible sequence is the point.
         self._rng = random.Random(seed)
 
     def complete(
@@ -142,7 +190,7 @@ class LiteLLMModel:
                 continue
 
             served = getattr(response, "model", self.model) or self.model
-            if not served.startswith(self.model.split("/")[-1]) and served != self.model:
+            if not _served_model_matches(self.model, served):
                 raise ServedModelMismatch(
                     f"requested {self.model!r} but the provider served {served!r}"
                 )
