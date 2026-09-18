@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Callable
+from typing import Any
 
 import yaml
 from pydantic import BaseModel, Field
@@ -89,12 +90,13 @@ def saturation_curve(reviews: list[Review]) -> list[int]:
     return curve
 
 
-def _extract_json(text: str) -> dict:
+def _extract_json(text: str) -> dict[str, Any]:
     match = re.search(r"\{.*\}", text, re.DOTALL)
     if not match:
         raise ValueError(f"could not parse a taxonomy from the model output: {text[:200]!r}")
     try:
-        return json.loads(match.group(0))
+        payload: dict[str, Any] = json.loads(match.group(0))
+        return payload
     except json.JSONDecodeError as exc:
         raise ValueError(f"could not parse a taxonomy from the model output: {exc}") from exc
 

@@ -167,3 +167,106 @@ def test_spec_round_trips(tmp_path: Path):
     s = spec(few_shot_ids=["t1"])
     s.save(store)
     assert JudgeSpec.load(store, "merged", 1) == s
+
+
+# --- Fix 1: few-shot resolution must use the full corpus, not the judged split ---
+
+
+def test_few_shot_resolves_against_the_corpus_and_reaches_the_prompt(tmp_path: Path):
+    """A train id is never in the split being judged; resolving it needs `corpus`."""
+    store = Store(tmp_path)
+    splits = Splits(train=["t1"], dev=["t2"], test=[])
+    s = spec(few_shot_ids=["t1"])
+    labels = [label(1, True), label(2, False)]
+    corpus = [trace(1), trace(2)]
+    model = FakeModel(lambda _p: '{"verdict": "pass"}')
+    run_judge(
+        store, s, [trace(2)], labels, splits, model, split="dev", corpus=corpus,
+    )
+    assert any("in1" in call for call in model.calls)
+
+
+def test_a_few_shot_id_missing_from_the_corpus_is_refused(tmp_path: Path):
+    store = Store(tmp_path)
+    splits = Splits(train=["t1"], dev=["t2"], test=[])
+    s = spec(few_shot_ids=["tX"])
+    labels = [label(2, False)]
+    with pytest.raises(InvariantViolation, match="tX"):
+        run_judge(
+            store, s, [trace(2)], labels, splits,
+            FakeModel(lambda _p: '{"verdict": "pass"}'), split="dev",
+        )
+
+
+def test_a_few_shot_id_missing_its_label_is_refused(tmp_path: Path):
+    store = Store(tmp_path)
+    splits = Splits(train=["t1"], dev=["t2"], test=[])
+    s = spec(few_shot_ids=["t1"])
+    corpus = [trace(1), trace(2)]
+    with pytest.raises(InvariantViolation, match="t1"):
+        run_judge(
+            store, s, [trace(2)], [label(2, False)], splits,
+            FakeModel(lambda _p: '{"verdict": "pass"}'), split="dev", corpus=corpus,
+        )
+
+
+def test_a_resolved_few_shot_id_outside_train_still_refuses_through_run_judge(tmp_path: Path):
+    """The train-only guarantee must fire through run_judge, not only via a direct call."""
+    store = Store(tmp_path)
+    splits = Splits(train=["t1"], dev=["t2"], test=[])
+    s = spec(few_shot_ids=["t2"])
+    labels = [label(1, True), label(2, False)]
+    corpus = [trace(1), trace(2)]
+    with pytest.raises(InvariantViolation, match="train"):
+        run_judge(
+            store, s, [trace(1)], labels, splits,
+            FakeModel(lambda _p: '{"verdict": "pass"}'), split="dev", corpus=corpus,
+        )
+
+
+# --- Fix 2: `assemble_prompt` cannot silently skip enforcement ---
+
+
+def test_assemble_prompt_refuses_few_shot_with_no_splits_declared():
+    with pytest.raises(InvariantViolation):
+        assemble_prompt(spec(), trace(9), few_shot=[(trace(1), label(1, True))])
+
+
+# --- Fix 3: an unlabelled trace must not produce a `truth: None` verdict row ---
+
+
+def test_an_unlabelled_trace_becomes_an_error_row_not_a_null_truth_verdict(tmp_path: Path):
+    store = Store(tmp_path)
+    splits = Splits(train=[], dev=["t1"], test=[])
+    model = FakeModel(lambda _p: '{"verdict": "pass"}')
+    result = run_judge(store, spec(), [trace(1)], [], splits, model, split="dev")
+    assert result.verdicts == []
+    assert len(result.errors) == 1
+    assert result.errors[0]["failure_class"] == "unlabelled"
+
+
+# --- Fix 4: the truncated branch must be exercised ---
+
+
+def test_a_truncated_completion_becomes_an_error_row(tmp_path: Path):
+    store = Store(tmp_path)
+    splits = Splits(train=[], dev=["t1"], test=[])
+    model = FakeModel(lambda _p: "", truncated=True)
+    result = run_judge(store, spec(), [trace(1)], [label(1, True)], splits, model, split="dev")
+    assert result.verdicts == []
+    assert len(result.errors) == 1
+    assert result.errors[0]["failure_class"] == "truncated"
+
+
+# --- Fix 5: a bad prompt template must not abort the whole run ---
+
+
+def test_a_bad_prompt_template_becomes_an_error_row_not_a_crash(tmp_path: Path):
+    store = Store(tmp_path)
+    splits = Splits(train=[], dev=["t1"], test=[])
+    bad_spec = spec(prompt_template="Grade: {not_a_real_field}\n{few_shot}\n{input}\n{output}")
+    model = FakeModel(lambda _p: '{"verdict": "pass"}')
+    result = run_judge(store, bad_spec, [trace(1)], [label(1, True)], splits, model, split="dev")
+    assert result.verdicts == []
+    assert len(result.errors) == 1
+    assert result.errors[0]["failure_class"] == "bad_template"

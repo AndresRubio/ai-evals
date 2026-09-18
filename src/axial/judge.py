@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, Field
@@ -85,6 +85,14 @@ def assemble_prompt(
     few_shot: list[tuple[Trace, Label]],
     splits: Splits | None = None,
 ) -> str:
+    if few_shot and splits is None:
+        raise InvariantViolation(
+            "few-shot examples were supplied but no splits were given to check them "
+            "against. There is no legitimate way to use few-shot examples without "
+            "declaring which split they came from — pass `splits` so the train-only "
+            "guarantee can be enforced."
+        )
+
     if splits is not None:
         train = set(splits.train)
         for example, _ in few_shot:
@@ -130,8 +138,8 @@ def parse_verdict(text: str) -> bool:
 
 @dataclass
 class RunResult:
-    verdicts: list[dict] = field(default_factory=list)
-    errors: list[dict] = field(default_factory=list)
+    verdicts: list[dict[str, Any]] = field(default_factory=list)
+    errors: list[dict[str, Any]] = field(default_factory=list)
 
 
 def run_judge(
@@ -144,18 +152,54 @@ def run_judge(
     *,
     split: str,
     max_tokens: int = 512,
+    corpus: list[Trace] | None = None,
 ) -> RunResult:
-    by_id = {t.trace_id: t for t in traces}
+    """Run `spec` over `traces`, writing verdict and error rows to `store`.
+
+    `corpus` is the full trace set to resolve few-shot examples against — it
+    defaults to `traces`, but a real run judges one split at a time, and a
+    few-shot id almost always names a trace from train, not from the split
+    under judgment. Passing only `traces` here would silently starve
+    `few_shot` (and, with it, the train-only guarantee in `assemble_prompt`,
+    which has nothing to check when its input list is empty) — pass the whole
+    corpus explicitly.
+    """
+    corpus_traces = traces if corpus is None else corpus
+    corpus_by_id = {t.trace_id: t for t in corpus_traces}
     label_by_id = {lbl.trace_id: lbl for lbl in labels}
-    few_shot = [
-        (by_id[i], label_by_id[i])
-        for i in spec.few_shot_ids
-        if i in by_id and i in label_by_id
-    ]
+
+    few_shot: list[tuple[Trace, Label]] = []
+    for few_shot_id in spec.few_shot_ids:
+        example = corpus_by_id.get(few_shot_id)
+        gold = label_by_id.get(few_shot_id)
+        if example is None or gold is None:
+            missing = "trace" if example is None else "label"
+            raise InvariantViolation(
+                f"few-shot id {few_shot_id!r} could not be resolved: its {missing} is "
+                "missing from the corpus/labels given to run_judge. Silently dropping "
+                "an unresolved few-shot id is what let this go unnoticed before."
+            )
+        few_shot.append((example, gold))
 
     result = RunResult()
     for trace in traces:
-        prompt = assemble_prompt(spec, trace, few_shot=few_shot, splits=splits)
+        try:
+            prompt = assemble_prompt(spec, trace, few_shot=few_shot, splits=splits)
+        except InvariantViolation:
+            # A refusal, not a per-trace failure: it must not be swallowed into an
+            # error row, so it keeps propagating out of run_judge.
+            raise
+        except (KeyError, IndexError, ValueError) as exc:
+            result.errors.append(
+                {
+                    "trace_id": trace.trace_id,
+                    "split": split,
+                    "failure_class": "bad_template",
+                    "detail": f"{type(exc).__name__}: {exc}",
+                }
+            )
+            continue
+
         try:
             completion = model.complete(prompt, max_tokens=max_tokens, schema=Verdict)
         except Exception as exc:  # noqa: BLE001 - quarantined, never scored
@@ -193,12 +237,25 @@ def run_judge(
             )
             continue
 
+        gold = label_by_id.get(trace.trace_id)
+        if gold is None:
+            result.errors.append(
+                {
+                    "trace_id": trace.trace_id,
+                    "split": split,
+                    "failure_class": "unlabelled",
+                    "detail": "no human label for this trace; a verdict with no ground "
+                    "truth cannot be scored and must not carry truth=None downstream",
+                }
+            )
+            continue
+
         result.verdicts.append(
             {
                 "trace_id": trace.trace_id,
                 "split": split,
                 "verdict": verdict,
-                "truth": label_by_id[trace.trace_id].label if trace.trace_id in label_by_id else None,
+                "truth": gold.label,
                 "model": completion.model,
                 "usage": completion.usage,
                 "attempts": completion.attempts,

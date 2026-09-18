@@ -74,7 +74,7 @@ def _served_model_matches(requested: str, served: str) -> bool:
     if norm_served == norm_requested:
         return True
     match = _DATED_SNAPSHOT_SUFFIX.match(norm_served)
-    return bool(match) and match.group("base") == norm_requested
+    return match is not None and match.group("base") == norm_requested
 
 
 class Model(Protocol):

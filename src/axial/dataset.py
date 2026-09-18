@@ -21,6 +21,7 @@ from __future__ import annotations
 import re
 import warnings
 from datetime import UTC, datetime
+from pathlib import Path
 
 import numpy as np
 from pydantic import BaseModel, Field
@@ -217,7 +218,7 @@ def _check_human(label: Label) -> None:
         )
 
 
-def _labels_path(store: Store, mode: str):
+def _labels_path(store: Store, mode: str) -> Path:
     return store.dataset_dir(mode) / "labels.jsonl"
 
 
