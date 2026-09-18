@@ -1,6 +1,9 @@
 from pathlib import Path
 
+import pytest
+
 from axial.config import load_config, write_default_config
+from axial.errors import AxialError
 from axial.store import Store
 
 
@@ -33,3 +36,43 @@ def test_file_values_override_defaults(tmp_path: Path):
     assert cfg.annotator == "andres"
     assert cfg.thresholds.min_tpr == 0.9
     assert cfg.thresholds.min_tnr == 0.85  # untouched default
+
+
+def test_split_fractions_with_two_elements_raises(tmp_path: Path):
+    store = Store(tmp_path)
+    store.config_path.parent.mkdir(parents=True, exist_ok=True)
+    store.config_path.write_text("split_fractions = [0.5, 0.5]")
+    with pytest.raises(AxialError, match="exactly 3 entries"):
+        load_config(store)
+
+
+def test_split_fractions_with_four_elements_raises(tmp_path: Path):
+    store = Store(tmp_path)
+    store.config_path.parent.mkdir(parents=True, exist_ok=True)
+    store.config_path.write_text("split_fractions = [0.25, 0.25, 0.25, 0.25]")
+    with pytest.raises(AxialError, match="exactly 3 entries"):
+        load_config(store)
+
+
+def test_split_fractions_with_non_positive_entry_raises(tmp_path: Path):
+    store = Store(tmp_path)
+    store.config_path.parent.mkdir(parents=True, exist_ok=True)
+    store.config_path.write_text("split_fractions = [0.1, 0.0, 0.9]")
+    with pytest.raises(AxialError, match="must be positive"):
+        load_config(store)
+
+
+def test_split_fractions_not_summing_to_one_raises(tmp_path: Path):
+    store = Store(tmp_path)
+    store.config_path.parent.mkdir(parents=True, exist_ok=True)
+    store.config_path.write_text("split_fractions = [0.3, 0.3, 0.3]")
+    with pytest.raises(AxialError, match="sum to 1.0"):
+        load_config(store)
+
+
+def test_split_fractions_valid_default_still_loads(tmp_path: Path):
+    store = Store(tmp_path)
+    store.config_path.parent.mkdir(parents=True, exist_ok=True)
+    store.config_path.write_text("split_fractions = [0.15, 0.42, 0.43]")
+    cfg = load_config(store)
+    assert cfg.split_fractions == (0.15, 0.42, 0.43)

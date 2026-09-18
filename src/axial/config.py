@@ -10,6 +10,7 @@ from __future__ import annotations
 import tomllib
 from dataclasses import dataclass
 
+from axial.errors import AxialError
 from axial.store import Store
 
 DEFAULT_CONFIG = """\
@@ -58,10 +59,36 @@ def load_config(store: Store) -> Config:
         max_gap=float(thresholds_raw.get("max_gap", 0.10)),
     )
     fractions = raw.get("split_fractions", [0.15, 0.42, 0.43])
+
+    # Validate split_fractions
+    if len(fractions) != 3:
+        raise AxialError(
+            f"split_fractions must have exactly 3 entries (train, dev, test), "
+            f"but found {len(fractions)}"
+        )
+
+    fractions_float = []
+    for i, frac in enumerate(fractions):
+        try:
+            frac_val = float(frac)
+        except (TypeError, ValueError):
+            raise AxialError(f"split_fractions[{i}] must be a number, got {frac!r}")
+        if frac_val <= 0:
+            raise AxialError(
+                f"split_fractions[{i}] must be positive, got {frac_val}"
+            )
+        fractions_float.append(frac_val)
+
+    total = sum(fractions_float)
+    if abs(total - 1.0) > 1e-6:
+        raise AxialError(
+            f"split_fractions must sum to 1.0, but got {total}"
+        )
+
     return Config(
         judge_model=raw.get("judge_model", "claude-opus-5"),
         annotator=raw.get("annotator"),
         min_open_codes=int(raw.get("min_open_codes", 30)),
-        split_fractions=(float(fractions[0]), float(fractions[1]), float(fractions[2])),
+        split_fractions=(fractions_float[0], fractions_float[1], fractions_float[2]),
         thresholds=thresholds,
     )
