@@ -64,9 +64,9 @@ class Taxonomy(BaseModel):
     def recount(self, reviews: list[Review]) -> None:
         """Set each mode's prevalence from how many open codes mention its name."""
         for mode in self.modes:
-            needle = mode.name.lower()
+            pattern = re.compile(rf"\b{re.escape(mode.name)}\b", re.IGNORECASE)
             mode.prevalence = sum(
-                1 for r in reviews if r.open_code and needle in r.open_code.lower()
+                1 for r in reviews if r.open_code and pattern.search(r.open_code)
             )
 
 

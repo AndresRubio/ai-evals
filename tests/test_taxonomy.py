@@ -83,6 +83,49 @@ def test_prevalence_counts_reviews_whose_open_code_mentions_the_mode():
     assert taxonomy.modes[0].prevalence == 1
 
 
+def test_prevalence_respects_word_boundaries_single_word():
+    """A mode named 'merged' should not match 'unmerged' (antonym)."""
+    reviews = [
+        Review(trace_id="t1", open_code="unmerged stories", status="done"),
+        Review(trace_id="t2", open_code="merged two stories", status="done"),
+    ]
+    taxonomy = Taxonomy(
+        modes=[FailureMode(id="merged", name="merged", definition="d", examples=[])]
+    )
+    taxonomy.recount(reviews)
+    # Should only count "merged two stories", not "unmerged stories"
+    assert taxonomy.modes[0].prevalence == 1
+
+
+def test_prevalence_is_case_insensitive():
+    """Matching should be case-insensitive with word boundaries."""
+    reviews = [
+        Review(trace_id="t1", open_code="Merged two stories", status="done"),
+        Review(trace_id="t2", open_code="MERGED again", status="done"),
+    ]
+    taxonomy = Taxonomy(
+        modes=[FailureMode(id="merged", name="merged", definition="d", examples=[])]
+    )
+    taxonomy.recount(reviews)
+    assert taxonomy.modes[0].prevalence == 2
+
+
+def test_prevalence_handles_multiword_mode_names():
+    """Multi-word mode names should match as complete phrases with word boundaries."""
+    reviews = [
+        Review(trace_id="t1", open_code="merged stories together", status="done"),
+        Review(trace_id="t2", open_code="some merged stories were created", status="done"),
+        Review(trace_id="t3", open_code="unmerged stories remain", status="done"),
+    ]
+    taxonomy = Taxonomy(
+        modes=[FailureMode(id="merged_stories", name="merged stories", definition="d", examples=[])]
+    )
+    taxonomy.recount(reviews)
+    # Should match "merged stories together" and "some merged stories were created"
+    # but not "unmerged stories"
+    assert taxonomy.modes[0].prevalence == 2
+
+
 def test_saturation_curve_flattens_once_codes_repeat():
     reviews = [Review(trace_id=f"t{i}", open_code=f"c{i}", status="done") for i in range(3)]
     reviews += [Review(trace_id=f"u{i}", open_code="c0", status="done") for i in range(3)]
