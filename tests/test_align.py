@@ -122,6 +122,8 @@ def test_paired_bootstrap_ci_excludes_zero_when_candidate_rate_is_genuinely_high
     candidate = [True] * 100
     low, high = paired_bootstrap_ci(baseline, candidate, n_boot=500, seed=3)
     assert low > 0
+    assert high >= low
+    assert high <= 1.0
 
 
 def test_align_rejects_mismatched_lengths():

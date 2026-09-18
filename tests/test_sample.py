@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from axial.sample import (
     Review,
@@ -39,6 +40,14 @@ def test_outlier_strategy_ranks_by_the_metadata_key():
     pool = traces(20, latency_s=[float(i) for i in range(20)])
     picked = sample_batch(pool, 10, strategy="outlier", random_fraction=0.0, seed=0)
     assert picked[0].trace_id == "t19"
+
+
+def test_outlier_strategy_excludes_booleans_from_numeric_keys():
+    """When both boolean and numeric metadata keys are present, rank by the numeric one."""
+    pool = traces(10, flagged=[i % 2 == 0 for i in range(10)], latency_s=[float(i) for i in range(10)])
+    picked = sample_batch(pool, 5, strategy="outlier", random_fraction=0.0, seed=0)
+    # Should rank by latency_s (9.0, 8.0, 7.0, ...) not by flagged (alphabetically first)
+    assert picked[0].trace_id == "t9"
 
 
 def test_a_targeted_strategy_still_includes_a_random_slice():
@@ -86,3 +95,9 @@ def test_all_reviews_spans_every_session(tmp_path: Path):
     create_session(store, traces(2), name="s1")
     create_session(store, traces(3), name="s2")
     assert len(all_reviews(store)) == 5
+
+
+def test_review_status_must_be_valid():
+    """Review.status must be one of the allowed literal values."""
+    with pytest.raises(ValidationError):
+        Review(trace_id="t1", status="invalid")

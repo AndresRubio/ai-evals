@@ -8,6 +8,7 @@ review session keeps a chance of surprising you.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 import numpy as np
 from pydantic import BaseModel
@@ -24,13 +25,13 @@ class Review(BaseModel):
     verdict: str | None = None
     critique: str | None = None
     annotator: str | None = None
-    status: str = "pending"
+    status: Literal["pending", "done"] = "pending"
 
 
 def _rank(traces: list[Trace], strategy: str) -> list[Trace]:
     if strategy == "longest":
         return sorted(traces, key=lambda t: len(t.output), reverse=True)
-    numeric_keys = {k for t in traces for k, v in t.metadata.items() if isinstance(v, (int, float))}
+    numeric_keys = {k for t in traces for k, v in t.metadata.items() if isinstance(v, (int, float)) and not isinstance(v, bool)}
     if not numeric_keys:
         return sorted(traces, key=lambda t: len(t.output), reverse=True)
     key = min(numeric_keys)
