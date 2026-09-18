@@ -158,6 +158,23 @@ MACHINE_LOOKING_ANNOTATORS = [
     "axial-judge",
     "GPT_4o",
     "anthropic/claude",
+    # Provider-prefixed litellm-style identifiers ("provider/model"), where
+    # normalisation puts the family term anywhere but the first segment (fix
+    # round 3, Fix 1) — a probe found 18 of 21 such ids slipping through the
+    # old "must be the first segment" rule.
+    "google/gemma-2-9b",
+    "microsoft/phi-3-mini",
+    "amazon/nova-pro",
+    "tiiuae/falcon-40b",
+    "xai/grok-4",
+    "vertex_ai/palm-2",
+    "bedrock/amazon.titan-text-express",
+    "openrouter/google/gemma-2",
+    # ":" and "@" as separators (fix round 3, Fix 2) — previously these
+    # collapsed the vendor segment into one unsplittable blob that evaded the
+    # vendor rule entirely.
+    "google@gemma-2-9b",
+    "google:gemma-2-9b",
 ]
 
 # "ai" used to be here, but it's a real Japanese given name and is no longer

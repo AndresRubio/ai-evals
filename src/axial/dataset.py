@@ -71,23 +71,32 @@ _MACHINE_RAW_SEGMENT_TERMS = frozenset({"o1", "o3", "o4"})
 # "phi" refusing the entire Soph-/Phil-/-phine family, and "nova", "gemma",
 # "palm", "bard", "titan", "falcon", "command", and "grok" refusing Nova,
 # Novak, Gemma, Palmer, Bardia, Titania, Falconer, Grokowski, and usernames
-# like "p.nova" and "d.palmer". Every real model name in this family is
-# separator-delimited with the family name leading a version/qualifier
-# segment ("phi-3-mini", "nova-pro", "falcon-40b", "command-r-plus", ...), so
-# a match here requires *all* of:
-#   - the term equals the FIRST "-"-delimited segment, digit-stripped (so
-#     "grok-4" and the run-together "grok4" both match on "grok", but a
-#     trailing/inner occurrence — "p-nova", "d-palmer" — does not, because
-#     real vendor names never trail an unrelated segment); and
+# like "p.nova" and "d.palmer". Real model identifiers put the family term
+# anywhere but last: it leads a bare model name ("nova-pro", "falcon-40b",
+# "command-r-plus", ...) and it leads or sits mid-identifier once a provider
+# prefix is involved, as litellm-style "provider/model" ids normalise to
+# ("google-gemma-2-9b", "openrouter-google-gemma-2", ...). A human name that
+# happens to collide, by contrast, either stands alone ("Nova", "Gemma") or
+# has the colliding word fall at the end, trailing an unrelated lead segment
+# ("p-nova", "d-palmer") — never leading or mid-word. So a match here
+# requires *all* of:
+#   - the term equals some "-"-delimited segment OTHER THAN THE LAST,
+#     digit-stripped (so "grok-4", "nova-pro", and a provider-prefixed
+#     "google-gemma-2-9b" all match, but a trailing occurrence — "p-nova",
+#     "d-palmer" — does not, because real vendor names never trail an
+#     unrelated segment); and
 #   - either there is more than one segment (so "nova-pro" matches), or this
 #     lone segment needed digit-stripping to reach the term (so "grok4"
-#     matches). A clean, undecorated single-word match ("Nova", "Gemma") is
-#     just as likely to be a genuine given name as a machine label, so it is
-#     not trusted on its own — see the module docstring's false-positive/
+#     matches, since with only one segment "not the last" is vacuous and this
+#     second condition is what still lets a bare digit-suffixed form through).
+#     A clean, undecorated single-word match ("Nova", "Gemma") is just as
+#     likely to be a genuine given name as a machine label, so it is not
+#     trusted on its own — see the module docstring's false-positive/
 #     false-negative tradeoff.
-# Unseparated run-together forms like "phi3mini" escape this; that's
-# acceptable and squarely inside the "speed bump, not a security boundary"
-# framing above.
+# The accepted new false positive from widening "first" to "any but last" is
+# a medial human form like "Anna Nova Smith"; that's squarely inside the
+# "speed bump, not a security boundary" framing above, same as the
+# unseparated run-together forms ("phi3mini") that still escape this.
 _MACHINE_VENDOR_SEGMENT_TERMS = frozenset(
     {
         "phi",
@@ -142,7 +151,7 @@ MACHINE_ANNOTATORS = frozenset(
 
 MIN_USABLE_LABELS = 60
 
-_SEPARATOR_RE = re.compile(r"[_/.\s]+")
+_SEPARATOR_RE = re.compile(r"[_/.:@\s]+")
 
 
 def _looks_machine(annotator: str) -> bool:
@@ -163,11 +172,10 @@ def _looks_machine(annotator: str) -> bool:
         return True
     if any(term in segments for term in _MACHINE_SEGMENT_TERMS):
         return True
-    if segments:
-        first_raw = segments[0]
-        first_stripped = re.sub(r"\d+", "", first_raw)
-        if first_stripped in _MACHINE_VENDOR_SEGMENT_TERMS and (
-            len(segments) > 1 or first_raw != first_stripped
+    for i, raw in enumerate(segments):
+        stripped = re.sub(r"\d+", "", raw)
+        if stripped in _MACHINE_VENDOR_SEGMENT_TERMS and (
+            i < len(segments) - 1 or raw != stripped
         ):
             return True
     return False
