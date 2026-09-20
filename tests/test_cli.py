@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from axial.cli import app
@@ -66,7 +67,9 @@ def test_gate_exits_nonzero_on_a_regression(tmp_path: Path):
     assert "REGRESSION" in result.stdout
 
 
-def test_judge_passes_the_full_corpus_alongside_the_splits_traces(tmp_path: Path):
+def test_judge_passes_the_full_corpus_alongside_the_splits_traces(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     """Correction 1: `run_judge` resolves few-shot ids (almost always drawn from
     train) against its `corpus` argument, which defaults to `traces` when not
     given. The `judge` command judges one split at a time, so if it forwarded
@@ -97,14 +100,10 @@ def test_judge_passes_the_full_corpus_alongside_the_splits_traces(tmp_path: Path
         captured["corpus"] = kwargs.get("corpus")
         return RunResult(verdicts=[], errors=[])
 
-    original = cli_module.run_judge
-    try:
-        cli_module.run_judge = fake_run_judge  # type: ignore[assignment]
-        result = runner.invoke(
-            app, ["judge", "m", "--split", "dev", "--version", "1", "--repo", str(tmp_path)]
-        )
-    finally:
-        cli_module.run_judge = original
+    monkeypatch.setattr(cli_module, "run_judge", fake_run_judge)
+    result = runner.invoke(
+        app, ["judge", "m", "--split", "dev", "--version", "1", "--repo", str(tmp_path)]
+    )
 
     assert result.exit_code == 0, result.stdout
     assert {t.trace_id for t in captured["traces"]} == {"t2", "t3"}
@@ -184,11 +183,18 @@ def _seed_corpus_and_splits(store: Store, mode: str = "m") -> None:
     Splits(train=["t0", "t1"], dev=["t2", "t3"], test=["t4", "t5"], seed=0).save(store, mode)
 
 
-def test_few_shot_option_is_written_and_survives_a_second_run(tmp_path: Path):
+def test_few_shot_option_is_written_and_survives_a_second_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     """Fix round 1, part 2: `--few-shot` sets `few_shot_ids` on the saved spec, and
     running `judge` again without the option must leave that already-saved id alone
     (only an option actually supplied should overwrite `few_shot_ids`), so a first
     run with `--few-shot` and later runs without it keeps working.
+
+    Fix round 2: neither invocation passes `--version`. The default must resolve to
+    the same (latest existing) version both times — that is the whole point of the
+    fix, and a test that pins `--version 1` on both calls cannot tell a working
+    default apart from one that always advances.
     """
     import yaml
 
@@ -204,24 +210,17 @@ def test_few_shot_option_is_written_and_survives_a_second_run(tmp_path: Path):
         return RunResult(verdicts=[], errors=[])
 
     judge_yaml = store.judge_dir("m", 1) / "judge.yaml"
-    original = cli_module.run_judge
-    try:
-        cli_module.run_judge = fake_run_judge  # type: ignore[assignment]
-        result = runner.invoke(
-            app,
-            ["judge", "m", "--split", "dev", "--version", "1", "--few-shot", "t0",
-             "--repo", str(tmp_path)],
-        )
-        assert result.exit_code == 0, result.stdout
-        assert yaml.safe_load(judge_yaml.read_text())["few_shot_ids"] == ["t0"]
+    monkeypatch.setattr(cli_module, "run_judge", fake_run_judge)
+    result = runner.invoke(
+        app,
+        ["judge", "m", "--split", "dev", "--few-shot", "t0", "--repo", str(tmp_path)],
+    )
+    assert result.exit_code == 0, result.stdout
+    assert yaml.safe_load(judge_yaml.read_text())["few_shot_ids"] == ["t0"]
 
-        result2 = runner.invoke(
-            app, ["judge", "m", "--split", "dev", "--version", "1", "--repo", str(tmp_path)]
-        )
-        assert result2.exit_code == 0, result2.stdout
-        assert yaml.safe_load(judge_yaml.read_text())["few_shot_ids"] == ["t0"]
-    finally:
-        cli_module.run_judge = original
+    result2 = runner.invoke(app, ["judge", "m", "--split", "dev", "--repo", str(tmp_path)])
+    assert result2.exit_code == 0, result2.stdout
+    assert yaml.safe_load(judge_yaml.read_text())["few_shot_ids"] == ["t0"]
 
 
 def test_few_shot_from_dev_split_exits_1_with_the_train_only_message(tmp_path: Path):
@@ -255,10 +254,15 @@ def test_few_shot_from_dev_split_exits_1_with_the_train_only_message(tmp_path: P
     assert "not in the train split" in result.stdout
 
 
-def test_second_judge_run_does_not_clobber_a_hand_edited_prompt_template(tmp_path: Path):
+def test_second_judge_run_does_not_clobber_a_hand_edited_prompt_template(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     """Fix round 1, part 1: loading an existing `judge.yaml` rather than rebuilding a
     fresh spec must preserve a prompt a user hand-edited, across a second `judge` run
     at the same mode/version.
+
+    Fix round 2: neither invocation passes `--version`, so this also pins that the
+    default resolves to the same (latest existing) version both times.
     """
     import yaml
 
@@ -274,23 +278,127 @@ def test_second_judge_run_does_not_clobber_a_hand_edited_prompt_template(tmp_pat
         return RunResult(verdicts=[], errors=[])
 
     judge_yaml = store.judge_dir("m", 1) / "judge.yaml"
-    original = cli_module.run_judge
-    try:
-        cli_module.run_judge = fake_run_judge  # type: ignore[assignment]
-        result = runner.invoke(
-            app, ["judge", "m", "--split", "dev", "--version", "1", "--repo", str(tmp_path)]
-        )
-        assert result.exit_code == 0, result.stdout
+    monkeypatch.setattr(cli_module, "run_judge", fake_run_judge)
+    result = runner.invoke(app, ["judge", "m", "--split", "dev", "--repo", str(tmp_path)])
+    assert result.exit_code == 0, result.stdout
 
-        data = yaml.safe_load(judge_yaml.read_text())
-        custom_template = "MY CUSTOM TEMPLATE {mode_name} {mode_definition} {few_shot} {input} {output}"
-        data["prompt_template"] = custom_template
-        judge_yaml.write_text(yaml.safe_dump(data, sort_keys=False))
+    data = yaml.safe_load(judge_yaml.read_text())
+    custom_template = "MY CUSTOM TEMPLATE {mode_name} {mode_definition} {few_shot} {input} {output}"
+    data["prompt_template"] = custom_template
+    judge_yaml.write_text(yaml.safe_dump(data, sort_keys=False))
 
-        result2 = runner.invoke(
-            app, ["judge", "m", "--split", "dev", "--version", "1", "--repo", str(tmp_path)]
-        )
-        assert result2.exit_code == 0, result2.stdout
-        assert yaml.safe_load(judge_yaml.read_text())["prompt_template"] == custom_template
-    finally:
-        cli_module.run_judge = original
+    result2 = runner.invoke(app, ["judge", "m", "--split", "dev", "--repo", str(tmp_path)])
+    assert result2.exit_code == 0, result2.stdout
+    assert yaml.safe_load(judge_yaml.read_text())["prompt_template"] == custom_template
+
+
+def _fake_run_judge_writing_verdicts(store_arg, spec, traces_arg, labels_arg, splits_arg, model_arg, **kwargs):
+    """A stand-in for `run_judge` that mimics its real merge-by-split disk write
+    (see `run_judge`'s own tail: rows for other splits are kept, this split's rows
+    are replaced) without touching a model or a provider.
+    """
+    from axial.judge import RunResult
+
+    split = kwargs["split"]
+    directory = store_arg.judge_dir(spec.mode, spec.version)
+    fresh = [
+        {"trace_id": t.trace_id, "split": split, "verdict": True, "truth": True}
+        for t in traces_arg
+    ]
+    path = directory / "verdicts.jsonl"
+    kept = [row for row in store_arg.read_jsonl(path) if row.get("split") != split]
+    store_arg.write_jsonl(path, kept + fresh)
+    return RunResult(verdicts=fresh, errors=[])
+
+
+def test_default_version_keeps_dev_and_test_verdicts_in_the_same_judge_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Fix round 2: the natural dev-then-test workflow —
+
+        axial judge m --split dev --few-shot t0
+        axial judge m --split test
+
+    — must land both splits on the *same* judge version. Before this fix, the
+    omitted `--version` resolved via `next_judge_version` on every call, so the
+    second (test) run silently advanced to a fresh, empty version with no few-shot
+    ids and the default template, while the first (dev) run's tuned version was
+    left behind — `align`/`promote` then compare a test-only version against a dev
+    side that was never run for it. Neither call here passes `--version`; that is
+    the only way to catch this class of bug.
+    """
+    import yaml
+
+    import axial.cli as cli_module
+    from axial.config import write_default_config
+    from axial.judge import DEFAULT_TEMPLATE
+
+    store = Store(tmp_path)
+    write_default_config(store)
+    _seed_corpus_and_splits(store)
+    monkeypatch.setattr(cli_module, "run_judge", _fake_run_judge_writing_verdicts)
+
+    result = runner.invoke(
+        app, ["judge", "m", "--split", "dev", "--few-shot", "t0", "--repo", str(tmp_path)]
+    )
+    assert result.exit_code == 0, result.stdout
+
+    result2 = runner.invoke(app, ["judge", "m", "--split", "test", "--repo", str(tmp_path)])
+    assert result2.exit_code == 0, result2.stdout
+
+    # A second, distinct version must not have been created.
+    assert not store.judge_dir("m", 2).exists()
+
+    directory = store.judge_dir("m", 1)
+    verdicts = store.read_jsonl(directory / "verdicts.jsonl")
+    assert {(row["trace_id"], row["split"]) for row in verdicts} == {
+        ("t2", "dev"), ("t3", "dev"), ("t4", "test"), ("t5", "test"),
+    }
+
+    # The test run carried no `--few-shot`, so it must not have reset the spec
+    # the dev run wrote: the few-shot ids and prompt template survive untouched.
+    spec_data = yaml.safe_load((directory / "judge.yaml").read_text())
+    assert spec_data["few_shot_ids"] == ["t0"]
+    assert spec_data["prompt_template"] == DEFAULT_TEMPLATE
+
+
+def test_new_flag_starts_a_fresh_version_that_does_not_inherit_the_previous_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Fix round 2: advancing to a new judge version must be deliberate. `--new` is
+    that deliberate act — the right move after editing the judge prompt, since a
+    version already scored against test must not go on being reused for a changed
+    prompt. The fresh version must start from a brand new spec (no inherited
+    few-shot ids or template) and carry none of the previous version's verdicts.
+    """
+    import yaml
+
+    import axial.cli as cli_module
+    from axial.config import write_default_config
+    from axial.judge import DEFAULT_TEMPLATE
+
+    store = Store(tmp_path)
+    write_default_config(store)
+    _seed_corpus_and_splits(store)
+    monkeypatch.setattr(cli_module, "run_judge", _fake_run_judge_writing_verdicts)
+
+    result = runner.invoke(
+        app, ["judge", "m", "--split", "dev", "--few-shot", "t0", "--repo", str(tmp_path)]
+    )
+    assert result.exit_code == 0, result.stdout
+    v1_verdicts = store.read_jsonl(store.judge_dir("m", 1) / "verdicts.jsonl")
+    assert {row["trace_id"] for row in v1_verdicts} == {"t2", "t3"}
+
+    result2 = runner.invoke(app, ["judge", "m", "--split", "dev", "--new", "--repo", str(tmp_path)])
+    assert result2.exit_code == 0, result2.stdout
+
+    v2_dir = store.judge_dir("m", 2)
+    assert v2_dir.exists()
+    spec_data = yaml.safe_load((v2_dir / "judge.yaml").read_text())
+    assert spec_data["few_shot_ids"] == []
+    assert spec_data["prompt_template"] == DEFAULT_TEMPLATE
+
+    v2_verdicts = store.read_jsonl(v2_dir / "verdicts.jsonl")
+    assert {row["trace_id"] for row in v2_verdicts} == {"t2", "t3"}
+    # v1's own verdicts are untouched and still live only under v1.
+    assert store.read_jsonl(store.judge_dir("m", 1) / "verdicts.jsonl") == v1_verdicts

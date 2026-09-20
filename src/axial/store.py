@@ -47,12 +47,21 @@ class Store:
     def judge_dir(self, mode: str, version: int) -> Path:
         return self.root / "judges" / mode / f"v{version}"
 
-    def next_judge_version(self, mode: str) -> int:
+    def latest_judge_version(self, mode: str) -> int | None:
+        """The highest existing judge version for `mode`, or `None` if none exists yet.
+
+        Sibling to `next_judge_version`: that one is for a deliberate "start a new
+        judge" action, this one is for "resume whatever is already there" — the
+        default a caller should reach for when no version was named.
+        """
         parent = self.root / "judges" / mode
         if not parent.exists():
-            return 1
+            return None
         versions = [int(p.name[1:]) for p in parent.iterdir() if p.name.startswith("v")]
-        return max(versions, default=0) + 1
+        return max(versions) if versions else None
+
+    def next_judge_version(self, mode: str) -> int:
+        return (self.latest_judge_version(mode) or 0) + 1
 
     # --- io ------------------------------------------------------------
     def append_jsonl(self, path: Path, row: dict[str, Any]) -> None:

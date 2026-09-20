@@ -149,11 +149,29 @@ FewShotOption = typer.Option(
 )
 
 
+NewOption = typer.Option(
+    False,
+    "--new",
+    help="Start a new judge version instead of resuming the latest one for this "
+    "mode. Reach for this after changing the judge prompt (or its few-shot "
+    "examples) between runs — a version already scored against test must not "
+    "silently keep being reused for a different judge.",
+)
+
+
 @app.command()
 def judge(
     mode: str,
     split_name: str = typer.Option("dev", "--split", help="dev | test"),
-    version: int = typer.Option(0, help="0 means next version"),
+    version: int = typer.Option(
+        0,
+        help="Judge version to use. 0 (the default) resumes the latest existing "
+        "version for this mode, or starts at 1 if none exists yet — this is what "
+        "lets `judge --split dev` and a later `judge --split test` land on the same "
+        "judge. Pass an explicit version to target one directly, or use --new to "
+        "start the next one instead of resuming.",
+    ),
+    new: bool = NewOption,
     few_shot: list[str] = FewShotOption,
     repo: str = RepoOption,
 ) -> None:
@@ -162,7 +180,11 @@ def judge(
 
     store = Store(repo)
     config = load_config(store)
-    version = version or store.next_judge_version(mode)
+    if not version:
+        if new:
+            version = store.next_judge_version(mode)
+        else:
+            version = store.latest_judge_version(mode) or 1
     taxonomy_modes = {m.id: m for m in Taxonomy.load(store).modes}
     entry = taxonomy_modes.get(mode)
 
