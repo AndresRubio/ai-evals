@@ -174,3 +174,123 @@ def test_promote_prints_every_failure_reason_on_one_line_each(tmp_path: Path):
     # Every reason line should be its own line, not run together.
     reason_lines = [line for line in result.stdout.splitlines() if "below" in line]
     assert len(reason_lines) >= 3
+
+
+def _seed_corpus_and_splits(store: Store, mode: str = "m") -> None:
+    from axial.dataset import Splits
+
+    traces = [{"input": f"in{i}", "output": f"out{i}", "trace_id": f"t{i}"} for i in range(6)]
+    store.write_jsonl(store.traces_path, traces)
+    Splits(train=["t0", "t1"], dev=["t2", "t3"], test=["t4", "t5"], seed=0).save(store, mode)
+
+
+def test_few_shot_option_is_written_and_survives_a_second_run(tmp_path: Path):
+    """Fix round 1, part 2: `--few-shot` sets `few_shot_ids` on the saved spec, and
+    running `judge` again without the option must leave that already-saved id alone
+    (only an option actually supplied should overwrite `few_shot_ids`), so a first
+    run with `--few-shot` and later runs without it keeps working.
+    """
+    import yaml
+
+    import axial.cli as cli_module
+    from axial.config import write_default_config
+    from axial.judge import RunResult
+
+    store = Store(tmp_path)
+    write_default_config(store)
+    _seed_corpus_and_splits(store)
+
+    def fake_run_judge(store_arg, spec, traces_arg, labels_arg, splits_arg, model_arg, **kwargs):
+        return RunResult(verdicts=[], errors=[])
+
+    judge_yaml = store.judge_dir("m", 1) / "judge.yaml"
+    original = cli_module.run_judge
+    try:
+        cli_module.run_judge = fake_run_judge  # type: ignore[assignment]
+        result = runner.invoke(
+            app,
+            ["judge", "m", "--split", "dev", "--version", "1", "--few-shot", "t0",
+             "--repo", str(tmp_path)],
+        )
+        assert result.exit_code == 0, result.stdout
+        assert yaml.safe_load(judge_yaml.read_text())["few_shot_ids"] == ["t0"]
+
+        result2 = runner.invoke(
+            app, ["judge", "m", "--split", "dev", "--version", "1", "--repo", str(tmp_path)]
+        )
+        assert result2.exit_code == 0, result2.stdout
+        assert yaml.safe_load(judge_yaml.read_text())["few_shot_ids"] == ["t0"]
+    finally:
+        cli_module.run_judge = original
+
+
+def test_few_shot_from_dev_split_exits_1_with_the_train_only_message(tmp_path: Path):
+    """Fix round 1: a `--few-shot` id that isn't in train must fail loud through the
+    CLI rather than crash it. `run_judge`/`assemble_prompt` raise `InvariantViolation`
+    for exactly this case; the `judge` command must catch it and exit 1 with the
+    refusal message, not let it propagate as a traceback.
+    """
+    from axial.config import write_default_config
+    from axial.dataset import Label, add_labels
+
+    store = Store(tmp_path)
+    write_default_config(store)
+    _seed_corpus_and_splits(store)
+    add_labels(
+        store,
+        "m",
+        [
+            Label(trace_id="t2", label=False, critique="a dev example", annotator="andres"),
+            Label(trace_id="t3", label=True, critique="another dev example", annotator="andres"),
+        ],
+    )
+
+    result = runner.invoke(
+        app,
+        ["judge", "m", "--split", "dev", "--version", "1", "--few-shot", "t2",
+         "--repo", str(tmp_path)],
+    )
+    assert result.exit_code == 1
+    assert "Traceback" not in result.output
+    assert "not in the train split" in result.stdout
+
+
+def test_second_judge_run_does_not_clobber_a_hand_edited_prompt_template(tmp_path: Path):
+    """Fix round 1, part 1: loading an existing `judge.yaml` rather than rebuilding a
+    fresh spec must preserve a prompt a user hand-edited, across a second `judge` run
+    at the same mode/version.
+    """
+    import yaml
+
+    import axial.cli as cli_module
+    from axial.config import write_default_config
+    from axial.judge import RunResult
+
+    store = Store(tmp_path)
+    write_default_config(store)
+    _seed_corpus_and_splits(store)
+
+    def fake_run_judge(store_arg, spec, traces_arg, labels_arg, splits_arg, model_arg, **kwargs):
+        return RunResult(verdicts=[], errors=[])
+
+    judge_yaml = store.judge_dir("m", 1) / "judge.yaml"
+    original = cli_module.run_judge
+    try:
+        cli_module.run_judge = fake_run_judge  # type: ignore[assignment]
+        result = runner.invoke(
+            app, ["judge", "m", "--split", "dev", "--version", "1", "--repo", str(tmp_path)]
+        )
+        assert result.exit_code == 0, result.stdout
+
+        data = yaml.safe_load(judge_yaml.read_text())
+        custom_template = "MY CUSTOM TEMPLATE {mode_name} {mode_definition} {few_shot} {input} {output}"
+        data["prompt_template"] = custom_template
+        judge_yaml.write_text(yaml.safe_dump(data, sort_keys=False))
+
+        result2 = runner.invoke(
+            app, ["judge", "m", "--split", "dev", "--version", "1", "--repo", str(tmp_path)]
+        )
+        assert result2.exit_code == 0, result2.stdout
+        assert yaml.safe_load(judge_yaml.read_text())["prompt_template"] == custom_template
+    finally:
+        cli_module.run_judge = original

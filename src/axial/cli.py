@@ -138,11 +138,23 @@ def split(mode: str, seed: int = typer.Option(0), repo: str = RepoOption) -> Non
     typer.echo(json.dumps(class_balance_report(labels, splits), indent=2))
 
 
+FewShotOption = typer.Option(
+    [],
+    "--few-shot",
+    help="Trace id to use as a few-shot example (repeatable). The id must be in "
+    "the train split and must carry a human label; run_judge raises "
+    "InvariantViolation otherwise, so that an example from dev or test can't "
+    "leak that split into the judge. Supplying this replaces the spec's "
+    "existing few_shot_ids; omitting it leaves them as they are.",
+)
+
+
 @app.command()
 def judge(
     mode: str,
     split_name: str = typer.Option("dev", "--split", help="dev | test"),
     version: int = typer.Option(0, help="0 means next version"),
+    few_shot: list[str] = FewShotOption,
     repo: str = RepoOption,
 ) -> None:
     """Run the judge over one split."""
@@ -153,14 +165,31 @@ def judge(
     version = version or store.next_judge_version(mode)
     taxonomy_modes = {m.id: m for m in Taxonomy.load(store).modes}
     entry = taxonomy_modes.get(mode)
-    spec = JudgeSpec(
-        mode=mode,
-        model=config.judge_model,
-        version=version,
-        mode_name=entry.name if entry else mode,
-        mode_definition=entry.definition if entry else "",
-    )
+
+    # Load an existing spec rather than overwriting it: a fresh `JudgeSpec` on
+    # every run silently discarded `few_shot_ids` and any hand-edited
+    # `prompt_template`. Only build a new spec when this mode/version has none
+    # yet; a spec that already exists is the source of truth for everything it
+    # already carries.
+    judge_yaml = store.judge_dir(mode, version) / "judge.yaml"
+    if judge_yaml.exists():
+        spec = JudgeSpec.load(store, mode, version)
+        if not spec.mode_name and entry:
+            spec.mode_name = entry.name
+        if not spec.mode_definition and entry:
+            spec.mode_definition = entry.definition
+    else:
+        spec = JudgeSpec(
+            mode=mode,
+            model=config.judge_model,
+            version=version,
+            mode_name=entry.name if entry else mode,
+            mode_definition=entry.definition if entry else "",
+        )
+    if few_shot:
+        spec.few_shot_ids = few_shot
     spec.save(store)
+
     splits = Splits.load(store, mode)
     wanted = set(getattr(splits, split_name))
     # `corpus` is read once, in full, and passed separately from `traces`: the
@@ -170,10 +199,13 @@ def judge(
     # would silently starve few-shot resolution.
     corpus = store.read_traces()
     traces = [t for t in corpus if t.trace_id in wanted]
-    result = run_judge(
-        store, spec, traces, read_labels(store, mode), splits,
-        LiteLLMModel(config.judge_model), split=split_name, corpus=corpus,
-    )
+    try:
+        result = run_judge(
+            store, spec, traces, read_labels(store, mode), splits,
+            LiteLLMModel(config.judge_model), split=split_name, corpus=corpus,
+        )
+    except AxialError as exc:
+        _fail(str(exc))
     typer.echo(f"{len(result.verdicts)} verdicts, {len(result.errors)} quarantined")
 
 
