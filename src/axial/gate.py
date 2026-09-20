@@ -38,7 +38,13 @@ def _load(store: Store, mode: str, version: int) -> list[dict[str, Any]]:
             f"judge {mode} v{version} has not been promoted. Run `axial promote` — a judge "
             "whose agreement with human labels was never measured on test cannot gate a build."
         )
-    return store.read_jsonl(directory / "verdicts.jsonl")
+    rows = store.read_jsonl(directory / "verdicts.jsonl")
+    if not rows:
+        raise InvariantViolation(
+            f"judge {mode} v{version} has no verdict rows. A gate cannot pass on no evidence. "
+            "Check errors.jsonl for quarantined calls."
+        )
+    return rows
 
 
 def gate(

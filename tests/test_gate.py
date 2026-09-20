@@ -21,9 +21,10 @@ def write_verdicts(store: Store, mode: str, version: int, verdicts: list[bool]) 
 
 
 def test_compare_returns_the_delta_and_a_ci():
-    delta, (low, _high) = compare([False] * 50, [True] * 50, seed=1)
+    delta, (low, high) = compare([False] * 50, [True] * 50, seed=1)
     assert delta == pytest.approx(1.0)
     assert low > 0
+    assert high == pytest.approx(1.0)
 
 
 def test_a_clear_regression_fails_the_gate(tmp_path: Path):
@@ -73,4 +74,21 @@ def test_mismatched_case_sets_are_refused(tmp_path: Path):
     write_verdicts(store, "merged", 1, [False] * 10)
     write_verdicts(store, "merged", 2, [False] * 9)
     with pytest.raises(InvariantViolation, match="same cases"):
+        gate(store, "merged", 2, baseline_version=1, seed=1)
+
+
+def test_an_empty_candidate_verdicts_raises(tmp_path: Path):
+    """Empty verdicts list for candidate cannot gate."""
+    store = Store(tmp_path)
+    write_verdicts(store, "merged", 1, [])
+    with pytest.raises(InvariantViolation, match="no verdict rows"):
+        gate(store, "merged", 1, seed=1)
+
+
+def test_an_empty_baseline_verdicts_raises(tmp_path: Path):
+    """Empty verdicts list for baseline cannot gate."""
+    store = Store(tmp_path)
+    write_verdicts(store, "merged", 1, [])
+    write_verdicts(store, "merged", 2, [False] * 10)
+    with pytest.raises(InvariantViolation, match="no verdict rows"):
         gate(store, "merged", 2, baseline_version=1, seed=1)
