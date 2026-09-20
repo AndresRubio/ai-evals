@@ -106,24 +106,29 @@ class Alignment:
     matrix: ConfusionMatrix
     ci: dict[str, tuple[float, float] | None] = field(default_factory=dict)
 
+    def fmt(self, key: str) -> str:
+        """Point estimate plus its confidence interval for one metric, e.g.
+        "0.900 [0.735, 0.972]", or "n/a" pieces when the metric or its interval is
+        undefined. Shared by `summary()` and by callers (e.g. the promotion gate)
+        that need the same point-estimate-plus-interval formatting on its own.
+        """
+        value = getattr(self, key)
+        if math.isnan(value):
+            return "n/a"
+        interval = self.ci.get(key)
+        if interval is None:
+            return f"{value:.3f} [n/a]"
+        return f"{value:.3f} [{interval[0]:.3f}, {interval[1]:.3f}]"
+
     def summary(self) -> str:
         """Human-readable one-liner.
 
         TPR and TNR are printed unconditionally and before accuracy: under class
         imbalance, accuracy alone is the number that gets a useless judge shipped.
         """
-
-        def fmt(value: float, key: str) -> str:
-            if math.isnan(value):
-                return "n/a"
-            interval = self.ci.get(key)
-            if interval is None:
-                return f"{value:.3f} [n/a]"
-            return f"{value:.3f} [{interval[0]:.3f}, {interval[1]:.3f}]"
-
         return (
-            f"n={self.n}  TPR={fmt(self.tpr, 'tpr')}  TNR={fmt(self.tnr, 'tnr')}  "
-            f"kappa={fmt(self.kappa, 'kappa')}  accuracy={fmt(self.accuracy, 'accuracy')}"
+            f"n={self.n}  TPR={self.fmt('tpr')}  TNR={self.fmt('tnr')}  "
+            f"kappa={self.fmt('kappa')}  accuracy={self.fmt('accuracy')}"
         )
 
     def to_dict(self) -> dict[str, object]:

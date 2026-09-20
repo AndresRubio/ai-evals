@@ -13,6 +13,8 @@ def test_defaults_match_the_spec(tmp_path: Path):
     assert cfg.thresholds.min_tpr == 0.85
     assert cfg.thresholds.min_tnr == 0.85
     assert cfg.thresholds.max_gap == 0.10
+    assert cfg.thresholds.min_test_positives == 30
+    assert cfg.thresholds.min_test_negatives == 30
     assert cfg.min_open_codes == 30
     assert cfg.split_fractions == (0.15, 0.42, 0.43)
 
@@ -36,6 +38,20 @@ def test_file_values_override_defaults(tmp_path: Path):
     assert cfg.annotator == "andres"
     assert cfg.thresholds.min_tpr == 0.9
     assert cfg.thresholds.min_tnr == 0.85  # untouched default
+    assert cfg.thresholds.min_test_positives == 30  # untouched default
+    assert cfg.thresholds.min_test_negatives == 30  # untouched default
+
+
+def test_file_setting_only_min_test_positives_leaves_the_rest_at_default(tmp_path: Path):
+    store = Store(tmp_path)
+    store.config_path.parent.mkdir(parents=True, exist_ok=True)
+    store.config_path.write_text("[thresholds]\nmin_test_positives = 50\n")
+    cfg = load_config(store)
+    assert cfg.thresholds.min_test_positives == 50
+    assert cfg.thresholds.min_test_negatives == 30
+    assert cfg.thresholds.min_tpr == 0.85
+    assert cfg.thresholds.min_tnr == 0.85
+    assert cfg.thresholds.max_gap == 0.10
 
 
 def test_split_fractions_with_two_elements_raises(tmp_path: Path):

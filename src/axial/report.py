@@ -32,35 +32,83 @@ def alignment_from_verdicts(
 
 
 class PromotionCheck:
-    def __init__(self, ok: bool, reasons: list[str]) -> None:
+    def __init__(
+        self, ok: bool, reasons: list[str], notes: list[str] | None = None
+    ) -> None:
         self.ok = ok
         self.reasons = reasons
+        self.notes = notes if notes is not None else []
 
 
 def check_promotion(dev: Alignment, test: Alignment, thresholds: Thresholds) -> PromotionCheck:
     reasons: list[str] = []
+    notes: list[str] = []
+
+    # A rate measured on a handful of cases is not evidence, however clean the
+    # point estimate looks: a test split of 4 real failures / 4 real passes, all
+    # judged correctly, gives TPR 1.00 and TNR 1.00 with a Wilson lower bound
+    # around 0.51. Refuse the split itself before trusting anything computed
+    # from it.
+    real_positives = test.matrix.tp + test.matrix.fn
+    real_negatives = test.matrix.tn + test.matrix.fp
+    if real_positives < thresholds.min_test_positives:
+        reasons.append(
+            f"test split has only {real_positives} real failure(s), below the minimum "
+            f"of {thresholds.min_test_positives} — a rate measured on a handful of "
+            "cases is not evidence, however clean the point estimate looks"
+        )
+    if real_negatives < thresholds.min_test_negatives:
+        reasons.append(
+            f"test split has only {real_negatives} real pass(es), below the minimum "
+            f"of {thresholds.min_test_negatives} — a rate measured on a handful of "
+            "cases is not evidence, however clean the point estimate looks"
+        )
+
     if math.isnan(test.tpr) or test.tpr < thresholds.min_tpr:
         reasons.append(
-            f"test TPR {test.tpr:.3f} is below the bar of {thresholds.min_tpr:.2f} — "
+            f"test TPR {test.fmt('tpr')} is below the bar of {thresholds.min_tpr:.2f} — "
             "the judge misses real failures"
         )
     if math.isnan(test.tnr) or test.tnr < thresholds.min_tnr:
         reasons.append(
-            f"test TNR {test.tnr:.3f} is below the bar of {thresholds.min_tnr:.2f} — "
+            f"test TNR {test.fmt('tnr')} is below the bar of {thresholds.min_tnr:.2f} — "
             "the judge cries wolf"
         )
     for name in ("tpr", "tnr"):
         dev_value = getattr(dev, name)
         test_value = getattr(test, name)
         if math.isnan(dev_value) or math.isnan(test_value):
+            notes.append(
+                f"dev->test gap check skipped for {name.upper()}: the rate is undefined "
+                "(nan) on the dev or the test split, so no gap could be computed"
+            )
             continue
         gap = dev_value - test_value
         if gap > thresholds.max_gap:
             reasons.append(
-                f"dev->test gap on {name.upper()} is {gap:.3f}, above the tolerance of "
-                f"{thresholds.max_gap:.2f} — the judge prompt is tuned to dev"
+                f"dev->test gap on {name.upper()} is {gap:.3f} (dev {dev.fmt(name)}, "
+                f"test {test.fmt(name)}), above the tolerance of {thresholds.max_gap:.2f} "
+                "— the judge prompt is tuned to dev"
             )
-    return PromotionCheck(ok=not reasons, reasons=reasons)
+    return PromotionCheck(ok=not reasons, reasons=reasons, notes=notes)
+
+
+def _json_safe(obj: object) -> object:
+    """Recursively replace non-finite floats (nan, inf, -inf) with `None`.
+
+    `json.dumps` happily emits bare `NaN`/`Infinity` literals for these, which
+    Python reads back but which are not valid JSON — `jq` and JavaScript's
+    `JSON.parse` both reject them. This only affects how the report is
+    serialised; `Alignment.to_dict()`'s in-memory contract (real floats,
+    including nan) is unchanged.
+    """
+    if isinstance(obj, float):
+        return obj if math.isfinite(obj) else None
+    if isinstance(obj, dict):
+        return {k: _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_json_safe(v) for v in obj]
+    return obj
 
 
 def write_alignment(
@@ -70,19 +118,22 @@ def write_alignment(
     dev: Alignment,
     test: Alignment | None,
     n_errors: int,
+    notes: list[str] | None = None,
 ) -> Path:
     directory = store.judge_dir(mode, version)
     directory.mkdir(parents=True, exist_ok=True)
 
     store.write_json(
         directory / "alignment.json",
-        {
-            "mode": mode,
-            "version": version,
-            "dev": dev.to_dict(),
-            "test": test.to_dict() if test else None,
-            "quarantined_errors": n_errors,
-        },
+        _json_safe(
+            {
+                "mode": mode,
+                "version": version,
+                "dev": dev.to_dict(),
+                "test": test.to_dict() if test else None,
+                "quarantined_errors": n_errors,
+            }
+        ),
     )
 
     lines = [
@@ -112,8 +163,11 @@ def write_alignment(
     lines += [
         "",
         f"Quarantined calls (never scored): {n_errors}. See `errors.jsonl`.",
-        "",
     ]
+    if notes:
+        lines += ["", "## Notes", ""]
+        lines += [f"- {note}" for note in notes]
+    lines += [""]
     path = directory / "alignment.md"
     path.write_text("\n".join(lines))
     return path

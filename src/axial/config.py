@@ -24,6 +24,8 @@ split_fractions = [0.15, 0.42, 0.43]
 min_tpr = 0.85                 # a judge below this misses real failures
 min_tnr = 0.85                 # a judge below this cries wolf
 max_gap = 0.10                 # dev -> test generalisation gap
+min_test_positives = 30        # real failures the test split must contain before a rate means anything
+min_test_negatives = 30        # real passes the test split must contain before a rate means anything
 """
 
 
@@ -32,6 +34,8 @@ class Thresholds:
     min_tpr: float = 0.85
     min_tnr: float = 0.85
     max_gap: float = 0.10
+    min_test_positives: int = 30
+    min_test_negatives: int = 30
 
 
 @dataclass(frozen=True)
@@ -57,6 +61,8 @@ def load_config(store: Store) -> Config:
         min_tpr=float(thresholds_raw.get("min_tpr", 0.85)),
         min_tnr=float(thresholds_raw.get("min_tnr", 0.85)),
         max_gap=float(thresholds_raw.get("max_gap", 0.10)),
+        min_test_positives=int(thresholds_raw.get("min_test_positives", 30)),
+        min_test_negatives=int(thresholds_raw.get("min_test_negatives", 30)),
     )
     fractions = raw.get("split_fractions", [0.15, 0.42, 0.43])
 
