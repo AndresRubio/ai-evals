@@ -142,3 +142,18 @@ Sources: <https://pydantic.dev/docs/ai/evals/evals/>,
 <https://pydantic.dev/docs/ai/evals/how-to/dataset-management/>,
 <https://pydantic.dev/docs/ai/api/pydantic_evals/generation/>,
 <https://github.com/pydantic/pydantic-ai>
+
+---
+
+## Other sources
+
+Not independently verified against Anthropic's own materials — recorded here only so
+the README's claim about it has a citation, not to assert it beyond what the source
+itself says.
+
+- **Anthropic's error-discovery skill.** Shipped 2026-08-23, installable via `npx
+  skills add`. Builds a review app over a diverse trace sample and clusters
+  annotations into failure modes. Reported by the ai-digest evals-and-benchmarks
+  topic page: <https://andresrubio.github.io/ai-digest/topics/evals-and-benchmarks.html>.
+  This is a secondary source (a digest of reporting on the skill, not Anthropic's own
+  docs or repo), so treat the description above as reported, not confirmed firsthand.

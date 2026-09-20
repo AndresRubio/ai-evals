@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>axial — annotate</title>
+<style>
+  :root { --bg:#fff; --fg:#1a1a1a; --muted:#666; --line:#e3e3e3; --accent:#2f6f4f; --bad:#a03030; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#141414; --fg:#eee; --muted:#999; --line:#333; --accent:#7fc9a0; --bad:#e08585; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+  header { padding:12px 16px; border-bottom:1px solid var(--line); display:flex; gap:16px; align-items:baseline; }
+  header b { font-size:16px; }
+  header span { color:var(--muted); font-size:13px; }
+  main { max-width:900px; margin:0 auto; padding:16px; }
+  .pane { border:1px solid var(--line); border-radius:8px; padding:12px; margin-bottom:12px; }
+  .pane h3 { margin:0 0 6px; font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); }
+  pre { white-space:pre-wrap; word-break:break-word; margin:0; font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; }
+  input,textarea { width:100%; padding:8px; border:1px solid var(--line); border-radius:6px; background:var(--bg); color:var(--fg); font:inherit; }
+  textarea { min-height:70px; resize:vertical; }
+  .row { display:flex; gap:8px; margin-top:8px; }
+  button { padding:8px 14px; border:1px solid var(--line); border-radius:6px; background:var(--bg); color:var(--fg); font:inherit; cursor:pointer; }
+  button.pass { border-color:var(--accent); color:var(--accent); }
+  button.fail { border-color:var(--bad); color:var(--bad); }
+  kbd { border:1px solid var(--line); border-radius:4px; padding:1px 5px; font-size:11px; color:var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <b>axial</b>
+  <span id="progress">loading…</span>
+  <span>open code, then <kbd>p</kbd> pass / <kbd>f</kbd> fail · <kbd>←</kbd> <kbd>→</kbd> navigate · <kbd>⌘/Ctrl+Enter</kbd> fail · <kbd>⌘/Ctrl+Shift+Enter</kbd> pass</span>
+</header>
+<main>
+  <div class="pane" id="input-pane"><h3>Input</h3><pre id="input"></pre></div>
+  <div class="pane" id="output-pane"><h3>Output</h3><pre id="output"></pre></div>
+  <div class="pane" id="missing-pane" style="display:none"><p>This review's trace id is missing from the trace store — there is nothing to show. It cannot be open-coded until the trace is restored to <code>traces.jsonl</code>.</p></div>
+  <div class="pane">
+    <h3>Open code — what went wrong, in your words</h3>
+    <input id="open_code" placeholder="e.g. merged two separate stories into one">
+    <h3 style="margin-top:12px">Critique — why</h3>
+    <textarea id="critique" placeholder="The reasoning here becomes few-shot material for the judge."></textarea>
+    <div class="row">
+      <button class="pass" onclick="save('pass')">Pass (p)</button>
+      <button class="fail" onclick="save('fail')">Fail (f)</button>
+      <button onclick="move(-1)">← Prev</button>
+      <button onclick="move(1)">Next →</button>
+    </div>
+  </div>
+</main>
+<script>
+let items = [], i = 0, annotator = "";
+
+async function load() {
+  const data = await (await fetch("/api/session")).json();
+  items = data.items; annotator = data.annotator;
+  const firstPending = items.findIndex(x => x.status !== "done");
+  i = firstPending === -1 ? 0 : firstPending;
+  render(data.done);
+}
+
+function render(done) {
+  const item = items[i];
+  if (!item) return;
+  const inputPane = document.getElementById("input-pane");
+  const outputPane = document.getElementById("output-pane");
+  const missingPane = document.getElementById("missing-pane");
+  if (item.missing) {
+    inputPane.style.display = "none";
+    outputPane.style.display = "none";
+    missingPane.style.display = "";
+  } else {
+    inputPane.style.display = "";
+    outputPane.style.display = "";
+    missingPane.style.display = "none";
+    document.getElementById("input").textContent = item.input;
+    document.getElementById("output").textContent = item.output;
+  }
+  document.getElementById("open_code").value = item.open_code || "";
+  document.getElementById("critique").value = item.critique || "";
+  const d = done ?? items.filter(x => x.status === "done").length;
+  document.getElementById("progress").textContent =
+    `${item.trace_id} — ${i + 1} of ${items.length} · ${d} annotated · ${annotator}`;
+}
+
+async function save(verdict) {
+  const item = items[i];
+  const body = {
+    open_code: document.getElementById("open_code").value,
+    critique: document.getElementById("critique").value,
+    verdict,
+  };
+  const res = await fetch(`/api/review/${encodeURIComponent(item.trace_id)}`, {
+    method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body),
+  });
+  if (res.ok) { Object.assign(item, body, {status: "done"}); move(1); }
+}
+
+function move(step) {
+  i = Math.min(items.length - 1, Math.max(0, i + step));
+  render();
+}
+
+document.addEventListener("keydown", e => {
+  if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") {
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && e.shiftKey) { save("pass"); return; }
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { save("fail"); return; }
+    return;
+  }
+  if (e.key === "p") save("pass");
+  if (e.key === "f") save("fail");
+  if (e.key === "ArrowLeft") move(-1);
+  if (e.key === "ArrowRight") move(1);
+});
+
+load();
+</script>
+</body>
+</html>
