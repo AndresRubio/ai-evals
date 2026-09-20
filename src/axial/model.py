@@ -198,13 +198,25 @@ class LiteLLMModel:
             choice = response.choices[0]
             stop_reason = getattr(choice, "finish_reason", "stop") or "stop"
             usage = getattr(response, "usage", None)
+            # Invariant 9: no silent zeros. A response with no `usage` at all, or a
+            # `usage` object that carries neither token count, means the cost is
+            # unknown -- not zero -- so record the absence as an empty dict rather
+            # than fabricating `{"input_tokens": 0, "output_tokens": 0}`. `cost_usd`
+            # (checks.py) treats an empty usage dict the same way it treats an
+            # unpriced model: `None`, not a silently-wrong $0.00.
+            input_tokens = getattr(usage, "prompt_tokens", None) if usage is not None else None
+            output_tokens = (
+                getattr(usage, "completion_tokens", None) if usage is not None else None
+            )
+            usage_dict: dict[str, int] = (
+                {}
+                if input_tokens is None and output_tokens is None
+                else {"input_tokens": input_tokens or 0, "output_tokens": output_tokens or 0}
+            )
             return Completion(
                 text=choice.message.content or "",
                 model=served,
-                usage={
-                    "input_tokens": getattr(usage, "prompt_tokens", 0) if usage else 0,
-                    "output_tokens": getattr(usage, "completion_tokens", 0) if usage else 0,
-                },
+                usage=usage_dict,
                 stop_reason=stop_reason,
                 truncated=stop_reason == "length",
                 attempts=attempt,

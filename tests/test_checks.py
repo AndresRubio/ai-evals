@@ -82,6 +82,19 @@ def test_cost_is_none_for_an_unpriced_model():
     assert cost_usd({"input_tokens": 10, "output_tokens": 10}, "some-local-model") is None
 
 
+def test_cost_is_none_for_a_row_with_no_usage():
+    """Invariant 9: a missing `usage` is a runner bug, not a $0.00 measurement."""
+    assert cost_usd({}, "claude-opus-5") is None
+
+
+def test_cost_is_none_for_a_row_with_explicitly_empty_usage():
+    """An explicitly empty `{}` -- the shape the model layer now records when a
+    provider sent no token counts -- must be treated the same as a `usage` key
+    that was never set at all."""
+    usage: dict[str, int] = {}
+    assert cost_usd(usage, "claude-opus-5") is None
+
+
 def test_ablated_spec_drops_a_field_from_the_prompt():
     spec = JudgeSpec(mode="m", prompt_template="IN {input}\nOUT {output}")
     ablated = ablated_spec(spec, "input")

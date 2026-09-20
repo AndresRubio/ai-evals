@@ -72,7 +72,15 @@ class Taxonomy(BaseModel):
 
 
 def count_open_codes(reviews: list[Review]) -> int:
-    return sum(1 for r in reviews if r.open_code and r.open_code.strip())
+    """Distinct traces carrying an open code, not review rows.
+
+    `sample` defaults to `--seed 0`, so two review sessions can draw the exact
+    same batch of traces; annotating both then produces two rows per trace.
+    Summing rows would double that batch's evidence for free -- counting
+    distinct trace ids is what keeps the 30-trace floor meaning 30 traces
+    actually looked at, not 30 rows over as few as 15.
+    """
+    return len({r.trace_id for r in reviews if r.open_code and r.open_code.strip()})
 
 
 def saturation_curve(reviews: list[Review]) -> list[int]:

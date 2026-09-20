@@ -12,6 +12,7 @@ from typing import Any
 
 from axial.align import paired_bootstrap_ci
 from axial.errors import InvariantViolation
+from axial.report import JUDGE_YAML_HASH_KEY, VERDICTS_HASH_KEY, parse_promoted_marker
 from axial.store import Store
 
 
@@ -33,11 +34,41 @@ def compare(
 
 def _load(store: Store, mode: str, version: int) -> list[dict[str, Any]]:
     directory = store.judge_dir(mode, version)
-    if not (directory / "PROMOTED").exists():
+    marker_path = directory / "PROMOTED"
+    if not marker_path.exists():
         raise InvariantViolation(
             f"judge {mode} v{version} has not been promoted. Run `axial promote` — a judge "
             "whose agreement with human labels was never measured on test cannot gate a build."
         )
+
+    # The marker on its own only proves *some* run was promoted once. Recompute
+    # both hashes it recorded and refuse if either has drifted: a hand-edited
+    # judge.yaml or a verdicts.jsonl overwritten by a later `run_judge` means the
+    # evidence behind PROMOTED no longer describes what's on disk, and this is
+    # the only thing standing between that and a silently unmeasured judge
+    # gating a build.
+    recorded = parse_promoted_marker(marker_path.read_text())
+    recorded_judge_hash = recorded.get(JUDGE_YAML_HASH_KEY)
+    if recorded_judge_hash is not None:
+        current_judge_hash = store.hash_file(directory / "judge.yaml")
+        if current_judge_hash != recorded_judge_hash:
+            raise InvariantViolation(
+                f"judge {mode} v{version}'s judge.yaml has changed since it was promoted — "
+                "the judge that earned PROMOTED is not the judge on disk. Re-run `axial "
+                "promote` on the current judge, or run `axial judge --new` to score the "
+                "changed prompt as a fresh version."
+            )
+    recorded_verdicts_hash = recorded.get(VERDICTS_HASH_KEY)
+    if recorded_verdicts_hash is not None:
+        current_verdicts_hash = store.hash_file(directory / "verdicts.jsonl")
+        if current_verdicts_hash != recorded_verdicts_hash:
+            raise InvariantViolation(
+                f"judge {mode} v{version}'s verdicts.jsonl has changed since it was promoted — "
+                "the verdicts that earned PROMOTED are not the verdicts on disk. Re-run `axial "
+                "promote` on the current run, or run `axial judge --new` to score it as a "
+                "fresh version."
+            )
+
     rows = store.read_jsonl(directory / "verdicts.jsonl")
     if not rows:
         raise InvariantViolation(

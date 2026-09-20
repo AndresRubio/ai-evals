@@ -42,6 +42,24 @@ def test_count_open_codes_ignores_pending_and_blank(tmp_path: Path):
     assert count_open_codes(reviews) == 3
 
 
+def test_count_open_codes_counts_distinct_traces_not_rows():
+    """Two review sessions can draw the identical batch (`sample` defaults to
+    --seed 0), so annotating both produces two rows per trace. The floor must
+    count traces looked at, not rows written."""
+    reviews = coded(20) + coded(20)  # same 20 trace ids, twice
+    assert len(reviews) == 40
+    assert count_open_codes(reviews) == 20
+
+
+def test_propose_refuses_when_duplicate_sessions_inflate_the_row_count():
+    """40 open-code rows over only 20 distinct traces must still refuse: this is
+    exactly the scenario where two sessions sampled with the same seed re-code
+    the same batch, doubling the row count without doubling the evidence."""
+    reviews = coded(20) + coded(20)
+    with pytest.raises(InvariantViolation, match="30"):
+        propose_taxonomy(reviews, fake_complete)
+
+
 def test_propose_refuses_below_thirty_open_codes():
     """Husain's floor: open coding is where you find failures you didn't know existed."""
     with pytest.raises(InvariantViolation, match="30"):

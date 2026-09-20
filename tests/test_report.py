@@ -8,8 +8,11 @@ from axial.align import align
 from axial.config import Thresholds
 from axial.errors import InvariantViolation
 from axial.report import (
+    JUDGE_YAML_HASH_KEY,
+    VERDICTS_HASH_KEY,
     alignment_from_verdicts,
     check_promotion,
+    parse_promoted_marker,
     promote,
     write_alignment,
 )
@@ -96,6 +99,26 @@ def test_promote_refuses_a_judge_below_the_bar(tmp_path: Path):
     with pytest.raises(InvariantViolation, match="TPR"):
         promote(store, "merged", 1, useless(), useless(), Thresholds())
     assert not (store.judge_dir("merged", 1) / "PROMOTED").exists()
+
+
+def test_promote_binds_the_marker_to_judge_yaml_and_verdicts_hashes(tmp_path: Path):
+    """The critical fix: PROMOTED must record a hash of judge.yaml and of
+    verdicts.jsonl as they existed at promotion time, in a parseable form
+    alongside the human-readable summary, so `gate` can tell whether either
+    has since changed."""
+    store = Store(tmp_path)
+    directory = store.judge_dir("merged", 1)
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "judge.yaml").write_text("mode: merged\nprompt_template: original\n")
+    store.write_jsonl(directory / "verdicts.jsonl", [{"trace_id": "t0", "verdict": True}])
+
+    promote(store, "merged", 1, perfect(), perfect(), Thresholds())
+
+    text = (directory / "PROMOTED").read_text()
+    assert "test " in text and "dev " in text  # the human-readable summary is still there
+    marker = parse_promoted_marker(text)
+    assert marker[JUDGE_YAML_HASH_KEY] == store.hash_file(directory / "judge.yaml")
+    assert marker[VERDICTS_HASH_KEY] == store.hash_file(directory / "verdicts.jsonl")
 
 
 # --- Fix round 1: the class-count floor, nan handling, and gap-check notes ---
@@ -185,6 +208,29 @@ def test_alignment_json_has_no_bare_nan(tmp_path: Path):
     assert "NaN" not in raw_text
     parsed = json.loads(raw_text)
     assert parsed["dev"]["tnr"] is None
+
+
+def test_write_alignment_table_shows_na_not_nan_for_an_undefined_rate(tmp_path: Path):
+    """`summary()` already renders `n/a` for an undefined rate; the markdown
+    table must not disagree by rendering a bare `nan` for the same number."""
+    store = Store(tmp_path)
+    dev = align([True] * 10, [True] * 10, n_boot=50, seed=1)
+    assert math.isnan(dev.tnr)
+    path = write_alignment(store, "merged", 1, dev, None, n_errors=0)
+    text = path.read_text()
+    assert "nan" not in text.lower()
+    assert "n/a" in text
+
+
+def test_write_alignment_prose_says_accuracy_is_never_reported_alone(tmp_path: Path):
+    """The prose used to say accuracy 'is not reported' directly above a table
+    whose last column is accuracy -- what it means is that accuracy is never
+    reported *alone*, and is shown last, beside TPR and TNR, for that reason."""
+    store = Store(tmp_path)
+    path = write_alignment(store, "merged", 1, perfect(), perfect(), n_errors=0)
+    text = path.read_text()
+    assert "never reported alone" in text
+    assert "shown last" in text
 
 
 def test_write_alignment_surfaces_notes(tmp_path: Path):

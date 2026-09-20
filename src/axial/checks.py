@@ -94,11 +94,18 @@ def verbosity_bias(verdicts: list[dict[str, Any]], traces: list[Trace]) -> float
 
 
 def cost_usd(usage: dict[str, int], model: str) -> float | None:
-    """Cost from the tokens actually recorded, or None if the model has no price here.
+    """Cost from the tokens actually recorded, or None if it cannot be known.
 
-    Returning None is deliberate: a flat assumed rate is how a cost comparison ends up
-    reversed, so an unpriced model reports 'unknown' rather than a plausible fiction.
+    Returning None is deliberate, twice over. An unpriced model reports
+    'unknown' rather than a plausible fiction, because a flat assumed rate is
+    how a cost comparison ends up reversed. And a missing or empty `usage` --
+    invariant 9's "no silent zeros" -- reports 'unknown' rather than $0.00: the
+    model layer records an absent usage as `{}` precisely so this function (and
+    the CLI `checks` command) can tell "genuinely free" apart from "never
+    measured", which a fabricated `0` cannot.
     """
+    if not usage:
+        return None
     price = PRICES.get(model)
     if price is None:
         return None

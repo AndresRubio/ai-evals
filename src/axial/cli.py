@@ -10,14 +10,21 @@ from typing import NoReturn
 import typer
 
 from axial.config import load_config, write_default_config
-from axial.dataset import Label, add_labels, class_balance_report, make_splits, read_labels
+from axial.dataset import (
+    Label,
+    add_labels,
+    class_balance_report,
+    labels_from_reviews,
+    make_splits,
+    read_labels,
+)
 from axial.errors import AxialError
 from axial.gate import gate as run_gate
 from axial.judge import JudgeSpec, run_judge
 from axial.model import LiteLLMModel
 from axial.report import alignment_from_verdicts, check_promotion, write_alignment
 from axial.report import promote as do_promote
-from axial.sample import all_reviews, create_session, sample_batch
+from axial.sample import all_reviews, create_session, read_session, sample_batch
 from axial.store import Store
 from axial.taxonomy import Taxonomy, count_open_codes, propose_taxonomy, saturation_curve
 from axial.traces import ingest as do_ingest
@@ -30,6 +37,9 @@ RepoOption = typer.Option(".", "--repo", help="Repository root holding .axial/")
 # might be `fastapi.Path` — a module-level singleton sidesteps that false positive,
 # exactly as its own message suggests.
 LabelPathOption = typer.Option(..., help="JSONL of {trace_id, label, critique, annotator}")
+# Same B008 false positive as LabelPathOption above, for `label-from-reviews`'s
+# variadic session-name argument.
+SessionsArgument = typer.Argument(..., help="Review session name(s) to convert (repeatable)")
 
 
 def _fail(message: str) -> NoReturn:
@@ -78,6 +88,12 @@ def sample(
 ) -> None:
     """Draw a review batch. Targeted strategies mix in a random slice."""
     store = Store(repo)
+    if strategy != "random" and random_fraction == 0:
+        typer.echo(
+            "warning: --random-fraction 0 with a targeted strategy disables invariant 10 "
+            "(every batch keeps a random slice) — every trace in this batch was already "
+            "suspected of a problem before it was chosen"
+        )
     batch = sample_batch(
         store.read_traces(), n, strategy=strategy, random_fraction=random_fraction, seed=seed
     )
@@ -141,6 +157,30 @@ def label_import(
     typer.echo(f"{len(rows)} labels recorded for {mode}")
 
 
+@app.command("label-from-reviews")
+def label_from_reviews(
+    mode: str,
+    sessions: list[str] = SessionsArgument,
+    repo: str = RepoOption,
+) -> None:
+    """Convert completed `annotate` reviews into labels for one failure mode.
+
+    Every completed review already carries a verdict, a critique and an
+    annotator -- a `Label` in all but name. This is the path from annotation
+    to labels that `label-import` (a hand-built file) does not cover:
+    `verdict == "fail"` becomes `label=True`, `"pass"` becomes `label=False`,
+    and a `pending` review is skipped rather than silently counted.
+    """
+    store = Store(repo)
+    reviews = [r for name in sessions for r in read_session(store, name)]
+    labels, skipped = labels_from_reviews(reviews)
+    try:
+        add_labels(store, mode, labels)
+    except AxialError as exc:
+        _fail(str(exc))
+    typer.echo(f"{len(labels)} labels recorded for {mode}; {skipped} pending review(s) skipped")
+
+
 @app.command()
 def split(mode: str, seed: int = typer.Option(0), repo: str = RepoOption) -> None:
     """Draw a stratified train/dev/test split and freeze the test manifest."""
@@ -194,6 +234,10 @@ def judge(
 ) -> None:
     """Run the judge over one split."""
     from axial.dataset import Splits
+
+    valid_splits = ("train", "dev", "test")
+    if split_name not in valid_splits:
+        _fail(f"unknown split {split_name!r}; expected one of {valid_splits}")
 
     store = Store(repo)
     config = load_config(store)
@@ -300,23 +344,28 @@ def checks(
     )
 
     # Cost from each row's own recorded model and usage -- never a flat assumed
-    # rate. A row whose model has no entry in checks.PRICES is reported as
-    # unpriced rather than folded into the total at some other model's rate,
-    # which is exactly the shortcut that can make a cost comparison come out
-    # backwards.
+    # rate. A row is reported as unknown, not folded into the total as zero,
+    # for either of two reasons: its model has no entry in checks.PRICES, or
+    # (invariant 9) it carries no usage at all -- a runner bug or a provider
+    # that omitted it, not a genuinely free call. Both are exactly the
+    # shortcut that can make a cost comparison come out backwards.
     known_cost = 0.0
+    unknown_rows = 0
     unpriced_models: set[str] = set()
     for row in verdicts:
-        priced = cost_usd(row.get("usage", {}), row.get("model", ""))
+        usage = row.get("usage", {})
+        model_name = str(row.get("model", "unknown"))
+        priced = cost_usd(usage, model_name)
         if priced is None:
-            unpriced_models.add(str(row.get("model", "unknown")))
+            unknown_rows += 1
+            if usage:
+                # Usage was recorded; it's the model's price that's missing.
+                unpriced_models.add(model_name)
         else:
             known_cost += priced
-    if unpriced_models:
-        typer.echo(
-            f"cost: ${known_cost:.4f} known (unknown price for: "
-            f"{', '.join(sorted(unpriced_models))})"
-        )
+    if unknown_rows:
+        detail = f"; unpriced model(s): {', '.join(sorted(unpriced_models))}" if unpriced_models else ""
+        typer.echo(f"cost: ${known_cost:.4f} known, {unknown_rows} row(s) unknown{detail}")
     else:
         typer.echo(f"cost: ${known_cost:.4f}")
 

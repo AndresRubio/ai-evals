@@ -27,6 +27,7 @@ import numpy as np
 from pydantic import BaseModel, Field
 
 from axial.errors import InvariantViolation
+from axial.sample import Review
 from axial.store import Store
 
 # Distinctive vendor/model terms. These are matched as a substring of the
@@ -236,6 +237,39 @@ def add_labels(store: Store, mode: str, labels: list[Label]) -> None:
 
 def read_labels(store: Store, mode: str) -> list[Label]:
     return [Label.model_validate(r) for r in store.read_jsonl(_labels_path(store, mode))]
+
+
+def labels_from_reviews(reviews: list[Review]) -> tuple[list[Label], int]:
+    """Convert completed annotate-app reviews into labels for one failure mode.
+
+    The annotate app already records `verdict`, `critique` and `annotator` per
+    review -- that is a `Label` in all but name. `verdict == "fail"` means the
+    failure mode graded in this review session IS present, so it becomes
+    `label=True`; `"pass"` becomes `label=False`. A `pending` review carries no
+    verdict yet and is skipped rather than defaulted to a pass, and the skip
+    count is returned so a caller can report it instead of silently losing
+    rows.
+
+    This does not itself enforce the human-annotator or non-blank-critique
+    rules -- the labels it returns still go through `add_labels`, so every
+    existing refusal there (a blank critique, a machine-looking annotator)
+    still applies to labels that arrive this way.
+    """
+    labels: list[Label] = []
+    skipped = 0
+    for review in reviews:
+        if review.status != "done":
+            skipped += 1
+            continue
+        labels.append(
+            Label(
+                trace_id=review.trace_id,
+                label=review.verdict == "fail",
+                critique=review.critique or "",
+                annotator=review.annotator or "",
+            )
+        )
+    return labels, skipped
 
 
 class Splits(BaseModel):

@@ -76,6 +76,32 @@ def test_sample_passes_random_fraction_through_to_sample_batch(
     assert captured["random_fraction"] == 0.5
 
 
+def test_sample_warns_when_random_fraction_is_zero_with_a_targeted_strategy(tmp_path: Path):
+    src = write_traces_file(tmp_path, 10)
+    runner.invoke(app, ["ingest", str(src), "--repo", str(tmp_path)])
+    result = runner.invoke(
+        app,
+        ["sample", "--n", "4", "--name", "s1", "--strategy", "outlier",
+         "--random-fraction", "0", "--repo", str(tmp_path)],
+    )
+    assert result.exit_code == 0
+    assert "invariant 10" in result.stdout.lower()
+
+
+def test_sample_does_not_warn_for_the_random_strategy_at_zero(tmp_path: Path):
+    """`random_fraction` plays no role for `--strategy random`; the whole batch
+    is already random, so there is nothing to warn about."""
+    src = write_traces_file(tmp_path, 10)
+    runner.invoke(app, ["ingest", str(src), "--repo", str(tmp_path)])
+    result = runner.invoke(
+        app,
+        ["sample", "--n", "4", "--name", "s1", "--strategy", "random",
+         "--random-fraction", "0", "--repo", str(tmp_path)],
+    )
+    assert result.exit_code == 0
+    assert "warning" not in result.stdout.lower()
+
+
 def test_taxonomy_refuses_below_the_open_code_floor(tmp_path: Path):
     src = write_traces_file(tmp_path, 5)
     runner.invoke(app, ["ingest", str(src), "--repo", str(tmp_path)])
@@ -83,6 +109,66 @@ def test_taxonomy_refuses_below_the_open_code_floor(tmp_path: Path):
     result = runner.invoke(app, ["taxonomy", "--repo", str(tmp_path)])
     assert result.exit_code == 1
     assert "30" in result.stdout
+
+
+def test_checks_reports_rows_with_no_usage_as_unknown_not_zero(tmp_path: Path):
+    """Invariant 9: a row with no `usage` key and a row with an explicitly empty
+    `usage` must both be reported as unknown cost, not folded into the total as
+    $0.00 or blamed on an unpriced model."""
+    store = Store(tmp_path)
+    traces = [{"input": "in0", "output": "out0", "trace_id": "t0"}]
+    store.write_jsonl(store.traces_path, traces)
+    directory = store.judge_dir("m", 1)
+    directory.mkdir(parents=True, exist_ok=True)
+    store.write_jsonl(
+        directory / "verdicts.jsonl",
+        [
+            {"trace_id": "t0", "split": "test", "verdict": True, "truth": True,
+             "model": "claude-opus-5", "usage": {"input_tokens": 1_000_000, "output_tokens": 0}},
+            {"trace_id": "t0", "split": "test", "verdict": False, "truth": False,
+             "model": "claude-opus-5"},  # no "usage" key at all
+            {"trace_id": "t0", "split": "test", "verdict": False, "truth": False,
+             "model": "claude-opus-5", "usage": {}},  # explicitly empty usage
+        ],
+    )
+    result = runner.invoke(app, ["checks", "m", "1", "--repo", str(tmp_path)])
+    assert result.exit_code == 0, result.stdout
+    assert "2 row(s) unknown" in result.stdout
+    assert "$0.0000" not in result.stdout  # the priced row's $5.00 must still show
+    assert "$5.0000" in result.stdout
+
+
+def test_label_from_reviews_converts_completed_reviews_across_sessions(tmp_path: Path):
+    store = Store(tmp_path)
+    src = write_traces_file(tmp_path, 4)
+    runner.invoke(app, ["ingest", str(src), "--repo", str(tmp_path)])
+
+    from axial.sample import create_session, read_session, write_session
+
+    traces = store.read_traces()
+    create_session(store, traces[:2], name="s1")
+    create_session(store, traces[2:], name="s2")
+
+    for name, verdict in (("s1", "fail"), ("s2", "pass")):
+        reviews = read_session(store, name)
+        for review in reviews:
+            review.verdict = verdict
+            review.critique = "because"
+            review.annotator = "andres"
+            review.status = "done"
+        write_session(store, name, reviews)
+
+    result = runner.invoke(
+        app, ["label-from-reviews", "merged", "s1", "s2", "--repo", str(tmp_path)]
+    )
+    assert result.exit_code == 0, result.stdout
+    assert "0 pending review(s) skipped" in result.stdout
+
+    from axial.dataset import read_labels
+
+    labels = read_labels(store, "merged")
+    assert len(labels) == 4
+    assert {lbl.label for lbl in labels} == {True, False}
 
 
 def test_gate_exits_nonzero_on_a_regression(tmp_path: Path):
@@ -217,6 +303,24 @@ def _seed_corpus_and_splits(store: Store, mode: str = "m") -> None:
     traces = [{"input": f"in{i}", "output": f"out{i}", "trace_id": f"t{i}"} for i in range(6)]
     store.write_jsonl(store.traces_path, traces)
     Splits(train=["t0", "t1"], dev=["t2", "t3"], test=["t4", "t5"], seed=0).save(store, mode)
+
+
+def test_judge_rejects_an_invalid_split_name_with_a_clean_message(tmp_path: Path):
+    """A typo'd --split used to reach `getattr(splits, split_name)` directly and
+    raise a bare AttributeError traceback."""
+    from axial.config import write_default_config
+
+    store = Store(tmp_path)
+    write_default_config(store)
+    _seed_corpus_and_splits(store)
+
+    result = runner.invoke(
+        app, ["judge", "m", "--split", "trian", "--repo", str(tmp_path)]
+    )
+    assert result.exit_code == 1
+    assert "Traceback" not in result.output
+    assert "trian" in result.stdout
+    assert "dev" in result.stdout and "test" in result.stdout
 
 
 def test_few_shot_option_is_written_and_survives_a_second_run(

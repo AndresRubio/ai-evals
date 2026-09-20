@@ -93,6 +93,57 @@ def check_promotion(dev: Alignment, test: Alignment, thresholds: Thresholds) -> 
     return PromotionCheck(ok=not reasons, reasons=reasons, notes=notes)
 
 
+JUDGE_YAML_HASH_KEY = "judge_yaml_sha256"
+VERDICTS_HASH_KEY = "verdicts_sha256"
+
+
+def format_promoted_marker(
+    dev_summary: str, test_summary: str, judge_yaml_hash: str, verdicts_hash: str
+) -> str:
+    """Render the `PROMOTED` marker: a human-readable summary plus two
+    machine-parseable `key=value` lines binding the marker to the exact
+    `judge.yaml` and `verdicts.jsonl` it was earned on.
+
+    Without this binding, `gate` could only check that *some* `PROMOTED` file
+    existed, not that the judge or its verdicts still matched what earned it
+    -- which is exactly what let a promoted judge be silently replaced under
+    its own marker. `gate._load` recomputes both hashes with `store.hash_file`
+    and calls `parse_promoted_marker` to compare them against these.
+    """
+    return (
+        f"test {test_summary}\n"
+        f"dev {dev_summary}\n"
+        f"{JUDGE_YAML_HASH_KEY}={judge_yaml_hash}\n"
+        f"{VERDICTS_HASH_KEY}={verdicts_hash}\n"
+    )
+
+
+def parse_promoted_marker(text: str) -> dict[str, str]:
+    """Parse the `key=value` lines out of a `PROMOTED` marker.
+
+    Shared with `gate`, the only other reader of this file, so the marker's
+    format is defined in exactly one place.
+    """
+    values: dict[str, str] = {}
+    for line in text.splitlines():
+        if "=" in line:
+            key, _, value = line.partition("=")
+            values[key.strip()] = value.strip()
+    return values
+
+
+def _fmt_rate(value: float) -> str:
+    """Point estimate only, `n/a` when undefined.
+
+    The same fallback `Alignment.fmt`/`summary()` use, so a markdown table
+    cell and the one-line summary printed by the CLI never disagree about
+    whether a rate is reportable -- without this, an undefined rate rendered
+    as a bare `nan` in the table while `summary()` said `n/a` for the same
+    number.
+    """
+    return "n/a" if math.isnan(value) else f"{value:.3f}"
+
+
 def _json_safe(obj: object) -> object:
     """Recursively replace non-finite floats (nan, inf, -inf) with `None`.
 
@@ -141,8 +192,9 @@ def write_alignment(
         "",
         "Agreement between this judge and the human labels. TPR is the share of real",
         "failures the judge caught; TNR is the share of clean traces it left alone.",
-        "Accuracy alone is not reported, because under class imbalance it is the number",
-        "that gets a judge which detects nothing shipped.",
+        "Accuracy is never reported alone: it is shown last, beside TPR and TNR, precisely",
+        "because under class imbalance a high accuracy on its own is the number that gets a",
+        "judge which detects nothing shipped.",
         "",
         "| split | n | TPR | TNR | kappa | accuracy |",
         "|---|---|---|---|---|---|",
@@ -151,8 +203,8 @@ def write_alignment(
         if result is None:
             continue
         lines.append(
-            f"| {name} | {result.n} | {result.tpr:.3f} | {result.tnr:.3f} | "
-            f"{result.kappa:.3f} | {result.accuracy:.3f} |"
+            f"| {name} | {result.n} | {_fmt_rate(result.tpr)} | {_fmt_rate(result.tnr)} | "
+            f"{_fmt_rate(result.kappa)} | {_fmt_rate(result.accuracy)} |"
         )
     lines += [
         "",
@@ -188,4 +240,12 @@ def promote(
         )
     directory = store.judge_dir(mode, version)
     directory.mkdir(parents=True, exist_ok=True)
-    (directory / "PROMOTED").write_text(f"test {test.summary()}\ndev {dev.summary()}\n")
+    # Bind the marker to the exact judge.yaml and verdicts.jsonl it was earned
+    # on. Without this, `gate` could only check that the marker existed, and
+    # nothing stopped a judge from being scored on a fresh run (or a hand-edited
+    # prompt) while the stale, unrelated PROMOTED marker stayed in place.
+    judge_yaml_hash = store.hash_file(directory / "judge.yaml")
+    verdicts_hash = store.hash_file(directory / "verdicts.jsonl")
+    (directory / "PROMOTED").write_text(
+        format_promoted_marker(dev.summary(), test.summary(), judge_yaml_hash, verdicts_hash)
+    )

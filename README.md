@@ -38,7 +38,8 @@ example, not committed, so nothing here demonstrates that directly.)
 | `axial sample` | traces | a review batch; targeted strategies mix in a random slice (30% by default, `--random-fraction`) |
 | `axial annotate` | a batch | open codes, verdicts and critiques |
 | `axial taxonomy` | your open codes | a failure taxonomy with prevalence |
-| `axial label-import` | a labels JSONL + a mode name | human labels |
+| `axial label-from-reviews` | one or more annotated review sessions + a failure mode | human labels, converted from `verdict`/`critique`/`annotator` |
+| `axial label-import` | a labels JSONL + a mode name | human labels, for labels made elsewhere |
 | `axial split` | labels | a stratified, seeded, frozen split |
 | `axial judge` | a split + a prompt | verdicts, and errors kept separate |
 | `axial align` | verdicts vs labels | an alignment report |
@@ -102,7 +103,28 @@ for it from here on.
 uv run axial taxonomy
 ```
 
-See [`examples/newsroom/`](examples/newsroom/) for the rest of the walkthrough.
+Pick one failure mode id from the taxonomy it just proposed (the newsroom corpus
+plants `merged_stories`, `hallucinated_sources`, `wrong_topic` and
+`promotional_content`, so it is likely one of those), then carry your own
+annotations the rest of the way to a promoted, gate-ready judge:
+
+```bash
+uv run axial label-from-reviews merged_stories first-pass
+uv run axial split merged_stories
+uv run axial judge merged_stories --split dev
+# iterate on .axial/judges/merged_stories/v1/judge.yaml, re-running `judge --split dev`
+# and `axial align merged_stories 1` until dev alignment looks right, then:
+uv run axial judge merged_stories --split test
+uv run axial align merged_stories 1
+uv run axial promote merged_stories 1
+uv run axial gate merged_stories --version 1
+```
+
+`label-from-reviews` is what turns the `annotate` app's output into ground truth —
+every completed review already carries a verdict, a critique and an annotator, so
+there is no separate hand-built file to write. See
+[`examples/newsroom/`](examples/newsroom/) for the fully offline, `FakeModel`-backed
+version of this same walkthrough.
 
 ## Prior art
 

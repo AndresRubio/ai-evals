@@ -302,3 +302,33 @@ def test_litellm_model_rejects_mismatched_served_models(monkeypatch, requested, 
     model = LiteLLMModel(requested, seed=1)
     with pytest.raises(ServedModelMismatch):
         model.complete("hi")
+
+
+# --- Invariant 9: no silent zeros for usage ---
+
+
+def test_litellm_model_records_empty_usage_when_the_response_has_none(monkeypatch):
+    """A response with no `usage` at all must not become a fabricated
+    {"input_tokens": 0, "output_tokens": 0} -- that reads as a real, free call
+    rather than the unmeasured one it actually is."""
+    response = _make_response()
+    response.usage = None
+    monkeypatch.setitem(sys.modules, "litellm", _make_stub_litellm(lambda **kw: response))
+
+    model = LiteLLMModel("my-model", seed=1)
+    out = model.complete("hi")
+
+    assert out.usage == {}
+
+
+def test_litellm_model_records_empty_usage_when_the_usage_object_is_empty(monkeypatch):
+    """A `usage` object present but carrying neither token count is the same
+    "unmeasured", not "zero", case as no `usage` at all."""
+    response = _make_response()
+    response.usage = SimpleNamespace()
+    monkeypatch.setitem(sys.modules, "litellm", _make_stub_litellm(lambda **kw: response))
+
+    model = LiteLLMModel("my-model", seed=1)
+    out = model.complete("hi")
+
+    assert out.usage == {}

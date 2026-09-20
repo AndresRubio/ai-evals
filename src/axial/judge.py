@@ -268,6 +268,16 @@ def run_judge(
     # on disk. Re-running one split replaces only that split's rows.
     directory = store.judge_dir(spec.mode, spec.version)
     directory.mkdir(parents=True, exist_ok=True)
+
+    # A PROMOTED marker binds specific hashes of judge.yaml and verdicts.jsonl
+    # (see report.promote) to the alignment that earned it. We are about to
+    # rewrite verdicts.jsonl for this split, so whatever evidence backed that
+    # marker no longer describes what will be on disk -- delete it rather than
+    # let a stale marker keep gating a build on a run nobody re-measured.
+    marker = directory / "PROMOTED"
+    if marker.exists():
+        marker.unlink()
+
     for filename, fresh in (("verdicts.jsonl", result.verdicts), ("errors.jsonl", result.errors)):
         path = directory / filename
         kept = [r for r in store.read_jsonl(path) if r.get("split") != split]

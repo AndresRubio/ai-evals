@@ -7,11 +7,13 @@ from axial.dataset import (
     Splits,
     add_labels,
     class_balance_report,
+    labels_from_reviews,
     make_splits,
     read_labels,
     verify_test_manifest,
 )
 from axial.errors import InvariantViolation
+from axial.sample import Review
 from axial.store import Store
 
 
@@ -255,6 +257,46 @@ def test_save_raises_when_supplied_test_hash_disagrees_with_ids(tmp_path: Path):
     tampered = splits.model_copy(update={"test_hash": "not-the-real-hash"})
     with pytest.raises(InvariantViolation, match="test_hash"):
         tampered.save(store, "merged")
+
+
+def test_labels_from_reviews_maps_verdicts_correctly():
+    reviews = [
+        Review(trace_id="t1", open_code="merged", verdict="fail", critique="two in one",
+               annotator="andres", status="done"),
+        Review(trace_id="t2", open_code="fine", verdict="pass", critique="reads correctly",
+               annotator="andres", status="done"),
+    ]
+    labels, skipped = labels_from_reviews(reviews)
+    assert skipped == 0
+    by_id = {lbl.trace_id: lbl for lbl in labels}
+    assert by_id["t1"].label is True
+    assert by_id["t1"].critique == "two in one"
+    assert by_id["t1"].annotator == "andres"
+    assert by_id["t2"].label is False
+
+
+def test_labels_from_reviews_skips_pending_rows_and_reports_the_count():
+    reviews = [
+        Review(trace_id="t1", verdict="fail", critique="x", annotator="andres", status="done"),
+        Review(trace_id="t2"),  # still pending
+        Review(trace_id="t3"),  # still pending
+    ]
+    labels, skipped = labels_from_reviews(reviews)
+    assert [lbl.trace_id for lbl in labels] == ["t1"]
+    assert skipped == 2
+
+
+def test_labels_from_reviews_with_a_blank_critique_is_refused_by_add_labels(tmp_path: Path):
+    """`labels_from_reviews` itself does not enforce the critique/annotator rules
+    -- every label it returns still passes through `add_labels`, so a review
+    someone finished without writing a critique is refused there, not silently
+    imported."""
+    store = Store(tmp_path)
+    reviews = [Review(trace_id="t1", verdict="fail", critique="", annotator="andres", status="done")]
+    labels, skipped = labels_from_reviews(reviews)
+    assert skipped == 0
+    with pytest.raises(InvariantViolation, match="critique"):
+        add_labels(store, "merged", labels)
 
 
 def test_save_recomputes_hash_when_given_an_empty_test_hash(tmp_path: Path):

@@ -121,7 +121,7 @@ All state is plain text under `.axial/` in the user's repo, diffable and reviewa
     splits.json                   # train/dev/test ids, seed, hash
   judges/<mode>/vN/
     judge.yaml                    # prompt template, model, few-shot trace ids
-    verdicts.jsonl                # one row per (trace, rep)
+    verdicts.jsonl                # one row per trace
     errors.jsonl                  # quarantined infra failures
     alignment.json                # statistics, machine-readable
     alignment.md                  # the same, for a human
@@ -140,7 +140,7 @@ Each is usable as a library without the CLI.
 | `annotate` | FastAPI app + one static page — no npm, no build step |
 | `taxonomy` | open codes → failure modes, counts, prevalence, saturation curve |
 | `dataset` | labels, stratified splits, leakage detection, class balance |
-| `judge` | prompt assembly, run harness, concurrency, caching, retry |
+| `judge` | prompt assembly, run harness, retry |
 | `align` | **all statistics** — confusion matrix, TPR/TNR, κ, bootstrap CIs, bias checks |
 | `gate` | CI comparison and exit code |
 | `report` | `alignment.md`, taxonomy summaries |
@@ -213,8 +213,11 @@ planted failure modes: merged stories, hallucinated sources, wrong topic, promot
 content not filtered out.
 
 Paired with the seeded `FakeModel`, the full tutorial and the entire integration test suite
-run offline, with no API key and no spend. This keeps the repo honest: every command in the
-README is executed by CI against this corpus.
+run offline, with no API key and no spend. This keeps the repo honest, but not every README
+command is CI-verified the same way: CI runs ruff, mypy and pytest, and the pipeline through
+`sample` → `label-from-reviews` → `split` → `judge` → `align` → `promote` is exercised end to
+end by `tests/test_end_to_end.py` against this corpus. `checks`, `annotate` and `label-import`
+are covered as library-level tests, not as CLI invocations.
 
 The corpus is synthetic and self-contained. It deliberately does not derive from the
 ai-digest project's newsletter data, which is private email destined for a public repo.
