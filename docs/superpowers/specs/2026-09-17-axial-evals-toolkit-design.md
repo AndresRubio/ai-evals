@@ -151,7 +151,7 @@ Statistics live in exactly one module so nothing else computes a rate.
 ### Model layer
 
 `litellm` for provider reach, behind a thin `Model` protocol that owns retry with jittered
-backoff, cost accounting from the response's own `usage`, caching, and — critically — a
+backoff, cost accounting from the response's own `usage`, and — critically — a
 deterministic `FakeModel` for tests. The protocol is what keeps every other module ignorant
 of providers. Default judge model `claude-opus-5`, configurable per judge.
 
@@ -216,8 +216,9 @@ Paired with the seeded `FakeModel`, the full tutorial and the entire integration
 run offline, with no API key and no spend. This keeps the repo honest, but not every README
 command is CI-verified the same way: CI runs ruff, mypy and pytest, and the pipeline through
 `sample` → `label-from-reviews` → `split` → `judge` → `align` → `promote` is exercised end to
-end by `tests/test_end_to_end.py` against this corpus. `checks`, `annotate` and `label-import`
-are covered as library-level tests, not as CLI invocations.
+end by `tests/test_end_to_end.py` against this corpus. `checks` and `label-import` are also
+exercised as CLI invocations, in `tests/test_cli.py`. `annotate` starts a live server and is
+covered only as library-level tests against the FastAPI app, not as a CLI invocation.
 
 The corpus is synthetic and self-contained. It deliberately does not derive from the
 ai-digest project's newsletter data, which is private email destined for a public repo.

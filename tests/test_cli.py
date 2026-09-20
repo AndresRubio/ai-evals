@@ -5,6 +5,7 @@ import pytest
 from typer.testing import CliRunner
 
 from axial.cli import app
+from axial.report import format_promoted_marker
 from axial.store import Store
 
 runner = CliRunner()
@@ -171,6 +172,54 @@ def test_label_from_reviews_converts_completed_reviews_across_sessions(tmp_path:
     assert {lbl.label for lbl in labels} == {True, False}
 
 
+def write_labels_file(tmp_path: Path, rows: list[dict]) -> Path:
+    p = tmp_path / "labels.jsonl"
+    p.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+    return p
+
+
+def test_label_import_records_labels_from_a_jsonl_file(tmp_path: Path):
+    """The happy path: a labels JSONL made elsewhere is read and recorded
+    through `add_labels`, the same as any other label source."""
+    labels_path = write_labels_file(
+        tmp_path,
+        [
+            {"trace_id": "t0", "label": True, "critique": "fails", "annotator": "andres"},
+            {"trace_id": "t1", "label": False, "critique": "fine", "annotator": "andres"},
+        ],
+    )
+    result = runner.invoke(
+        app, ["label-import", "merged", "--path", str(labels_path), "--repo", str(tmp_path)]
+    )
+    assert result.exit_code == 0, result.stdout
+    assert "2 labels recorded for merged" in result.stdout
+
+    from axial.dataset import read_labels
+
+    labels = read_labels(Store(tmp_path), "merged")
+    assert len(labels) == 2
+    assert {lbl.trace_id for lbl in labels} == {"t0", "t1"}
+
+
+def test_label_import_refuses_a_machine_looking_annotator(tmp_path: Path):
+    """A machine-looking annotator must be refused with exit 1, proving
+    `label-import` routes through `add_labels`'s human-annotator invariant
+    rather than writing labels directly."""
+    labels_path = write_labels_file(
+        tmp_path,
+        [{"trace_id": "t0", "label": True, "critique": "fails", "annotator": "gpt-4o"}],
+    )
+    result = runner.invoke(
+        app, ["label-import", "merged", "--path", str(labels_path), "--repo", str(tmp_path)]
+    )
+    assert result.exit_code == 1
+    assert "human" in result.stdout.lower()
+
+    from axial.dataset import read_labels
+
+    assert read_labels(Store(tmp_path), "merged") == []
+
+
 def test_gate_exits_nonzero_on_a_regression(tmp_path: Path):
     store = Store(tmp_path)
     for version, verdicts in ((1, [False] * 60), (2, [True] * 60)):
@@ -181,7 +230,16 @@ def test_gate_exits_nonzero_on_a_regression(tmp_path: Path):
             [{"trace_id": f"t{i}", "split": "gate", "verdict": v, "truth": None}
              for i, v in enumerate(verdicts)],
         )
-        (directory / "PROMOTED").write_text("ok\n")
+        # Bound to real hashes (no judge.yaml is written for this fixture, so
+        # both versions consistently hash it as empty) -- a hash-less marker
+        # is refused by `gate` now, so this must look like a real promotion.
+        (directory / "PROMOTED").write_text(
+            format_promoted_marker(
+                "ok", "ok",
+                store.hash_file(directory / "judge.yaml"),
+                store.hash_file(directory / "verdicts.jsonl"),
+            )
+        )
     result = runner.invoke(
         app, ["gate", "m", "--version", "2", "--baseline", "1", "--repo", str(tmp_path)]
     )

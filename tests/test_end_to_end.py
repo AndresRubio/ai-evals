@@ -4,11 +4,11 @@ import json
 from pathlib import Path
 
 from axial.config import Thresholds
-from axial.dataset import Label, add_labels, make_splits, read_labels
+from axial.dataset import add_labels, labels_from_reviews, make_splits, read_labels
 from axial.judge import JudgeSpec, run_judge
 from axial.model import FakeModel
 from axial.report import alignment_from_verdicts, promote, write_alignment
-from axial.sample import create_session, read_session, write_session
+from axial.sample import create_session, read_session, sample_batch, write_session
 from axial.store import Store
 from axial.taxonomy import propose_taxonomy
 from axial.traces import ingest_jsonl
@@ -28,8 +28,9 @@ def test_full_pipeline_offline(tmp_path: Path):
     traces = ingest_jsonl(CORPUS)
     store.write_traces(traces)
 
-    # 1. Review a batch: 40 traces, open-coded by a "human".
-    batch = traces[:40]
+    # 1. Review a batch: 40 traces, drawn with the real sampling strategy and
+    # open-coded by a "human" -- not a hand-sliced `traces[:40]`.
+    batch = sample_batch(traces, 40, strategy="random", seed=1)
     create_session(store, batch, name="s1")
     reviews = read_session(store, "s1")
     by_id = {t.trace_id: t for t in batch}
@@ -61,16 +62,23 @@ def test_full_pipeline_offline(tmp_path: Path):
     taxonomy.save(store)
     assert taxonomy.modes[0].prevalence > 0
 
-    # 3. Human labels for that one mode, across the whole corpus.
-    labels = [
-        Label(
-            trace_id=t.trace_id,
-            label=t.metadata["planted_mode"] == "merged_stories",
-            critique=f"planted {t.metadata['planted_mode']}",
-            annotator="andres",
-        )
-        for t in traces
-    ]
+    # 3. Human labels for that one mode, across the whole corpus -- reviewed
+    # and turned into labels through `labels_from_reviews`, the same
+    # conversion `label-from-reviews` uses, instead of hand-built `Label`s.
+    full_batch = sample_batch(traces, len(traces), seed=2)
+    create_session(store, full_batch, name="s2")
+    full_reviews = read_session(store, "s2")
+    by_id_full = {t.trace_id: t for t in full_batch}
+    for review in full_reviews:
+        planted = by_id_full[review.trace_id].metadata["planted_mode"]
+        review.verdict = "fail" if planted == "merged_stories" else "pass"
+        review.critique = f"planted {planted}"
+        review.annotator = "andres"
+        review.status = "done"
+    write_session(store, "s2", full_reviews)
+
+    labels, skipped = labels_from_reviews(read_session(store, "s2"))
+    assert skipped == 0
     add_labels(store, "merged_stories", labels)
     splits = make_splits(store, read_labels(store, "merged_stories"), seed=4)
     splits.save(store, "merged_stories")

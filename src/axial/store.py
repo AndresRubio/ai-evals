@@ -9,12 +9,26 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import stat
 import tempfile
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
 from axial.traces import Trace
+
+
+def _current_umask() -> int:
+    """Read the process umask without permanently changing it.
+
+    `os.umask` is the only way the standard library exposes to *read* the
+    umask: setting it returns the previous value, so reading it means setting
+    it back immediately after. This mirrors what the OS itself would apply to
+    a newly created file's default `0o666` mode.
+    """
+    mask = os.umask(0)
+    os.umask(mask)
+    return mask
 
 
 class Store:
@@ -100,12 +114,25 @@ class Store:
         is either the old complete file or the new complete file, never a
         partial one -- `os.replace` is atomic on the same filesystem, which a
         same-directory temp file guarantees.
+
+        `mkstemp` always creates its temp file mode `0600`, and `os.replace`
+        carries that mode onto the target -- so a naive version of this would
+        silently drop every rewritten file from, say, `0644` to `0600`. That
+        is exactly wrong for `.axial/`, which is meant to be committed and
+        reviewed in a pull request: the mode is fixed up before the replace,
+        to the existing file's own mode when overwriting one, or to the
+        umask-respecting default a normal file create would get otherwise.
         """
         path.parent.mkdir(parents=True, exist_ok=True)
+        if path.exists():
+            mode = stat.S_IMODE(path.stat().st_mode)
+        else:
+            mode = 0o666 & ~_current_umask()
         fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
         try:
             with os.fdopen(fd, "w") as fh:
                 fh.write(data)
+            os.chmod(tmp_name, mode)
             os.replace(tmp_name, path)
         except BaseException:
             try:

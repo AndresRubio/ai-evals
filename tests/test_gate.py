@@ -9,7 +9,12 @@ from axial.errors import InvariantViolation
 from axial.gate import compare, gate
 from axial.judge import JudgeSpec, run_judge
 from axial.model import FakeModel
-from axial.report import format_promoted_marker, promote
+from axial.report import (
+    JUDGE_YAML_HASH_KEY,
+    VERDICTS_HASH_KEY,
+    format_promoted_marker,
+    promote,
+)
 from axial.store import Store
 from axial.traces import Trace
 
@@ -194,3 +199,65 @@ def test_the_reported_sequence_fails_at_gate(tmp_path: Path):
 
     with pytest.raises(InvariantViolation, match="promoted"):
         gate(store, "m", 1, seed=1)
+
+
+# --- Critical fix: a hash-less or malformed marker is a violation, not a skip.
+# `gate` used to compare each hash `if recorded_... is not None`, so a marker
+# with the hash lines stripped -- the same actor who edits judge.yaml can edit
+# the marker beside it -- skipped both checks and gated on unverified state ---
+
+
+def test_a_marker_with_no_hash_lines_is_refused(tmp_path: Path):
+    store = Store(tmp_path)
+    directory = store.judge_dir("m", 1)
+    directory.mkdir(parents=True, exist_ok=True)
+    store.write_jsonl(directory / "verdicts.jsonl", [{"trace_id": "t0", "verdict": True}])
+    (directory / "PROMOTED").write_text("test ok\ndev ok\n")
+    with pytest.raises(InvariantViolation, match="missing or has an unparseable"):
+        gate(store, "m", 1, seed=1)
+
+
+def test_a_marker_with_only_the_judge_yaml_hash_is_refused(tmp_path: Path):
+    store = Store(tmp_path)
+    directory = store.judge_dir("m", 1)
+    directory.mkdir(parents=True, exist_ok=True)
+    store.write_jsonl(directory / "verdicts.jsonl", [{"trace_id": "t0", "verdict": True}])
+    (directory / "PROMOTED").write_text(
+        f"test ok\ndev ok\n{JUDGE_YAML_HASH_KEY}={store.hash_file(directory / 'judge.yaml')}\n"
+    )
+    with pytest.raises(InvariantViolation, match="missing or has an unparseable"):
+        gate(store, "m", 1, seed=1)
+
+
+def test_a_marker_with_only_the_verdicts_hash_is_refused(tmp_path: Path):
+    store = Store(tmp_path)
+    directory = store.judge_dir("m", 1)
+    directory.mkdir(parents=True, exist_ok=True)
+    store.write_jsonl(directory / "verdicts.jsonl", [{"trace_id": "t0", "verdict": True}])
+    (directory / "PROMOTED").write_text(
+        f"test ok\ndev ok\n{VERDICTS_HASH_KEY}={store.hash_file(directory / 'verdicts.jsonl')}\n"
+    )
+    with pytest.raises(InvariantViolation, match="missing or has an unparseable"):
+        gate(store, "m", 1, seed=1)
+
+
+def test_a_marker_with_a_malformed_hash_value_is_refused(tmp_path: Path):
+    store = Store(tmp_path)
+    directory = store.judge_dir("m", 1)
+    directory.mkdir(parents=True, exist_ok=True)
+    store.write_jsonl(directory / "verdicts.jsonl", [{"trace_id": "t0", "verdict": True}])
+    (directory / "PROMOTED").write_text(
+        f"test ok\ndev ok\n{JUDGE_YAML_HASH_KEY}=not-a-real-hash\n"
+        f"{VERDICTS_HASH_KEY}={store.hash_file(directory / 'verdicts.jsonl')}\n"
+    )
+    with pytest.raises(InvariantViolation, match="missing or has an unparseable"):
+        gate(store, "m", 1, seed=1)
+
+
+def test_a_properly_promoted_judge_still_gates_with_exit_0(tmp_path: Path):
+    """A real `axial promote` marker, complete and well-formed, must keep
+    gating -- the refusal above is for hash-less/malformed markers only."""
+    store = Store(tmp_path)
+    _promote_with_real_hashes(store, "m", 1, [False] * 50)
+    result = gate(store, "m", 1, seed=1)
+    assert result.passed

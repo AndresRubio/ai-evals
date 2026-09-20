@@ -1,4 +1,5 @@
 import os
+import stat
 from pathlib import Path
 
 import pytest
@@ -106,6 +107,22 @@ def test_write_json_survives_a_failed_write_without_touching_the_original(tmp_pa
 
     assert s.read_json(path) == {"a": "original"}
     assert list(path.parent.iterdir()) == [path]  # the failed temp file was cleaned up
+
+
+def test_write_jsonl_preserves_the_existing_files_mode_across_a_rewrite(tmp_path: Path):
+    """`mkstemp` creates its temp file `0600`, and a naive `os.replace` would
+    carry that mode onto the target -- silently dropping a `0644` artifact
+    meant to be committed and reviewed in a PR down to owner-only. The
+    existing file's mode must survive a rewrite untouched."""
+    s = Store(tmp_path)
+    path = s.root / "x.jsonl"
+    s.write_jsonl(path, [{"a": 1}])
+    os.chmod(path, 0o644)
+
+    s.write_jsonl(path, [{"a": 2}])
+
+    assert stat.S_IMODE(path.stat().st_mode) == 0o644
+    assert s.read_jsonl(path) == [{"a": 2}]
 
 
 def test_read_jsonl_reports_the_file_and_line_number_on_corrupt_json(tmp_path: Path):
