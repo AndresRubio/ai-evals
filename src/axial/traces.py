@@ -10,6 +10,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -54,3 +55,24 @@ def ingest_csv(path: Path) -> list[Trace]:
     with Path(path).open(newline="") as fh:
         rows = list(csv.DictReader(fh))
     return [_trace_from_row(dict(r), where=f"row {n}") for n, r in enumerate(rows, start=1)]
+
+
+_ADAPTERS: dict[str, Callable[[Path], list[Trace]]] = {}
+
+
+def register_adapter(name: str, fn: Callable[[Path], list[Trace]]) -> None:
+    """Teach ingest to read a trace format axial does not know about.
+
+    The point of the hook is that axial never needs a plugin for your observability
+    vendor: a dozen lines that return `Trace` objects is the whole integration.
+    """
+    _ADAPTERS[name] = fn
+
+
+def ingest(path: Path, *, adapter: str | None = None) -> list[Trace]:
+    path = Path(path)
+    if adapter is not None:
+        if adapter not in _ADAPTERS:
+            raise ValueError(f"no adapter registered under {adapter!r}")
+        return _ADAPTERS[adapter](path)
+    return ingest_csv(path) if path.suffix == ".csv" else ingest_jsonl(path)

@@ -42,6 +42,7 @@ example, not committed, so nothing here demonstrates that directly.)
 | `axial split` | labels | a stratified, seeded, frozen split |
 | `axial judge` | a split + a prompt | verdicts, and errors kept separate |
 | `axial align` | verdicts vs labels | an alignment report |
+| `axial checks` | verdicts + traces | slice breakdown, verbosity bias, judged cost, noise floor |
 | `axial promote` | alignment on test | a judge cleared for CI |
 | `axial gate` | promoted judges | an exit code |
 

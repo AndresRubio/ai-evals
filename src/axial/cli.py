@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 from typing import NoReturn
 
@@ -19,7 +20,7 @@ from axial.report import promote as do_promote
 from axial.sample import all_reviews, create_session, sample_batch
 from axial.store import Store
 from axial.taxonomy import Taxonomy, count_open_codes, propose_taxonomy, saturation_curve
-from axial.traces import ingest_csv, ingest_jsonl
+from axial.traces import ingest as do_ingest
 
 app = typer.Typer(help="Error-analysis-first eval toolkit: from traces to a judge you can trust.")
 
@@ -45,10 +46,14 @@ def init(repo: str = RepoOption) -> None:
 
 
 @app.command()
-def ingest(path: Path, repo: str = RepoOption) -> None:
-    """Load traces from a JSONL or CSV file."""
+def ingest(
+    path: Path,
+    adapter: str = typer.Option(None, "--adapter", help="Name of a registered adapter"),
+    repo: str = RepoOption,
+) -> None:
+    """Load traces from a JSONL or CSV file, or through a registered adapter."""
     store = Store(repo)
-    traces = ingest_csv(path) if path.suffix == ".csv" else ingest_jsonl(path)
+    traces = do_ingest(path, adapter=adapter)
     store.write_traces(traces)
     typer.echo(f"ingested {len(traces)} traces into {store.traces_path}")
 
@@ -266,6 +271,58 @@ def align(mode: str, version: int, repo: str = RepoOption) -> None:
     if test:
         typer.echo(f"test {test.summary()}")
     typer.echo(f"written to {path}")
+
+
+@app.command()
+def checks(
+    mode: str,
+    version: int,
+    key: str = typer.Option(None, "--slice-by", help="Metadata key to break alignment down by"),
+    split_name: str = typer.Option("test", "--split"),
+    repo: str = RepoOption,
+) -> None:
+    """Slice breakdown, verbosity-bias correlation, cost, and the noise floor for this set."""
+    from axial.checks import ci_half_width, cost_usd, slice_alignment, verbosity_bias
+
+    store = Store(repo)
+    verdicts = store.read_jsonl(store.judge_dir(mode, version) / "verdicts.jsonl")
+    traces = store.read_traces()
+    rows = [v for v in verdicts if v.get("split") == split_name]
+    if not rows:
+        _fail(f"no {split_name} verdicts for {mode} v{version}")
+    typer.echo(f"noise floor at n={len(rows)}: +/-{ci_half_width(len(rows)):.3f}")
+
+    bias = verbosity_bias(verdicts, traces)
+    typer.echo(
+        f"verbosity bias (length vs fail): {bias:.3f}"
+        if not math.isnan(bias)
+        else "verbosity bias: n/a (verdicts are all the same)"
+    )
+
+    # Cost from each row's own recorded model and usage -- never a flat assumed
+    # rate. A row whose model has no entry in checks.PRICES is reported as
+    # unpriced rather than folded into the total at some other model's rate,
+    # which is exactly the shortcut that can make a cost comparison come out
+    # backwards.
+    known_cost = 0.0
+    unpriced_models: set[str] = set()
+    for row in verdicts:
+        priced = cost_usd(row.get("usage", {}), row.get("model", ""))
+        if priced is None:
+            unpriced_models.add(str(row.get("model", "unknown")))
+        else:
+            known_cost += priced
+    if unpriced_models:
+        typer.echo(
+            f"cost: ${known_cost:.4f} known (unknown price for: "
+            f"{', '.join(sorted(unpriced_models))})"
+        )
+    else:
+        typer.echo(f"cost: ${known_cost:.4f}")
+
+    if key:
+        for value, result in sorted(slice_alignment(verdicts, traces, key, split=split_name).items()):
+            typer.echo(f"  {key}={value}: {result.summary()}")
 
 
 @app.command()
