@@ -22,9 +22,10 @@ Uncomment and set `annotator = "your-name"` near the top of `.axial/config.toml`
     uv run axial annotate --name first-pass     # annotate 30+, then stop
     uv run axial taxonomy
 
-`axial annotate` and `axial taxonomy` call your configured model, so from this point
-on you need your own model credentials. The full pipeline beyond taxonomy — human
-labels, a frozen split, a judge, alignment, and promotion — runs entirely offline
-against this corpus in `tests/test_end_to_end.py`, using `FakeModel` in place of a
-real model. Read that test alongside this file for the rest of the walkthrough:
-it is the part of the pipeline validated on every CI run.
+`axial taxonomy` is the first command here that calls your configured model, so
+from this point on you need your own model credentials for it — `axial annotate`
+itself calls no model at all; it just serves a local review UI. The full pipeline
+beyond taxonomy — human labels, a frozen split, a judge, alignment, and promotion —
+runs entirely offline against this corpus in `tests/test_end_to_end.py`, using
+`FakeModel` in place of a real model. Read that test alongside this file for the
+rest of the walkthrough: it is the part of the pipeline validated on every CI run.

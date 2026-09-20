@@ -14,7 +14,7 @@ TOPICS = ["model-releases", "agents", "infrastructure", "safety", "research"]
 SUBJECTS = [
     ("Northwind Labs", "released a 12B open-weights model"),
     ("Calder AI", "cut inference cost by a third"),
-    ("the EU AI Office", "opened consultation on agent disclosure"),
+    ("the Solmark AI Office", "opened consultation on agent disclosure"),
     ("Pellworm Robotics", "showed a warehouse manipulation policy"),
     ("Basalt Research", "published a paper on retrieval collapse"),
 ]
@@ -45,7 +45,7 @@ def build(n: int = 400, seed: int = 11) -> list[dict]:
         elif mode == "hallucinated_source":
             stories = [
                 {"headline": f"{org} {event}", "topic": topic,
-                 "sources": [f"{org} blog", "Reuters exclusive"]},
+                 "sources": [f"{org} blog", "Meridian Wire exclusive"]},
                 {"headline": f"{other_org} {other_event}", "topic": topic,
                  "sources": [f"{other_org} notes"]},
             ]

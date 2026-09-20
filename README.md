@@ -15,9 +15,14 @@ spreadsheets. `axial` is that step, as code.
 
 ## Install
 
+Not yet published to PyPI — `axial` is at 0.1.0, with no release workflow. From a
+clone of this repository:
+
 ```bash
-uv add axial   # or: pip install axial
+uv sync
 ```
+
+Every command below runs as `uv run axial ...` from that clone.
 
 ## The pipeline
 
@@ -43,8 +48,11 @@ The refusals are the product.
 
 - **No taxonomy before 30 human open codes.** Open coding is where you find failure modes
   nobody anticipated. A model cannot discover what it was not shown.
-- **No machine-generated label in dev or test.** A judge aligned to machine labels is
-  aligned to itself.
+- **Refuses annotators that look like model identifiers.** A name-pattern check
+  catches the obvious cases — a model's own name, "bot", "synthetic" — before a
+  label enters dev or test, because a judge aligned to machine labels is aligned to
+  itself. It is a speed bump, not a security boundary: it cannot stop someone
+  determined to record machine output under a human name.
 - **The test split is write-once.** Redrawing it invalidates every number reported
   against it, so `axial` will not do it quietly.
 - **Few-shot examples come from train only.**
@@ -53,14 +61,18 @@ The refusals are the product.
   nothing.
 - **No promotion below the bar.** Test TPR and TNR must clear your threshold and the
   dev→test gap must be within tolerance.
-- **Gates compare intervals, not point estimates**, and warn when a suite stops failing
-  anything — a saturated eval has stopped carrying signal.
+- **Gates compare intervals, not point estimates — when a `--baseline` is given.**
+  Without one, `gate` only prints the failure rate and always passes; pass a
+  baseline version to get a paired confidence interval and an actual regression
+  check. Either way, it warns when a suite stops failing anything — a saturated
+  eval has stopped carrying signal.
 - **Infra failures never score as model failures.** They are quarantined in
   `errors.jsonl` with a failure class.
 
 ## Quickstart
 
-Runs entirely offline against the committed example corpus — no API key, no spend.
+`init`, `ingest`, `sample`, and `annotate` run entirely offline against the
+committed example corpus — no API key, no spend.
 
 ```bash
 uv run axial init
@@ -73,6 +85,14 @@ Uncomment and set `annotator = "your-name"` near the top of `.axial/config.toml`
 
 ```bash
 uv run axial annotate --name first-pass     # annotate 30+, then stop
+```
+
+`axial taxonomy` is the first command that calls a model, and therefore costs
+money: it sends your open codes to the judge model configured in
+`.axial/config.toml` (`claude-opus-5` by default), so you need working credentials
+for it from here on.
+
+```bash
 uv run axial taxonomy
 ```
 
@@ -81,7 +101,8 @@ See [`examples/newsroom/`](examples/newsroom/) for the rest of the walkthrough.
 ## Prior art
 
 - **promptfoo, DeepEval, Ragas, autoevals** — assertion and metric catalogues. `axial`
-  produces the judge they run.
+  produces a validated judge definition (`judge.yaml`) and the alignment report
+  behind it, which you then wire into whichever of these you run.
 - **Pydantic Evals** — the most rigorous of these: typed `Case` and `Dataset`, an
   `LLMJudge` graded against a rubric you write, MIT, no account needed. Its own docs tell
   you to validate judges against human-labelled test sets, in one sentence, with nothing
