@@ -31,11 +31,12 @@
 <header>
   <b>axial</b>
   <span id="progress">loading…</span>
-  <span>open code, then <kbd>p</kbd> pass / <kbd>f</kbd> fail · <kbd>←</kbd> <kbd>→</kbd> navigate</span>
+  <span>open code, then <kbd>p</kbd> pass / <kbd>f</kbd> fail · <kbd>←</kbd> <kbd>→</kbd> navigate · <kbd>⌘/Ctrl+Enter</kbd> fail · <kbd>⌘/Ctrl+Shift+Enter</kbd> pass</span>
 </header>
 <main>
-  <div class="pane"><h3>Input</h3><pre id="input"></pre></div>
-  <div class="pane"><h3>Output</h3><pre id="output"></pre></div>
+  <div class="pane" id="input-pane"><h3>Input</h3><pre id="input"></pre></div>
+  <div class="pane" id="output-pane"><h3>Output</h3><pre id="output"></pre></div>
+  <div class="pane" id="missing-pane" style="display:none"><p>This review's trace id is missing from the trace store — there is nothing to show. It cannot be open-coded until the trace is restored to <code>traces.jsonl</code>.</p></div>
   <div class="pane">
     <h3>Open code — what went wrong, in your words</h3>
     <input id="open_code" placeholder="e.g. merged two separate stories into one">
@@ -57,14 +58,26 @@ async function load() {
   items = data.items; annotator = data.annotator;
   const firstPending = items.findIndex(x => x.status !== "done");
   i = firstPending === -1 ? 0 : firstPending;
-  render(data.done, data.total);
+  render(data.done);
 }
 
-function render(done, total) {
+function render(done) {
   const item = items[i];
   if (!item) return;
-  document.getElementById("input").textContent = item.input;
-  document.getElementById("output").textContent = item.output;
+  const inputPane = document.getElementById("input-pane");
+  const outputPane = document.getElementById("output-pane");
+  const missingPane = document.getElementById("missing-pane");
+  if (item.missing) {
+    inputPane.style.display = "none";
+    outputPane.style.display = "none";
+    missingPane.style.display = "";
+  } else {
+    inputPane.style.display = "";
+    outputPane.style.display = "";
+    missingPane.style.display = "none";
+    document.getElementById("input").textContent = item.input;
+    document.getElementById("output").textContent = item.output;
+  }
   document.getElementById("open_code").value = item.open_code || "";
   document.getElementById("critique").value = item.critique || "";
   const d = done ?? items.filter(x => x.status === "done").length;
@@ -92,7 +105,8 @@ function move(step) {
 
 document.addEventListener("keydown", e => {
   if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") {
-    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) save("fail");
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && e.shiftKey) { save("pass"); return; }
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { save("fail"); return; }
     return;
   }
   if (e.key === "p") save("pass");

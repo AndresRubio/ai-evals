@@ -47,6 +47,7 @@ def create_app(store: Store, session: str, annotator: str) -> FastAPI:
                     "input": trace.input if trace else "",
                     "output": trace.output if trace else "",
                     "metadata": trace.metadata if trace else {},
+                    "missing": trace is None,
                     "open_code": review.open_code,
                     "verdict": review.verdict,
                     "critique": review.critique,
