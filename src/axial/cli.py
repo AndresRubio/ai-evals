@@ -58,12 +58,24 @@ def sample(
     n: int = typer.Option(20, help="How many traces to put in the batch"),
     name: str = typer.Option(..., help="Name for this review session"),
     strategy: str = typer.Option("random", help="random | outlier | longest"),
+    random_fraction: float = typer.Option(
+        0.3,
+        "--random-fraction",
+        help="Fraction of a targeted batch (outlier | longest) to fill with a "
+        "random draw instead of the targeted ranking. Every targeted strategy "
+        "is biased toward the failures you already knew to look for, so a "
+        "random slice is what catches the ones you didn't. Ignored by "
+        "--strategy random. round(n * random_fraction) can be 0 for a small "
+        "n, which drops the random slice entirely for that batch.",
+    ),
     seed: int = typer.Option(0),
     repo: str = RepoOption,
 ) -> None:
-    """Draw a review batch. Targeted strategies always keep a random slice."""
+    """Draw a review batch. Targeted strategies mix in a random slice."""
     store = Store(repo)
-    batch = sample_batch(store.read_traces(), n, strategy=strategy, seed=seed)
+    batch = sample_batch(
+        store.read_traces(), n, strategy=strategy, random_fraction=random_fraction, seed=seed
+    )
     create_session(store, batch, name=name)
     typer.echo(f"session {name}: {len(batch)} traces ready to annotate")
 

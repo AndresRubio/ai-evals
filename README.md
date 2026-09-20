@@ -2,16 +2,17 @@
 
 From raw traces to an LLM judge you have actually measured.
 
-Every open-source eval tool assumes you already know your metrics before you open it.
+Every tool surveyed here assumes you already know your metrics before you open it.
 promptfoo wants an assertion. DeepEval and Ragas ship a catalogue of pre-named metrics.
 Pydantic Evals wants a rubric. Inspect AI and lm-evaluation-harness solve a different
 problem — a fixed benchmark whose ground truth is handed to you. The observability
-platforms store traces beautifully and then ask you to write a judge prompt and ship it.
+platforms store traces beautifully and then, almost universally, ask you to write a
+judge prompt and ship it.
 
-None of them help with the part that decides whether any of it works: reading real
-failures, deciding what "good" means for your system, and proving your automated judge
-agrees with your humans before you trust it. That is taught as methodology and done in
-spreadsheets. `axial` is that step, as code.
+None of the tools surveyed help with the part that decides whether any of it works:
+reading real failures, deciding what "good" means for your system, and proving your
+automated judge agrees with your humans before you trust it. That is taught as
+methodology and done in spreadsheets. `axial` is that step, as code.
 
 ## Install
 
@@ -27,15 +28,17 @@ Every command below runs as `uv run axial ...` from that clone.
 ## The pipeline
 
 Each command's output is the next one's input. Everything lands in `.axial/` as plain
-text, so your eval state is reviewable in a pull request like any other source.
+text, so in your own repo, your eval state is reviewable in a pull request like any
+other source. (This repo gitignores its own `.axial/` — it's generated fresh by the
+example, not committed, so nothing here demonstrates that directly.)
 
 | Command | Consumes | Produces |
 |---|---|---|
 | `axial ingest` | JSONL or CSV | normalised traces |
-| `axial sample` | traces | a review batch, always including a random slice |
+| `axial sample` | traces | a review batch; targeted strategies mix in a random slice (30% by default, `--random-fraction`) |
 | `axial annotate` | a batch | open codes, verdicts and critiques |
 | `axial taxonomy` | your open codes | a failure taxonomy with prevalence |
-| `axial label-import` | traces + one failure mode | human labels |
+| `axial label-import` | a labels JSONL + a mode name | human labels |
 | `axial split` | labels | a stratified, seeded, frozen split |
 | `axial judge` | a split + a prompt | verdicts, and errors kept separate |
 | `axial align` | verdicts vs labels | an alignment report |
@@ -46,8 +49,10 @@ text, so your eval state is reviewable in a pull request like any other source.
 
 The refusals are the product.
 
-- **No taxonomy before 30 human open codes.** Open coding is where you find failure modes
-  nobody anticipated. A model cannot discover what it was not shown.
+- **No taxonomy before 30 open codes.** Open coding is where you find failure modes
+  nobody anticipated. A model cannot discover what it was not shown. This floor counts
+  open codes; it does not check who wrote them — that check applies to labels, below,
+  not to open codes.
 - **Refuses annotators that look like model identifiers.** A name-pattern check
   catches the obvious cases — a model's own name, "bot", "synthetic" — before a
   label enters dev or test, because a judge aligned to machine labels is aligned to
@@ -103,19 +108,28 @@ See [`examples/newsroom/`](examples/newsroom/) for the rest of the walkthrough.
 - **promptfoo, DeepEval, Ragas, autoevals** — assertion and metric catalogues. `axial`
   produces a validated judge definition (`judge.yaml`) and the alignment report
   behind it, which you then wire into whichever of these you run.
-- **Pydantic Evals** — the most rigorous of these: typed `Case` and `Dataset`, an
+- **Pydantic Evals** — the best-engineered instance of the pattern, and the most
+  type-rigorous eval library in the ecosystem: typed `Case` and `Dataset`, an
   `LLMJudge` graded against a rubric you write, MIT, no account needed. Its own docs tell
   you to validate judges against human-labelled test sets, in one sentence, with nothing
   behind it. `axial` is that sentence, implemented.
 - **Inspect AI, lm-evaluation-harness** — foundation-model benchmarking, where the
   taxonomy is the benchmark and is given to you. Different problem.
-- **Langfuse, Opik, LangSmith, Braintrust, Phoenix** — trace storage and judge running.
-  Closest on annotation queues; none scaffold judge/human alignment as a gated step.
-- **EvalGen** (Shankar et al., UIST 2024) — demonstrated this loop and named criteria
-  drift. A research prototype, never maintained. `axial` is the shipped version.
+- **Langfuse, Opik, LangSmith, Braintrust, Phoenix** — trace storage and judge running;
+  Braintrust itself is closed-source SaaS built around the open `autoevals` scorer
+  library, and Phoenix ships under Elastic License 2.0, which isn't OSI-approved.
+  Langfuse and Opik are the ones with side-by-side human annotation queues, the closest
+  any of the five get; none of them scaffold judge/human alignment as a gated step.
+- **EvalGen** (Shankar et al., UIST 2024) — demonstrated the judge-alignment step
+  specifically: generate candidate judge prompts, use human grades on a subset to select
+  among them, and named criteria drift along the way. A research prototype, not a
+  maintained package, and scoped to that one step — not the open coding, taxonomy
+  building, splits, or gating around it. `axial` is the shipped, full-pipeline version.
 - **Anthropic's error-discovery skill** — clusters your annotations into failure modes
   inside an agent session. `axial` is the versioned artifact store and CI gate around
-  the same idea.
+  the same idea. (Secondary source, not verified directly against Anthropic's own
+  materials — see the "Other sources" note in
+  [`docs/research/2026-09-17-tooling-landscape.md`](docs/research/2026-09-17-tooling-landscape.md).)
 
 ## Credit
 

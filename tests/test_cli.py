@@ -40,6 +40,42 @@ def test_sample_creates_a_review_session(tmp_path: Path):
     assert (Store(tmp_path).reviews_dir / "s1.jsonl").exists()
 
 
+def test_sample_passes_random_fraction_through_to_sample_batch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    src = write_traces_file(tmp_path, 10)
+    runner.invoke(app, ["ingest", str(src), "--repo", str(tmp_path)])
+
+    import axial.cli as cli_module
+
+    captured: dict[str, object] = {}
+
+    def fake_sample_batch(traces, n, *, strategy="random", random_fraction=0.3, seed=0):
+        captured["random_fraction"] = random_fraction
+        return list(traces)[:n]
+
+    monkeypatch.setattr(cli_module, "sample_batch", fake_sample_batch)
+
+    result = runner.invoke(
+        app,
+        [
+            "sample",
+            "--n",
+            "4",
+            "--name",
+            "s1",
+            "--strategy",
+            "outlier",
+            "--random-fraction",
+            "0.5",
+            "--repo",
+            str(tmp_path),
+        ],
+    )
+    assert result.exit_code == 0
+    assert captured["random_fraction"] == 0.5
+
+
 def test_taxonomy_refuses_below_the_open_code_floor(tmp_path: Path):
     src = write_traces_file(tmp_path, 5)
     runner.invoke(app, ["ingest", str(src), "--repo", str(tmp_path)])
