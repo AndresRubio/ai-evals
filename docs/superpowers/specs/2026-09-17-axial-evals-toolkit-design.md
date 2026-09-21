@@ -102,6 +102,11 @@ as advice. Each one exists because a source names the failure it prevents.
    `usage` is a runner bug, not a measurement.
 10. **Every review batch contains a random slice.** Every targeted sampling method is biased
     toward problems you already know about.
+11. **A judge model id must be pinned to an exact version.** `promote` binds its marker to
+    `judge_yaml_sha256` and `verdicts_sha256`; neither hash covers which weights the provider
+    served. A floating alias (`~typesafe/jev-latest`) therefore changes the judge while every
+    recorded hash still matches. The judge runs the model named in `judge.yaml`, not the one
+    in `config.toml`, for the same reason.
 
 ## Architecture
 

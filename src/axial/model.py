@@ -7,12 +7,14 @@ served-model check in a single place instead of scattered through the pipeline.
 
 from __future__ import annotations
 
+import json
+import os
 import random
 import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import Any, Protocol
 
 from pydantic import BaseModel
 
@@ -43,6 +45,9 @@ class Completion:
     truncated: bool = False
     attempts: int = 1
     latency_s: float = 0.0
+    # Only a decision model fills this in. A text model has no calibrated
+    # probability to report, and `None` says so rather than implying 0.0.
+    probability: float | None = None
 
 
 _DATED_SNAPSHOT_SUFFIX = re.compile(r"^(?P<base>.+)-\d{8}$")
@@ -51,11 +56,20 @@ _DATED_SNAPSHOT_SUFFIX = re.compile(r"^(?P<base>.+)-\d{8}$")
 def _normalise_model_id(model_id: str) -> str:
     """Strip a provider/routing prefix from a model id.
 
-    `anthropic/claude-opus-5` and `bedrock.claude-opus-5` both reduce to
-    `claude-opus-5` by taking the segment after the last `/` and after the
-    last `.`.
+    `anthropic/claude-opus-5`, `bedrock.claude-opus-5` and
+    `us.anthropic.claude-opus-5` all reduce to `claude-opus-5`.
+
+    A dotted prefix is only stripped when it is purely alphabetic, because a dot
+    also separates a version: splitting `jev-1.13` on its last `.` leaves `13`, and
+    then `jev-1.13` and `jev-2.13` compare equal — defeating, for every
+    dotted-version model, the substitution check this function exists to serve.
     """
-    return model_id.rsplit("/", 1)[-1].rsplit(".", 1)[-1]
+    tail = model_id.rsplit("/", 1)[-1]
+    while True:
+        prefix, dot, rest = tail.partition(".")
+        if not (dot and rest and prefix.isalpha()):
+            return tail
+        tail = rest
 
 
 def _served_model_matches(requested: str, served: str) -> bool:
@@ -224,3 +238,208 @@ class LiteLLMModel:
             )
 
         raise AxialError(f"model call failed after {self.max_retries} attempts: {last_error}")
+
+
+DECISIONS_URL = "https://openrouter.ai/api/alpha/decisions"
+
+# Providers whose models answer typed questions instead of writing text. They reach
+# a different endpoint entirely, so this is not a preference — a text call to one of
+# these fails, and a decision call to a text model is not a thing that exists.
+_DECISION_PROVIDERS = frozenset({"typesafe"})
+
+
+def is_decision_model(model_id: str) -> bool:
+    """Whether `model_id` names a decision model rather than a text model."""
+    segments = [seg for seg in model_id.lstrip("~").split("/") if seg]
+    return any(seg in _DECISION_PROVIDERS for seg in segments[:-1])
+
+
+def require_text_model(model_id: str) -> str:
+    """Refuse a decision model where generated prose is the point.
+
+    Open coding and taxonomy proposal need sentences. A decision model returns a
+    typed answer and nothing else, so pointing one at those commands would produce
+    an empty taxonomy rather than an error — which is the failure mode this exists
+    to convert into a loud one.
+    """
+    if is_decision_model(model_id):
+        raise AxialError(
+            f"{model_id!r} is a decision model: it cannot generate text. This step "
+            "needs prose, so set `judge_model` to a text model for it."
+        )
+    return model_id
+
+_FLOATING_ALIAS = re.compile(r"(^~)|(\blatest\b)")
+
+
+def _require_pinned(model_id: str) -> str:
+    """Refuse a model id that can move underneath a promoted judge.
+
+    `promote` binds a PROMOTED marker to `judge_yaml_sha256` and
+    `verdicts_sha256`. Both hashes cover the judge definition and the verdicts it
+    earned — neither covers which weights the provider served. A floating alias
+    such as `~typesafe/jev-latest` therefore swaps the judge while every recorded
+    hash still matches, and the gate keeps attesting to an alignment run that was
+    measured on a different model. Pin the version and bump it deliberately.
+    """
+    if _FLOATING_ALIAS.search(model_id):
+        raise AxialError(
+            f"{model_id!r} is a floating alias; a judge model must be pinned to an "
+            "exact version (e.g. 'typesafe/jev-1.13'). An alias that moves changes "
+            "the judge without changing judge.yaml, so a PROMOTED marker would keep "
+            "verifying against hashes it no longer describes."
+        )
+    return model_id
+
+
+class JevModel:
+    """TypeSafe's Jev behind the `Model` protocol, via OpenRouter's Decisions API.
+
+    Jev is a decision model, not a text model: it answers typed questions about a
+    state and returns calibrated probabilities. It does not run on the
+    OpenAI-compatible chat endpoint, so litellm cannot reach it and `LiteLLMModel`
+    is not an option — this class speaks the Decisions API directly.
+
+    The adapter asks exactly one `noul` (yes/no probability) question per call and
+    thresholds the answer into the same `{"verdict": ..., "reason": ...}` JSON an
+    LLM judge is asked to emit. That keeps `run_judge` and `parse_verdict`
+    unchanged, and it keeps the prompt that `assemble_prompt` built — few-shot
+    train-only guarantee included — as the state Jev reads.
+
+    What you give up is the critique. Jev returns a number and nothing to read, so
+    the probability and the threshold are recorded as the reason: it is the whole
+    audit trail. Use this for a high-volume gate, not for the alignment pass where
+    you need to see *why* the judge and a human disagree.
+    """
+
+    def __init__(
+        self,
+        model: str = "typesafe/jev-1.13",
+        *,
+        instructions: str,
+        true_when: str,
+        false_when: str,
+        threshold: float = 0.5,
+        max_retries: int = 3,
+        timeout_s: float = 60.0,
+        seed: int | None = None,
+    ) -> None:
+        self.model = _require_pinned(model)
+        self.instructions = instructions
+        self.true_when = true_when
+        self.false_when = false_when
+        self.threshold = threshold
+        self.max_retries = max_retries
+        self.timeout_s = timeout_s
+        self._rng = random.Random(seed)
+
+    def complete(
+        self,
+        prompt: str,
+        *,
+        max_tokens: int = 1024,
+        schema: type[BaseModel] | None = None,
+    ) -> Completion:
+        """Grade `prompt` and return the verdict as the JSON the judge already parses.
+
+        `max_tokens` and `schema` are accepted to satisfy the `Model` protocol and
+        are deliberately unused: Jev bills no output tokens and has no
+        `response_format`, so honouring either would be pretending.
+        """
+        import httpx
+
+        api_key = os.environ.get("OPENROUTER_API_KEY")
+        if not api_key:
+            raise AxialError(
+                "OPENROUTER_API_KEY is not set. Jev is served through OpenRouter's "
+                "Decisions API, which needs its own key."
+            )
+
+        body = {
+            "model": self.model,
+            "state": prompt,
+            "questions": {
+                "verdict": {
+                    "type": "noul",
+                    "instructions": self.instructions,
+                    "criteria": {"true": self.true_when, "false": self.false_when},
+                }
+            },
+        }
+        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+
+        last_error: Exception | None = None
+        started = time.monotonic()
+        for attempt in range(1, self.max_retries + 1):
+            try:
+                response = httpx.post(
+                    DECISIONS_URL, json=body, headers=headers, timeout=self.timeout_s
+                )
+                response.raise_for_status()
+                payload = response.json()
+            except Exception as exc:  # noqa: BLE001 - retried below, re-raised if terminal
+                last_error = exc
+                if attempt == self.max_retries:
+                    break
+                # Same jittered backoff as `LiteLLMModel`, for the same reason.
+                time.sleep((2 ** (attempt - 1)) * (0.5 + self._rng.random()))
+                continue
+
+            served = payload.get("model") or self.model
+            if not _served_model_matches(self.model, served):
+                raise ServedModelMismatch(
+                    f"requested {self.model!r} but the provider served {served!r}"
+                )
+
+            probability = self._read_noul(payload)
+            failed = probability >= self.threshold
+            reason = (
+                f"jev noul={probability:.3f} threshold={self.threshold:g} "
+                f"-> {'fail' if failed else 'pass'}"
+            )
+            return Completion(
+                text=json.dumps({"verdict": "fail" if failed else "pass", "reason": reason}),
+                model=served,
+                usage=_read_usage(payload.get("usage")),
+                stop_reason="stop",
+                truncated=False,
+                attempts=attempt,
+                latency_s=time.monotonic() - started,
+                probability=probability,
+            )
+
+        raise AxialError(
+            f"jev decision failed after {self.max_retries} attempts: {last_error}"
+        )
+
+    def _read_noul(self, payload: dict[str, Any]) -> float:
+        answers = payload.get("answers") or {}
+        answer = answers.get("verdict")
+        if answer is None:
+            raise AxialError(
+                f"the decision response carried no 'verdict' answer: {sorted(answers)!r}"
+            )
+        if answer.get("type") != "noul":
+            raise AxialError(
+                f"expected a 'noul' answer but the provider returned {answer.get('type')!r}. "
+                "A probability is the only answer shape this adapter can threshold."
+            )
+        value = answer.get("noul")
+        if not isinstance(value, (int, float)):
+            raise AxialError(f"the 'noul' answer carried no probability: {answer!r}")
+        return float(value)
+
+
+def _read_usage(usage: object) -> dict[str, int]:
+    """Read token counts, recording an absent count as absent.
+
+    Invariant 9 again: no silent zeros. OpenRouter normalises to the OpenAI names,
+    but the Decisions API is alpha, so the TypeSafe-native names are accepted too.
+    """
+    if not isinstance(usage, dict):
+        return {}
+    input_tokens = usage.get("prompt_tokens", usage.get("input_tokens"))
+    output_tokens = usage.get("completion_tokens", usage.get("output_tokens"))
+    if input_tokens is None and output_tokens is None:
+        return {}
+    return {"input_tokens": int(input_tokens or 0), "output_tokens": int(output_tokens or 0)}

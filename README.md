@@ -75,6 +75,9 @@ The refusals are the product.
   eval has stopped carrying signal.
 - **Infra failures never score as model failures.** They are quarantined in
   `errors.jsonl` with a failure class.
+- **No floating model aliases.** A judge model must be pinned to an exact version.
+  An alias that moves swaps the judge underneath a `PROMOTED` marker whose hashes
+  still match, so the gate keeps attesting to an alignment run nobody performed.
 
 ## Quickstart
 
@@ -125,6 +128,48 @@ every completed review already carries a verdict, a critique and an annotator, s
 there is no separate hand-built file to write. See
 [`examples/newsroom/`](examples/newsroom/) for the fully offline, `FakeModel`-backed
 version of this same walkthrough.
+
+## Decision models
+
+A judge answers one binary question per trace, which is what a *decision model* does
+natively — and for a fraction of the cost. `axial` speaks to
+[TypeSafe's Jev](https://openrouter.ai/typesafe/jev-1.13) through OpenRouter's
+Decisions API:
+
+```toml
+# .axial/config.toml
+judge_model = "typesafe/jev-1.13"   # pinned; an alias is refused
+```
+
+```bash
+export OPENROUTER_API_KEY=sk-or-v1-...
+axial judge merged_stories --split dev
+```
+
+Jev is not reachable through litellm — it runs on `POST /api/alpha/decisions`, not the
+chat-completions endpoint — so `JevModel` speaks that API directly. It asks one `noul`
+(yes/no probability) question per trace, using the prompt `assemble_prompt` built as the
+state, and thresholds the calibrated probability into the same verdict JSON an LLM judge
+emits. `run_judge`, `align`, `promote` and `gate` are unchanged. Tune the threshold in
+`judge.yaml` (`decision_threshold`, default `0.5`) and bump the judge version when you do —
+it changes every verdict, which is why it lives in the hashed judge definition.
+
+Two things it cannot do:
+
+- **No critique.** Jev returns a number, so the recorded reason is the probability and the
+  threshold. That is enough to audit a gate and not enough to run an alignment pass, where
+  you need to read *why* the judge and a human disagree. Align with a text model; consider
+  Jev for the high-volume gate afterwards, and only if its own TPR/TNR clear the bar.
+- **No prose.** `axial taxonomy` refuses a decision model outright rather than proposing an
+  empty taxonomy in silence.
+
+Cheap labels are also the fastest route to breaking the second invariant. At roughly
+$0.0004 a decision it becomes tempting to label the whole corpus — but a machine label in
+dev or test means your alignment numbers measure the judge against itself. Machine labels
+belong in triage and in train, nowhere else.
+
+The adapter is exercised offline against a stubbed transport. It has not been run against
+the live endpoint here.
 
 ## Prior art
 
