@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 
 from axial.dataset import Label, Splits
 from axial.errors import InvariantViolation
-from axial.model import Model
+from axial.model import JevModel, LiteLLMModel, Model, is_decision_model
 from axial.store import Store
 from axial.traces import Trace
 
@@ -66,6 +66,11 @@ class JudgeSpec(BaseModel):
     version: int = 1
     mode_name: str = ""
     mode_definition: str = ""
+    # Only a decision model reads this: the probability at or above which its answer
+    # counts as a failure. It lives here, not in config, because it changes every
+    # verdict — and `promote` binds its marker to this file's hash, so a threshold
+    # kept anywhere else could be retuned without invalidating the gate.
+    decision_threshold: float = 0.5
 
     def save(self, store: Store) -> None:
         directory = store.judge_dir(self.mode, self.version)
@@ -76,6 +81,25 @@ class JudgeSpec(BaseModel):
     def load(cls, store: Store, mode: str, version: int) -> JudgeSpec:
         path = store.judge_dir(mode, version) / "judge.yaml"
         return cls.model_validate(yaml.safe_load(path.read_text()))
+
+
+def build_judge_model(spec: JudgeSpec) -> Model:
+    """Build the model `spec` names.
+
+    The id comes from the spec rather than from config because judge.yaml is what
+    `promote` hashes: a run that quietly used a different model than the one
+    recorded would earn a marker that describes a judge nobody ran.
+    """
+    if not is_decision_model(spec.model):
+        return LiteLLMModel(spec.model)
+    definition = spec.mode_definition or spec.mode_name or spec.mode
+    return JevModel(
+        spec.model,
+        instructions=f"Does the OUTPUT in this trace exhibit this failure mode? {definition}",
+        true_when="the failure mode is present in the OUTPUT",
+        false_when="the failure mode is absent from the OUTPUT",
+        threshold=spec.decision_threshold,
+    )
 
 
 def assemble_prompt(

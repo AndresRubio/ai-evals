@@ -600,3 +600,21 @@ def test_new_flag_starts_a_fresh_version_that_does_not_inherit_the_previous_one(
     assert {row["trace_id"] for row in v2_verdicts} == {"t2", "t3"}
     # v1's own verdicts are untouched and still live only under v1.
     assert store.read_jsonl(store.judge_dir("m", 1) / "verdicts.jsonl") == v1_verdicts
+
+
+def test_taxonomy_refuses_a_decision_model(tmp_path: Path):
+    """Jev returns a typed answer, so it would propose an empty taxonomy in silence."""
+    runner.invoke(app, ["init", "--repo", str(tmp_path)])
+    config = tmp_path / ".axial" / "config.toml"
+    config.write_text(
+        config.read_text().replace(
+            'judge_model = "claude-opus-5"', 'judge_model = "typesafe/jev-1.13"'
+        )
+    )
+    src = write_traces_file(tmp_path, 5)
+    runner.invoke(app, ["ingest", str(src), "--repo", str(tmp_path)])
+
+    result = runner.invoke(app, ["taxonomy", "--repo", str(tmp_path)])
+
+    assert result.exit_code != 0
+    assert "cannot generate text" in result.output

@@ -20,8 +20,8 @@ from axial.dataset import (
 )
 from axial.errors import AxialError
 from axial.gate import gate as run_gate
-from axial.judge import JudgeSpec, run_judge
-from axial.model import LiteLLMModel
+from axial.judge import JudgeSpec, build_judge_model, run_judge
+from axial.model import LiteLLMModel, require_text_model
 from axial.report import alignment_from_verdicts, check_promotion, write_alignment
 from axial.report import promote as do_promote
 from axial.sample import all_reviews, create_session, read_session, sample_batch
@@ -125,6 +125,10 @@ def taxonomy(repo: str = RepoOption) -> None:
     """Propose a failure taxonomy from your open codes."""
     store = Store(repo)
     config = load_config(store)
+    try:
+        require_text_model(config.judge_model)
+    except AxialError as exc:
+        _fail(str(exc))
     reviews = all_reviews(store)
     typer.echo(f"{count_open_codes(reviews)} open codes; saturation {saturation_curve(reviews)[-20:]}")
     model = LiteLLMModel(config.judge_model)
@@ -285,7 +289,7 @@ def judge(
     try:
         result = run_judge(
             store, spec, traces, read_labels(store, mode), splits,
-            LiteLLMModel(config.judge_model), split=split_name, corpus=corpus,
+            build_judge_model(spec), split=split_name, corpus=corpus,
         )
     except AxialError as exc:
         _fail(str(exc))
