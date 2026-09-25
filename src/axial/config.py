@@ -7,8 +7,10 @@ a team's bar is theirs to set, not because the defaults are arbitrary.
 
 from __future__ import annotations
 
+import os
 import tomllib
 from dataclasses import dataclass
+from pathlib import Path
 
 from axial.errors import AxialError
 from axial.store import Store
@@ -27,6 +29,42 @@ max_gap = 0.10                 # dev -> test generalisation gap
 min_test_positives = 30        # real failures the test split must contain before a rate means anything
 min_test_negatives = 30        # real passes the test split must contain before a rate means anything
 """
+
+
+def load_env(repo: str | Path = ".") -> Path | None:
+    """Load `<repo>/.env` into the environment, and report whether there was one.
+
+    Model credentials are read from the environment by litellm and by `JevModel`.
+    This puts them in one gitignored file so a run does not depend on what happens
+    to be exported in the shell that started it.
+
+    Two deliberate rules. An already-set variable is never overwritten: exporting a
+    key is a deliberate act and must beat a stale file. And an empty value is
+    skipped rather than set, so a freshly copied `.env.example` cannot mask a real
+    export with an empty string.
+
+    The parser handles `KEY=value`, `export KEY=value`, `#` comment lines and
+    surrounding quotes. It is not a shell: no interpolation, no multi-line values.
+    """
+    path = Path(repo) / ".env"
+    if not path.is_file():
+        return None
+
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export ") :].lstrip()
+        key, sep, value = line.partition("=")
+        if not sep:
+            continue
+        key = key.strip()
+        value = value.strip().strip("\"'")
+        if not key or not value or key in os.environ:
+            continue
+        os.environ[key] = value
+    return path
 
 
 @dataclass(frozen=True)

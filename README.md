@@ -25,6 +25,18 @@ uv sync
 
 Every command below runs as `uv run axial ...` from that clone.
 
+### Credentials
+
+```bash
+cp .env.example .env    # then fill in the keys you need
+```
+
+`.env` is gitignored, read from the repo root by `axial taxonomy` and `axial judge`,
+and never overrides a variable already exported in your shell. `.env.example` lists
+which key each model path needs and why. Most of the pipeline — `init`, `ingest`,
+`sample`, `annotate`, `label-from-reviews`, `split`, `align`, `promote`, `gate` —
+calls no model at all and needs no key.
+
 ## The pipeline
 
 Each command's output is the next one's input. Everything lands in `.axial/` as plain

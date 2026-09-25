@@ -9,7 +9,7 @@ from typing import NoReturn
 
 import typer
 
-from axial.config import load_config, write_default_config
+from axial.config import load_config, load_env, write_default_config
 from axial.dataset import (
     Label,
     add_labels,
@@ -124,6 +124,7 @@ def annotate(
 def taxonomy(repo: str = RepoOption) -> None:
     """Propose a failure taxonomy from your open codes."""
     store = Store(repo)
+    load_env(repo)
     config = load_config(store)
     try:
         require_text_model(config.judge_model)
@@ -244,6 +245,7 @@ def judge(
         _fail(f"unknown split {split_name!r}; expected one of {valid_splits}")
 
     store = Store(repo)
+    load_env(repo)
     config = load_config(store)
     if not version:
         if new:

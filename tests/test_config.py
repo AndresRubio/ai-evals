@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import pytest
@@ -92,3 +93,65 @@ def test_split_fractions_valid_default_still_loads(tmp_path: Path):
     store.config_path.write_text("split_fractions = [0.15, 0.42, 0.43]")
     cfg = load_config(store)
     assert cfg.split_fractions == (0.15, 0.42, 0.43)
+
+
+# --- .env loading ------------------------------------------------------------
+
+
+def test_load_env_reads_keys_from_a_dotenv_file(tmp_path, monkeypatch):
+    from axial.config import load_env
+
+    (tmp_path / ".env").write_text("OPENROUTER_API_KEY=sk-or-from-file\n")
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+
+    load_env(tmp_path)
+
+    assert os.environ["OPENROUTER_API_KEY"] == "sk-or-from-file"
+
+
+def test_a_real_environment_variable_beats_the_file(tmp_path, monkeypatch):
+    """The file is a convenience. An explicitly exported key is a deliberate act."""
+    from axial.config import load_env
+
+    (tmp_path / ".env").write_text("OPENROUTER_API_KEY=sk-or-from-file\n")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-exported")
+
+    load_env(tmp_path)
+
+    assert os.environ["OPENROUTER_API_KEY"] == "sk-or-exported"
+
+
+def test_load_env_is_a_no_op_without_a_dotenv_file(tmp_path, monkeypatch):
+    from axial.config import load_env
+
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+
+    assert load_env(tmp_path) is None
+    assert "OPENROUTER_API_KEY" not in os.environ
+
+
+def test_load_env_ignores_comments_and_blank_lines(tmp_path, monkeypatch):
+    from axial.config import load_env
+
+    (tmp_path / ".env").write_text(
+        "# the key Jev needs\n\nOPENROUTER_API_KEY=sk-or-real\n# ANTHROPIC_API_KEY=unset\n"
+    )
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    load_env(tmp_path)
+
+    assert os.environ["OPENROUTER_API_KEY"] == "sk-or-real"
+    assert "ANTHROPIC_API_KEY" not in os.environ
+
+
+def test_an_empty_placeholder_value_is_not_treated_as_a_key(tmp_path, monkeypatch):
+    """A freshly copied .env.example has empty values; they must not mask a real export."""
+    from axial.config import load_env
+
+    (tmp_path / ".env").write_text("OPENROUTER_API_KEY=\n")
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+
+    load_env(tmp_path)
+
+    assert not os.environ.get("OPENROUTER_API_KEY")
