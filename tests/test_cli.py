@@ -51,8 +51,11 @@ def test_sample_passes_random_fraction_through_to_sample_batch(
 
     captured: dict[str, object] = {}
 
-    def fake_sample_batch(traces, n, *, strategy="random", random_fraction=0.3, seed=0):
+    def fake_sample_batch(
+        traces, n, *, strategy="random", random_fraction=0.3, perplexity_field="input", seed=0
+    ):
         captured["random_fraction"] = random_fraction
+        captured["perplexity_field"] = perplexity_field
         return list(traces)[:n]
 
     monkeypatch.setattr(cli_module, "sample_batch", fake_sample_batch)
@@ -618,3 +621,58 @@ def test_taxonomy_refuses_a_decision_model(tmp_path: Path):
 
     assert result.exit_code != 0
     assert "cannot generate text" in result.output
+
+
+def _ingest_inputs(tmp_path: Path, inputs: list[str]) -> None:
+    path = tmp_path / "traces.jsonl"
+    path.write_text(
+        "\n".join(json.dumps({"input": t, "output": "ok"}) for t in inputs) + "\n"
+    )
+    runner.invoke(app, ["init", "--repo", str(tmp_path)])
+    runner.invoke(app, ["ingest", str(path), "--repo", str(tmp_path)])
+
+
+VARIED = [
+    "how do i get a refund for my account",
+    "can you help with an invoice",
+    "what is the policy on data export",
+    "my shipping delay never arrived",
+    "where do i find my tax receipt",
+    "i need a password reset urgently",
+]
+
+
+def test_sample_warns_when_a_perplexity_ranking_carries_nothing(tmp_path: Path):
+    """400 near-identical traces have nothing for perplexity to find, and it says so."""
+    _ingest_inputs(tmp_path, [f"THE WIRE - issue {i}\n\nNorthwind Labs shipped a model." for i in range(60)])
+
+    result = runner.invoke(
+        app, ["sample", "--n", "5", "--name", "s", "--strategy", "perplexity", "--repo", str(tmp_path)]
+    )
+
+    assert result.exit_code == 0
+    assert "close to arbitrary" in result.output
+
+
+def test_sample_does_not_warn_when_the_corpus_has_a_real_outlier(tmp_path: Path):
+    _ingest_inputs(tmp_path, [*VARIED * 6, "▓▓ qzxjkv wmbfgh ▓▓"])
+
+    result = runner.invoke(
+        app, ["sample", "--n", "5", "--name", "s", "--strategy", "perplexity", "--repo", str(tmp_path)]
+    )
+
+    assert result.exit_code == 0
+    assert "close to arbitrary" not in result.output
+    assert "perplexity spread" in result.output
+
+
+def test_sample_rejects_an_unknown_perplexity_field(tmp_path: Path):
+    _ingest_inputs(tmp_path, VARIED)
+
+    result = runner.invoke(
+        app,
+        ["sample", "--n", "3", "--name", "s", "--strategy", "perplexity",
+         "--perplexity-field", "nonsense", "--repo", str(tmp_path)],
+    )
+
+    assert result.exit_code != 0

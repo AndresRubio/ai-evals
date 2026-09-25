@@ -107,6 +107,13 @@ as advice. Each one exists because a source names the failure it prevents.
     served. A floating alias (`~typesafe/jev-latest`) therefore changes the judge while every
     recorded hash still matches. The judge runs the model named in `judge.yaml`, not the one
     in `config.toml`, for the same reason.
+12. **Perplexity selects, it never scores.** It may decide which traces a human reads and
+    nothing else. It measures how expected a text was, not whether it is right: a fluent
+    confident fabrication is low-perplexity, so the failure mode the toolkit exists to
+    catch is the one perplexity ranks as most normal. Invariant 2 already bars a machine
+    score from becoming a label in dev or test, and this is a machine score. A ranking
+    that carries no information must say so rather than return a plausible-looking batch,
+    for the same reason invariant 9 bars a silent zero.
 
 ## Architecture
 

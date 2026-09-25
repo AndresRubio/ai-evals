@@ -47,7 +47,7 @@ example, not committed, so nothing here demonstrates that directly.)
 | Command | Consumes | Produces |
 |---|---|---|
 | `axial ingest` | JSONL or CSV | normalised traces |
-| `axial sample` | traces | a review batch; targeted strategies mix in a random slice (30% by default, `--random-fraction`) |
+| `axial sample` | traces | a review batch (`random`, `outlier`, `longest`, `perplexity`); targeted strategies mix in a random slice (30% by default, `--random-fraction`) |
 | `axial annotate` | a batch | open codes, verdicts and critiques |
 | `axial taxonomy` | your open codes | a failure taxonomy with prevalence |
 | `axial label-from-reviews` | one or more annotated review sessions + a failure mode | human labels, converted from `verdict`/`critique`/`annotator` |
@@ -87,6 +87,11 @@ The refusals are the product.
   eval has stopped carrying signal.
 - **Infra failures never score as model failures.** They are quarantined in
   `errors.jsonl` with a failure class.
+- **Perplexity is never a verdict.** It selects which traces a human reads and stops
+  there. A fluent, confident, entirely fabricated answer has *low* perplexity, so the
+  failure mode you care most about is the one it scores best. `axial sample` also
+  reports the spread of its own ranking and warns when that ranking is arbitrary,
+  rather than handing back a batch that looks considered and is not.
 - **No floating model aliases.** A judge model must be pinned to an exact version.
   An alias that moves swaps the judge underneath a `PROMOTED` marker whose hashes
   still match, so the gate keeps attesting to an alignment run nobody performed.
@@ -182,6 +187,62 @@ belong in triage and in train, nowhere else.
 
 The adapter is exercised offline against a stubbed transport. It has not been run against
 the live endpoint here.
+
+## Perplexity
+
+Perplexity is the exponentiated average negative log-likelihood a language model
+assigns to a text — `exp(-1/N · Σ log p(xᵢ | x<ᵢ))`. It is the oldest metric in language
+modelling, and it has exactly one job here: **deciding which traces a human reads.**
+
+```bash
+axial sample --n 40 --name first-pass --strategy perplexity
+```
+
+Traces are ranked most-surprising-first, because the failures worth finding sit in the
+edge cases the corpus barely covers, not in the hundredth paraphrase of the commonest
+question. `--perplexity-field` chooses the side to rank on (`input`, the default,
+`output`, or `both`).
+
+**It is not a quality metric, and the reason is not academic.** Perplexity measures how
+*expected* a text was, not whether it is correct, grounded or useful. A fluent,
+confident, completely fabricated answer is low-perplexity text. The literature is
+consistent that perplexity correlates poorly with downstream task performance, degrades
+as inputs get longer, and cannot be compared across tokenisers or corpora. So it never
+becomes a verdict, a label or an input to alignment — invariant 2 already forbids a
+machine score from becoming a label in dev or test, and this is a machine score.
+
+**The model is fitted to your corpus, not pretrained.** The question is "unusual
+compared to *my* production traffic", so your traffic is the reference distribution.
+That also keeps `sample` free of an API key, a download and a torch dependency — and
+the default judge model, Anthropic's, exposes no token logprobs at all, so a pretrained
+reference could not be reached through the path axial already uses. The unit is
+characters, via a Witten-Bell–interpolated n-gram model, so there is no vocabulary to
+build and no unknown-word case to fudge on code, identifiers or other languages.
+
+Two properties worth understanding before trusting a batch:
+
+- **Scoring is leave-one-out, and that is load-bearing.** A trace left in the model that
+  scores it teaches that model its own rare sequences. In a 7-trace corpus, a
+  deliberately strange trace scored 199 held out and 1.21 left in — second place,
+  indistinguishable from ordinary text. Self-inclusion does not flatten the ranking, it
+  inverts it, so each trace's counts are removed before it is scored.
+- **A flat corpus has nothing to rank, and `sample` says so.** It prints the spread
+  between the most surprising trace and the typical one, and warns below 2.0:
+
+  ```
+  perplexity spread (max/median): 1.06
+  warning: a spread of 1.06 means the most surprising trace is barely more surprising
+  than the typical one, so this ranking is close to arbitrary — it will be sorting on
+  whatever incidental token happens to vary, such as an id or a timestamp.
+  ```
+
+  That is this repo's own `examples/newsroom`: 400 traces that are 25 templates with an
+  issue number substituted in, where the ranking was sorting on the issue number. On a
+  varied support corpus with three planted oddities — an SQL injection string, an Arabic
+  request, a raw JSON blob — the same statistic reads about 4,000 and the three rank
+  first.
+  The 2.0 threshold is a heuristic sitting in the wide empty gap between those two
+  measurements, not a calibrated boundary.
 
 ## Prior art
 

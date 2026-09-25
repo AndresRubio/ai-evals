@@ -101,3 +101,71 @@ def test_review_status_must_be_valid():
     """Review.status must be one of the allowed literal values."""
     with pytest.raises(ValidationError):
         Review(trace_id="t1", status="invalid")
+
+
+# --- the perplexity strategy --------------------------------------------------
+
+
+def _worded(texts: list[str]) -> list[Trace]:
+    return [Trace(trace_id=f"t{i}", input=t, output="ok") for i, t in enumerate(texts)]
+
+
+TYPICAL = [
+    "what is the refund policy for annual plans",
+    "what is the refund policy for monthly plans",
+    "how do i change the card on my annual plan",
+    "how do i cancel my monthly plan",
+    "can i get a refund for my annual plan",
+    "what is the refund policy for my plan",
+]
+
+
+def test_perplexity_strategy_surfaces_the_unusual_trace_first():
+    pool = _worded([*TYPICAL, "▓▓ qzxjkv wmbfgh ▓▓"])
+
+    picked = sample_batch(pool, 3, strategy="perplexity", random_fraction=0.0, seed=0)
+
+    assert picked[0].trace_id == f"t{len(TYPICAL)}"
+
+
+def test_perplexity_strategy_can_rank_on_the_output_side():
+    pool = [
+        Trace(trace_id=f"t{i}", input="same question", output=o)
+        for i, o in enumerate(["a normal answer here", "a normal answer there", "▓qzxjkv wmbf"])
+    ]
+
+    picked = sample_batch(
+        pool, 1, strategy="perplexity", random_fraction=0.0, perplexity_field="output", seed=0
+    )
+
+    assert picked[0].trace_id == "t2"
+
+
+def test_perplexity_strategy_still_includes_a_random_slice():
+    """Invariant 10 applies to every targeted strategy, this one included."""
+    pool = _worded([*TYPICAL] * 20)
+
+    picked = sample_batch(pool, 10, strategy="perplexity", random_fraction=0.3, seed=1)
+
+    assert len(picked) == 10
+    assert len({t.trace_id for t in picked}) == 10
+
+
+def test_perplexity_strategy_rejects_an_unknown_field():
+    with pytest.raises(ValueError, match="field"):
+        sample_batch(_worded(TYPICAL), 3, strategy="perplexity", perplexity_field="nonsense")
+
+
+def test_an_unscorable_trace_never_takes_the_top_review_slot():
+    """An empty input has no perplexity, and NaN sorts wherever it likes.
+
+    Left alone it lands at the front of the ranking, so the first thing a reviewer
+    opens is a blank trace instead of the outlier the strategy was run to find.
+    Absent is not surprising; it sorts last.
+    """
+    pool = _worded(["", *TYPICAL, "▓▓ qzxjkv wmbfgh ▓▓", ""])
+
+    picked = sample_batch(pool, 3, strategy="perplexity", random_fraction=0.0, seed=0)
+
+    assert picked[0].input == "▓▓ qzxjkv wmbfgh ▓▓"
+    assert "" not in [t.input for t in picked]

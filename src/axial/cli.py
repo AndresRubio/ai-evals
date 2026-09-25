@@ -22,6 +22,8 @@ from axial.errors import AxialError
 from axial.gate import gate as run_gate
 from axial.judge import JudgeSpec, build_judge_model, run_judge
 from axial.model import LiteLLMModel, require_text_model
+from axial.perplexity import DEGENERATE_SPREAD, score_traces
+from axial.perplexity import spread as perplexity_spread
 from axial.report import alignment_from_verdicts, check_promotion, write_alignment
 from axial.report import promote as do_promote
 from axial.sample import all_reviews, create_session, read_session, sample_batch
@@ -72,30 +74,59 @@ def ingest(
 def sample(
     n: int = typer.Option(20, help="How many traces to put in the batch"),
     name: str = typer.Option(..., help="Name for this review session"),
-    strategy: str = typer.Option("random", help="random | outlier | longest"),
+    strategy: str = typer.Option(
+        "random", help="random | outlier | longest | perplexity"
+    ),
     random_fraction: float = typer.Option(
         0.3,
         "--random-fraction",
-        help="Fraction of a targeted batch (outlier | longest) to fill with a "
+        help="Fraction of a targeted batch (outlier | longest | perplexity) to fill with a "
         "random draw instead of the targeted ranking. Every targeted strategy "
         "is biased toward the failures you already knew to look for, so a "
         "random slice is what catches the ones you didn't. Ignored by "
         "--strategy random. round(n * random_fraction) can be 0 for a small "
         "n, which drops the random slice entirely for that batch.",
     ),
+    perplexity_field: str = typer.Option(
+        "input",
+        "--perplexity-field",
+        help="Which side of the trace --strategy perplexity ranks on: input | "
+        "output | both. Defaults to input, where an unusual value means an edge "
+        "case the system was asked to handle. Ranking outputs sorts the most "
+        "degenerate ones — a truncated stub, one sentence repeated — to the "
+        "bottom, because repetition is the least surprising text there is.",
+    ),
     seed: int = typer.Option(0),
     repo: str = RepoOption,
 ) -> None:
     """Draw a review batch. Targeted strategies mix in a random slice."""
     store = Store(repo)
+    traces = store.read_traces()
     if strategy != "random" and random_fraction == 0:
         typer.echo(
             "warning: --random-fraction 0 with a targeted strategy disables invariant 10 "
             "(every batch keeps a random slice) — every trace in this batch was already "
             "suspected of a problem before it was chosen"
         )
+    if strategy == "perplexity":
+        ratio = perplexity_spread(score_traces(traces, field=perplexity_field))
+        if math.isfinite(ratio):
+            typer.echo(f"perplexity spread (max/median): {ratio:.2f}")
+        if math.isfinite(ratio) and ratio < DEGENERATE_SPREAD:
+            typer.echo(
+                f"warning: a spread of {ratio:.2f} means the most surprising trace is barely "
+                "more surprising than the typical one, so this ranking is close to arbitrary — "
+                "it will be sorting on whatever incidental token happens to vary, such as an id "
+                "or a timestamp. A corpus of near-identical traces has nothing for perplexity "
+                "to find; --strategy random is the honest choice for it."
+            )
     batch = sample_batch(
-        store.read_traces(), n, strategy=strategy, random_fraction=random_fraction, seed=seed
+        traces,
+        n,
+        strategy=strategy,
+        random_fraction=random_fraction,
+        perplexity_field=perplexity_field,
+        seed=seed,
     )
     create_session(store, batch, name=name)
     typer.echo(f"session {name}: {len(batch)} traces ready to annotate")
