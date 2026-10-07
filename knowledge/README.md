@@ -14,6 +14,10 @@ at the repository root: fetch it, pick a line, fetch that file.
 - `landscape/`: one tool per file. Claims decay, so every file carries the date its
   sources were read and the index shows it.
 
+Nothing but this README and the three shelf directories may live under `knowledge/`,
+and a shelf holds only Markdown files; the check fails on any other path. Dotfiles such
+as `.DS_Store` are ignored.
+
 ## Frontmatter
 
 Every file starts with YAML frontmatter. Required: `name` (equals the filename stem,
@@ -23,7 +27,8 @@ the directory), `updated` (date of the last substantive change), `sources` (a li
 `{url, read}`). Optional: `related` (names of other files), and for landscape entries
 `license` (SPDX identifier, or `proprietary`) and `extra` (the optional-dependency
 group in `pyproject.toml` through which `axial` depends on the tool; absent means no
-dependency).
+dependency). `license` and `extra` are landscape-only: the check rejects either on
+another shelf. Any other key is unknown and the check rejects it.
 
 Links between files are relative Markdown links so GitHub renders them. The check
 resolves them.

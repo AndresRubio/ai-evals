@@ -77,6 +77,7 @@ def violations(root: Path, rel: str, text: str) -> list[str]:
         (lambda s: s.replace("    read: 2026-10-07\n", ""), "sources[0].read: missing"),
         (lambda s: s.replace("license: Apache-2.0\n", "license: 3\n"), "license: must be a string"),
         (lambda s: s.replace("related: [landscape-overview]\n", "related: landscape-overview\n"), "related: must be a list of names"),
+        (lambda s: s.replace("license: Apache-2.0\n", "license: Apache-2.0\nfoo: bar\n"), "foo: unknown key"),
     ],
 )
 def test_parse_entry_rejects_schema_violations(tmp_path: Path, mutation, fragment: str) -> None:
@@ -213,6 +214,18 @@ def test_load_tree_rejects_extra_outside_landscape(tmp_path: Path) -> None:
     assert tree_violations(root) == ["knowledge/procedures/a.md: extra: only landscape entries may declare it"]
 
 
+def test_load_tree_rejects_license_outside_landscape(tmp_path: Path) -> None:
+    root = make_repo(tmp_path, {"procedures/a.md": entry_text("a", "procedures", license="MIT")})
+    assert tree_violations(root) == ["knowledge/procedures/a.md: license: only landscape entries may declare it"]
+
+
+def test_load_tree_ignores_dotfiles(tmp_path: Path) -> None:
+    root = make_repo(tmp_path, {"landscape/a.md": entry_text("a", "landscape")})
+    write(root, "knowledge/.DS_Store", "binary\n")
+    write(root, "knowledge/landscape/.hidden", "hidden\n")
+    assert [e.name for e in ki.load_tree(root)] == ["a"]
+
+
 def test_load_tree_rejects_stray_paths(tmp_path: Path) -> None:
     root = make_repo(tmp_path, {"landscape/a.md": entry_text("a", "landscape")})
     write(root, "knowledge/notes.md", "stray\n")
@@ -299,6 +312,12 @@ def test_check_passes_when_index_matches(tmp_path: Path) -> None:
 def test_check_reports_a_stale_index(tmp_path: Path) -> None:
     root = three_shelf_repo(tmp_path)
     write(root, "llms.txt", EXPECTED_INDEX.replace("About zeta", "About zeta!"))
+    assert ki.check(root) == ["llms.txt: stale; run scripts/knowledge_index.py"]
+
+
+def test_check_reports_an_index_with_crlf_line_endings_as_stale(tmp_path: Path) -> None:
+    root = three_shelf_repo(tmp_path)
+    (root / "llms.txt").write_bytes(EXPECTED_INDEX.replace("\n", "\r\n").encode("utf-8"))
     assert ki.check(root) == ["llms.txt: stale; run scripts/knowledge_index.py"]
 
 

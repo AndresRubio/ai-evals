@@ -111,7 +111,7 @@ def parse_entry(path: Path, root: Path) -> Entry:
     rel = path.relative_to(root).as_posix()
     problems: list[str] = []
     try:
-        data, body = split_frontmatter(path.read_text())
+        data, body = split_frontmatter(path.read_text(encoding="utf-8"))
     except (ValueError, TypeError) as exc:
         raise KnowledgeError([f"{rel}: {exc}"]) from exc
 
@@ -213,12 +213,16 @@ def _layout_violations(knowledge: Path, root: Path) -> tuple[list[str], list[Pat
     problems: list[str] = []
     files: list[Path] = []
     for child in sorted(knowledge.iterdir()):
+        if child.name.startswith("."):
+            continue
         rel = child.relative_to(root).as_posix()
         if child.is_dir():
             if child.name not in SHELVES:
                 problems.append(f"{rel}: not a shelf; only {', '.join(SHELVES)} are allowed")
                 continue
             for item in sorted(child.iterdir()):
+                if item.name.startswith("."):
+                    continue
                 item_rel = item.relative_to(root).as_posix()
                 if item.is_dir() or item.suffix != ".md":
                     problems.append(f"{item_rel}: not a Markdown file")
@@ -281,6 +285,8 @@ def load_tree(root: Path) -> list[Entry]:
                 problems.append(
                     f"{rel}: extra: '{entry.extra}' is not in [project.optional-dependencies]"
                 )
+        if entry.license is not None and entry.shelf != "landscape":
+            problems.append(f"{rel}: license: only landscape entries may declare it")
         problems.extend(_link_violations(entry, root))
 
     if problems:
@@ -329,7 +335,7 @@ def check(root: Path) -> list[str]:
     index = root / INDEX_NAME
     if not index.exists():
         return [f"{INDEX_NAME}: missing; run scripts/knowledge_index.py"]
-    if index.read_text() != rendered:
+    if index.read_bytes() != rendered.encode("utf-8"):
         return [f"{INDEX_NAME}: stale; run scripts/knowledge_index.py"]
     return []
 
@@ -339,7 +345,7 @@ def write_index(root: Path) -> list[str]:
     rendered, problems = _render_or_violations(root)
     if rendered is None:
         return problems
-    (root / INDEX_NAME).write_text(rendered)
+    (root / INDEX_NAME).write_bytes(rendered.encode("utf-8"))
     return []
 
 

@@ -149,6 +149,9 @@ Optional keys:
 | `extra` | Landscape only. The name of the optional-dependency group in `pyproject.toml` through which `axial` depends on this tool. Must exist under `[project.optional-dependencies]`. Absent means `axial` does not depend on the tool. |
 | `license` | Landscape only. The tool's licence as an SPDX identifier or, for closed products, `proprietary`. |
 
+No other key is allowed: the check rejects any key in neither table as unknown, and
+rejects `extra` or `license` on an entry outside `landscape`.
+
 Body links between knowledge files are relative Markdown links, `../landscape/evidently.md`,
 so GitHub renders them. The check resolves every relative link in a body and fails on a
 missing target. External links are not fetched.
@@ -211,12 +214,15 @@ python scripts/knowledge_index.py --check    # validate; exit 1 on any violation
 
 Functions, each testable on a temporary directory:
 
-- `parse_entry(path) -> Entry`: splits frontmatter from body, validates the schema
-  above, returns a dataclass or raises `KnowledgeError` listing every schema violation
-  in that file.
+- `parse_entry(path, root) -> Entry`: splits frontmatter from body, validates the
+  schema above, returns a dataclass or raises `KnowledgeError` listing every schema
+  violation in that file, unknown keys included. `root` is the repository root, used to
+  prefix each message with the file's relative path.
 - `load_tree(root) -> list[Entry]`: walks `knowledge/`, parses every file, checks
   cross-file rules: unique names, `related` targets exist, relative body links resolve,
-  `extra` names exist in `pyproject.toml`, no stray paths.
+  `extra` names exist in `pyproject.toml`, `extra` and `license` appear only on
+  landscape entries, no stray paths. Only `README.md` and the three shelf directories
+  may live under `knowledge/`; dotfiles such as `.DS_Store` are ignored.
 - `render_index(entries) -> str`: the Markdown in section 3.
 - `check(root) -> list[str]`: runs `load_tree`, renders, compares to the committed
   `llms.txt` byte for byte, and returns every violation found. The script prints them
