@@ -1,0 +1,192 @@
+"""Build and check the knowledge base index.
+
+    python scripts/knowledge_index.py            # rewrite llms.txt
+    python scripts/knowledge_index.py --check    # validate; exit 1 on any violation
+
+The tree under knowledge/ is the source of truth. llms.txt is generated from each
+file's frontmatter. Every violation is collected before exiting so one run shows the
+whole list, and a broken tree never produces an index.
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+from datetime import date, datetime
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+SHELVES: tuple[str, ...] = ("methodology", "procedures", "landscape")
+NAME_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+DESCRIPTION_MAX = 160
+INDEX_NAME = "llms.txt"
+KNOWLEDGE_DIR = "knowledge"
+REQUIRED_KEYS = ("name", "description", "shelf", "updated", "sources")
+OPTIONAL_KEYS = ("related", "extra", "license")
+
+
+class KnowledgeError(Exception):
+    """One or more violations, each a line of the form `path: message`."""
+
+    def __init__(self, violations: list[str]) -> None:
+        super().__init__("\n".join(violations))
+        self.violations = violations
+
+
+@dataclass(frozen=True)
+class Source:
+    url: str
+    read: date
+
+
+@dataclass(frozen=True)
+class Entry:
+    name: str
+    description: str
+    shelf: str
+    updated: date
+    sources: tuple[Source, ...]
+    related: tuple[str, ...]
+    extra: str | None
+    license: str | None
+    path: Path
+    body: str
+
+
+def split_frontmatter(text: str) -> tuple[dict[str, Any], str]:
+    """Return (frontmatter, body). Raises ValueError or TypeError with a reason when malformed."""
+    if not text.startswith("---\n"):
+        raise ValueError("no frontmatter block")
+    end = text.find("\n---\n", 4)
+    if end == -1:
+        raise ValueError("no frontmatter block")
+    raw = text[4:end]
+    body = text[end + len("\n---\n") :]
+    try:
+        data = yaml.safe_load(raw)
+    except yaml.YAMLError as exc:
+        raise ValueError(f"frontmatter is not valid YAML: {exc}") from exc
+    if not isinstance(data, dict):
+        raise TypeError("frontmatter is not a mapping")
+    return data, body
+
+
+def _is_date(value: object) -> bool:
+    return isinstance(value, date) and not isinstance(value, datetime)
+
+
+def _check_sources(raw: object, out: list[str]) -> tuple[Source, ...]:
+    if not isinstance(raw, list) or not raw:
+        out.append("sources: must list at least one source")
+        return ()
+    sources: list[Source] = []
+    for i, item in enumerate(raw):
+        if not isinstance(item, dict):
+            out.append(f"sources[{i}]: must be a mapping with url and read")
+            continue
+        url = item.get("url")
+        read = item.get("read")
+        ok = True
+        if not isinstance(url, str) or not url:
+            out.append(f"sources[{i}].url: missing")
+            ok = False
+        if read is None:
+            out.append(f"sources[{i}].read: missing")
+            ok = False
+        elif not _is_date(read):
+            out.append(f"sources[{i}].read: not an ISO date")
+            ok = False
+        if ok:
+            sources.append(Source(str(url), read))  # type: ignore[arg-type]
+    return tuple(sources)
+
+
+def parse_entry(path: Path, root: Path) -> Entry:
+    """Parse one knowledge file. `root` is the repository root, used for messages."""
+    rel = path.relative_to(root).as_posix()
+    problems: list[str] = []
+    try:
+        data, body = split_frontmatter(path.read_text())
+    except (ValueError, TypeError) as exc:
+        raise KnowledgeError([f"{rel}: {exc}"]) from exc
+
+    for key in REQUIRED_KEYS:
+        if key not in data:
+            problems.append(f"{key}: missing")
+    for key in data:
+        if key not in REQUIRED_KEYS and key not in OPTIONAL_KEYS:
+            problems.append(f"{key}: unknown key")
+
+    name = data.get("name")
+    if isinstance(name, str):
+        if not NAME_RE.fullmatch(name):
+            problems.append(f"name: '{name}' is not kebab-case")
+        elif name != path.stem:
+            problems.append(f"name: '{name}' does not match filename stem '{path.stem}'")
+    elif "name" in data:
+        problems.append("name: must be a string")
+
+    description = data.get("description")
+    if isinstance(description, str):
+        if "\n" in description.strip():
+            problems.append("description: must be one line")
+        else:
+            description = description.strip()
+            if not description:
+                problems.append("description: empty")
+            if description.endswith("."):
+                problems.append("description: ends with a period")
+            if len(description) > DESCRIPTION_MAX:
+                problems.append(
+                    f"description: {len(description)} characters, limit {DESCRIPTION_MAX}"
+                )
+    elif "description" in data:
+        problems.append("description: must be a string")
+
+    shelf = data.get("shelf")
+    if isinstance(shelf, str):
+        if shelf not in SHELVES:
+            problems.append(f"shelf: '{shelf}' is not one of {', '.join(SHELVES)}")
+        elif shelf != path.parent.name:
+            problems.append(f"shelf: '{shelf}' does not match directory '{path.parent.name}'")
+    elif "shelf" in data:
+        problems.append("shelf: must be a string")
+
+    updated = data.get("updated")
+    if "updated" in data and not _is_date(updated):
+        problems.append("updated: not an ISO date")
+
+    sources = _check_sources(data["sources"], problems) if "sources" in data else ()
+
+    related_raw = data.get("related", [])
+    if not isinstance(related_raw, list) or not all(isinstance(r, str) for r in related_raw):
+        problems.append("related: must be a list of names")
+        related_raw = []
+
+    extra = data.get("extra")
+    if extra is not None and not isinstance(extra, str):
+        problems.append("extra: must be a string")
+        extra = None
+
+    license_ = data.get("license")
+    if license_ is not None and not isinstance(license_, str):
+        problems.append("license: must be a string")
+        license_ = None
+
+    if problems:
+        raise KnowledgeError([f"{rel}: {p}" for p in problems])
+
+    return Entry(
+        name=str(name),
+        description=str(description).strip(),
+        shelf=str(shelf),
+        updated=updated,  # type: ignore[arg-type]
+        sources=sources,
+        related=tuple(related_raw),
+        extra=extra,
+        license=license_,
+        path=path,
+        body=body,
+    )
