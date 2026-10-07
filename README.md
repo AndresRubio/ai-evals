@@ -4,8 +4,9 @@ From raw traces to an LLM judge you have actually measured.
 
 Every tool surveyed here assumes you already know your metrics before you open it.
 promptfoo wants an assertion. DeepEval and Ragas ship a catalogue of pre-named metrics.
-Pydantic Evals wants a rubric. Inspect AI and lm-evaluation-harness solve a different
-problem — a fixed benchmark whose ground truth is handed to you. The observability
+Pydantic Evals wants a rubric. Inspect AI will run any dataset, agent or model-graded
+scorer you give it, but the scorer arrives already written; lm-evaluation-harness
+starts from a fixed benchmark whose ground truth is handed to you. The observability
 platforms store traces beautifully and then, almost universally, ask you to write a
 judge prompt and ship it.
 
@@ -76,7 +77,8 @@ The refusals are the product.
   against it, so `axial` will not do it quietly.
 - **Few-shot examples come from train only.**
 - **Never raw agreement alone.** TPR and TNR are printed beside it, with a confidence
-  interval. At a 5% failure rate an always-pass judge scores 95% agreement and detects
+  interval. The positive class is the failure: TPR is the share of real failures the
+  judge catches, TNR the share of real passes it lets through. At a 5% failure rate an always-pass judge scores 95% agreement and detects
   nothing.
 - **No promotion below the bar.** Test TPR and TNR must clear your threshold and the
   dev→test gap must be within tolerance.
@@ -247,15 +249,25 @@ Two properties worth understanding before trusting a batch:
 ## Prior art
 
 - **promptfoo, DeepEval, Ragas, autoevals** — assertion and metric catalogues. `axial`
-  produces a validated judge definition (`judge.yaml`) and the alignment report
-  behind it, which you then wire into whichever of these you run.
+  produces a validated judge definition (`judge.yaml`: prompt template, model, few-shot
+  trace ids, decision threshold) and the alignment report behind it. There is no
+  exporter to any of these tools; to run the judge inside one, you port the prompt and
+  threshold by hand, and the alignment numbers only carry over if the model and prompt
+  do too.
 - **Pydantic Evals** — the best-engineered instance of the pattern, and the most
   type-rigorous eval library in the ecosystem: typed `Case` and `Dataset`, an
   `LLMJudge` graded against a rubric you write, MIT, no account needed. Its own docs tell
   you to validate judges against human-labelled test sets, in one sentence, with nothing
   behind it. `axial` is that sentence, implemented.
-- **Inspect AI, lm-evaluation-harness** — foundation-model benchmarking, where the
-  taxonomy is the benchmark and is given to you. Different problem.
+- **Inspect AI** (UK AI Security Institute) — a full open harness for model and agent
+  evals: custom datasets, tool use, sandboxed agents, `model_graded_qa` and custom
+  scorers, a local log viewer, MIT. It runs a model-graded scorer, and its scoring
+  workflow lets you re-score logs and hand-edit individual scores; its scorer and
+  scoring-workflow docs say nothing about deriving a scorer from your own failures or
+  measuring its agreement with human labels. `axial` sits upstream of it: the judge
+  Inspect would run is the thing `axial` builds and validates.
+- **lm-evaluation-harness** — foundation-model benchmarking, where the taxonomy is the
+  benchmark and is given to you. Different problem.
 - **Langfuse, Opik, LangSmith, Braintrust, Phoenix** — trace storage and judge running;
   Braintrust itself is closed-source SaaS built around the open `autoevals` scorer
   library, and Phoenix ships under Elastic License 2.0, which isn't OSI-approved.
@@ -266,11 +278,14 @@ Two properties worth understanding before trusting a batch:
   among them, and named criteria drift along the way. A research prototype, not a
   maintained package, and scoped to that one step — not the open coding, taxonomy
   building, splits, or gating around it. `axial` is the shipped, full-pipeline version.
-- **Anthropic's error-discovery skill** — clusters your annotations into failure modes
-  inside an agent session. `axial` is the versioned artifact store and CI gate around
-  the same idea. (Secondary source, not verified directly against Anthropic's own
-  materials — see the "Other sources" note in
-  [`docs/research/2026-09-17-tooling-landscape.md`](docs/research/2026-09-17-tooling-landscape.md).)
+- **The AI Evals course's `evals-skills`**
+  ([ai-evals-course/evals-skills](https://github.com/ai-evals-course/evals-skills),
+  Apache-2.0) — agent skills for the same methodology. Its `error-discovery` skill has
+  an agent build a review app, sort your free-text notes into failure modes while you
+  review, and propose new samples; `validate-evaluator` walks the split / TPR / TNR /
+  bias-correction steps as instructions. `axial` is the versioned artifact store and
+  CI gate around the same ideas. Note the opposite convention: the skills treat *Pass*
+  as the positive class, so their TPR is `axial`'s TNR.
 
 ## Credit
 
