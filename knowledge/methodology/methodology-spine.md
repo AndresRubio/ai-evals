@@ -22,6 +22,18 @@ sources:
     read: 2026-09-17
   - url: https://developers.openai.com/api/docs/guides/evaluation-best-practices
     read: 2026-09-17
+  - url: https://hamel.dev/notes/llm/evals/
+    read: 2026-09-17
+  - url: https://hamelhusain.substack.com/p/evals
+    read: 2026-09-17
+  - url: https://newsletter.pragmaticengineer.com/p/evals
+    read: 2026-09-17
+  - url: https://www.sh-reya.com/blog/ai-engineering-flywheel/
+    read: 2026-09-17
+  - url: https://www.anthropic.com/engineering/building-effective-agents
+    read: 2026-09-17
+  - url: https://developers.openai.com/cookbook/examples/evaluation/building_resilient_prompts_using_an_evaluation_flywheel
+    read: 2026-09-17
 related: [numbers-and-rules-of-thumb, mechanizable-vs-human]
 ---
 

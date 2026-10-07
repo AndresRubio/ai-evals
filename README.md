@@ -291,7 +291,20 @@ Two properties worth understanding before trusting a batch:
 
 The methodology is Hamel Husain's and Shreya Shankar's, with Eugene Yan's work on judge
 alignment and Anthropic's published eval guides. `axial` implements it; it did not
-invent it. See [`docs/research/`](docs/research/) for the sources behind every default.
+invent it. See the knowledge base below for the sources behind every default.
+
+## Knowledge base
+
+Everything this repository has read about evaluating LLM applications lives under
+[`knowledge/`](knowledge/) as one Markdown file per topic, on three shelves:
+methodology, procedures, and a dated landscape of tools. [`llms.txt`](llms.txt) at the
+repository root is the index. An agent or a person queries it the same way: fetch the
+index, pick a line, fetch that file.
+
+To add or change an entry, edit the file and run
+`uv run python scripts/knowledge_index.py`. CI runs the same script with `--check` and
+fails when the index is stale or a file breaks the rules in
+[`knowledge/README.md`](knowledge/README.md).
 
 ## Licence
 

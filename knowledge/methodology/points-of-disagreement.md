@@ -28,6 +28,8 @@ sources:
     read: 2026-09-17
   - url: https://developers.openai.com/cookbook/examples/partners/eval_driven_system_design/receipt_inspection
     read: 2026-09-17
+  - url: https://www.sh-reya.com/blog/ai-engineering-short/
+    read: 2026-09-17
 related: [methodology-spine]
 ---
 

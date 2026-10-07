@@ -10,6 +10,8 @@ sources:
     read: 2026-09-17
   - url: https://eugeneyan.com/writing/aligneval/
     read: 2026-09-17
+  - url: https://github.com/eugeneyan/align-app
+    read: 2026-09-17
 related: [methodology-spine]
 ---
 
