@@ -332,3 +332,10 @@ def test_main_check_exit_codes_and_output(tmp_path: Path, capsys: pytest.Capture
     assert ki.main(["--root", str(root)]) == 0
     assert ki.main(["--check", "--root", str(root)]) == 0
     assert capsys.readouterr().out == ""
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_the_repository_knowledge_tree_is_valid_and_indexed() -> None:
+    assert ki.check(REPO_ROOT) == []
