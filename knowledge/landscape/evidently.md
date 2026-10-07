@@ -36,8 +36,9 @@ LLM inputs and outputs for later evaluation.
 
 ## Where it sits
 
-Mixed: application evals bolted onto a larger ML-monitoring product, and the only tool
-in this shelf with first-class production monitoring. The documented workflows are
+Mixed: application evals bolted onto a larger ML-monitoring product, and the only one
+in this shelf that pairs LLM evals with ML-style drift and data-quality monitoring. The
+documented workflows are
 evals in GitHub Actions, scheduled evals on the platform, batch monitoring jobs over
 traced traffic, dashboards and alerts.
 

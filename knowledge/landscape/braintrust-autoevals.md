@@ -18,7 +18,7 @@ related: [landscape-overview]
 
 Braintrust = proprietary SaaS eval/observability platform; `autoevals` = its OSS scorer library (Python + TS). autoevals itself is MIT; the licence above is the platform's.
 
-Already covered under Braintrust above — the standalone OSS scorer library
+autoevals, the standalone OSS scorer library, is covered here with the platform it ships with.
 
 ## Core abstraction
 

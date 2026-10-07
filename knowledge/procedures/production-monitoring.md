@@ -38,8 +38,9 @@ judge flags is read by a person and promoted into the CI set.
    Trigger: the batch exists.
    Artifact: a corrected failure rate with a confidence interval. A judge with known
    true-positive and true-negative rates on its test split gives a raw flag rate that is
-   neither the failure rate nor an interval; the correction and interval are what the
-   corrected-rates spec adds to axial as `measure`. Evidently's scheduled evals and
+   neither the failure rate nor an interval; the correction and interval are what
+   axial's `measure` would add, which is proposed in axial's corrected-rates design and
+   not yet implemented. Evidently's scheduled evals and
    batch monitoring jobs run the equivalent for its own descriptors.
    Gate: none.
 4. **Alert on the lower bound.**
@@ -67,6 +68,5 @@ judge flags is read by a person and promoted into the CI set.
 
 A batch that looks unlike the data the judge was aligned on is a reason to distrust
 step three before any alert fires. Evidently detects it with embedding and
-distribution drift over text; axial has a character-level perplexity model trained on
-the ingested corpus that can score a new batch for the same purpose, as a warning and
-never a verdict.
+distribution drift over text. axial has no drift check today; its perplexity model
+ranks traces for review within one corpus and is not comparable across corpora.

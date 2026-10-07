@@ -52,7 +52,7 @@ Checked in the obvious places and not found:
 
 ## Relation to axial
 
-Pydantic Evals is the best-engineered instance of the pattern the synthesis above describes: excellent at the back half (define cases → run evaluators → report → gate CI), silent on the front half. It does not close the gap. It is the strongest evidence for it — the most type-rigorous eval library in the ecosystem tells you to validate your judge against human labels, and then hands you nothing to do it with.
+Pydantic Evals is the best-engineered instance of the pattern the synthesis in [landscape-overview](landscape-overview.md) describes: excellent at the back half (define cases → run evaluators → report → gate CI), silent on the front half. It does not close the gap. It is the strongest evidence for it — the most type-rigorous eval library in the ecosystem tells you to validate your judge against human labels, and then hands you nothing to do it with.
 
 No dependency.
 

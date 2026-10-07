@@ -34,7 +34,7 @@ sources:
     read: 2026-09-17
   - url: https://developers.openai.com/cookbook/examples/evaluation/building_resilient_prompts_using_an_evaluation_flywheel
     read: 2026-09-17
-related: [numbers-and-rules-of-thumb, mechanizable-vs-human]
+related: [numbers-and-rules-of-thumb, mechanizable-vs-human, points-of-disagreement]
 ---
 
 # The methodology spine
@@ -88,4 +88,4 @@ Anthropic's agent guide adds the crucial agent-specific rule: grade the **outcom
 **Artifact:** **sampled online scores with confidence intervals**. Production has no reference outputs, so it leans on reference-free evaluators (LLM judges) run asynchronously on sampled live traces. Husain: track confidence intervals; if the **lower bound crosses your threshold, investigate**. The loop closes here — new patterns found in production get error-analyzed and promoted into the CI dataset.
 
 ## Step 13 — Re-run error analysis (the loop is non-terminal)
-Cadence guidance below. Gold sets go stale as the product and usage change; evals cost more to maintain than unit tests, so weigh maintenance against signal and retire evals that always pass.
+Cadence guidance is in [numbers-and-rules-of-thumb](numbers-and-rules-of-thumb.md). Gold sets go stale as the product and usage change; evals cost more to maintain than unit tests, so weigh maintenance against signal and retire evals that always pass.

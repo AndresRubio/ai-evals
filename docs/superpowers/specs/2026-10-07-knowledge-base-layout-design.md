@@ -254,8 +254,8 @@ Landscape files from the survey: `promptfoo`, `inspect-ai`, `deepeval`, `ragas`,
 - `warp-factories`: the agent-platform scorer. A factory definition declares scorers
   as Markdown with labels, scores, a sampling rate, a judge model and a self-improvement
   flag that feeds verdicts back into the agent. Nothing validates the scorer before
-  self-improvement turns on, and the published example pins its scorer to a model name
-  `axial` would refuse as a floating alias. Sources: the
+  self-improvement turns on, and the published example pins its scorer to an undated
+  model alias. Sources: the
   `warpdotdev/warp-factory-examples` repository and its `02-sdlc-issue-to-pr` scorers,
   read 2026-10-07.
 - `great-expectations`: the data-quality analogue of `axial gate`. Expectation suites

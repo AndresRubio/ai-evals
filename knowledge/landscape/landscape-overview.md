@@ -24,13 +24,15 @@ Everything below calls itself "evals," but the tools split cleanly into two fami
 
 Conflating the two is itself part of the tooling problem discussed in the synthesis.
 
-Notes on things that were hard to pin to one exact number: GitHub star counts fluctuate across SEO-farmed "guide" sites that were the dominant search results in 2026 for several of these tools (a symptom of the space itself — see synthesis), so figures above are directional, not exact, and should be re-verified against the live repo before being quoted.
+Notes on things that were hard to pin to one exact number: GitHub star counts fluctuate across SEO-farmed "guide" sites that were the dominant search results in 2026 for several of these tools (a symptom of the space itself — see synthesis), so figures in the per-tool entries are directional, not exact, and should be re-verified against the live repo before being quoted.
+
+Two entries in this shelf sit outside both families: [Great Expectations](great-expectations.md), which is data quality for tabular pipelines, and [Warp Factories](warp-factories.md), whose scorers are LLM judges embedded in an agent platform.
 
 ## Synthesis: where are the genuine gaps?
 
-**Short answer: no, there is no maintained, installable open-source Python tool that supports the full error-analysis-first workflow (look at traces → open-code failure modes → axial-code into a taxonomy → label a sample → build and align an LLM judge against those human labels → gate CI on the aligned judge). The workflow is well-documented as *methodology* (Hamel Husain and Shreya Shankar's "AI Evals" course/FAQ, and Shankar et al.'s [EvalGen](evalgen.md) / "Who Validates the Validators?" UIST 2024 paper on criteria drift), but it has never been productized as OSS. EvalGen itself was a research prototype, not a maintained package.**
+**Is there a tool that supports the full workflow? No: there is no maintained, installable open-source Python tool that supports the full error-analysis-first workflow (look at traces → open-code failure modes → axial-code into a taxonomy → label a sample → build and align an LLM judge against those human labels → gate CI on the aligned judge). The workflow is well-documented as *methodology* (Hamel Husain and Shreya Shankar's "AI Evals" course/FAQ, and Shankar et al.'s [EvalGen](evalgen.md) / "Who Validates the Validators?" UIST 2024 paper on criteria drift), but it has never been productized as OSS. EvalGen itself was a research prototype, not a maintained package.**
 
-Concretely, every tool surveyed above assumes you already know your metrics before you open the tool:
+Concretely, every tool surveyed in this shelf assumes you already know your metrics before you open the tool:
 
 - **[promptfoo](promptfoo.md) / [OpenAI Evals](openai-evals.md) / [lm-eval-harness](lm-evaluation-harness.md) / [HELM](helm.md)**: you write the assertion or task spec *first*. There's no workflow step for "I don't yet know what 'good' means for my traces — help me discover it."
 - **[DeepEval](deepeval.md) / [Ragas](ragas.md) / [autoevals](braintrust-autoevals.md) / [Evidently](evidently.md)**: ship a fixed catalog of pre-named metrics (faithfulness, toxicity, hallucination, relevance…). This is useful, but it *presupposes* your failure modes match their taxonomy. Ragas's RAG metrics won't surface "the agent apologized instead of escalating" as a failure mode; DeepEval's catalog won't surface a domain-specific policy violation unless you already knew to name it.
@@ -48,27 +50,4 @@ Concretely, every tool surveyed above assumes you already know your metrics befo
 4. **Version and diff taxonomies/judges alongside code**, so a CI gate is reproducible and auditable (which existing dataset/eval-run versioning in Langfuse/Opik/LangSmith gets partway to, but always for a metric assumed to already be correct).
 5. **Be library-first and framework-agnostic** (a `pip install`-able Python package usable standalone, not requiring a hosted account or a specific observability vendor's trace format) — addressing the recurring complaint across the SaaS-backed tools (LangSmith, Weave, Braintrust, Langfuse's non-core features) that the genuinely open, local, no-account pieces are thin slices of a product whose real value sits behind a login.
 
-In short: the ecosystem has matured a lot on *running* evals (datasets, scorers, CI hooks, dashboards) and on *benchmarking foundation models* (Inspect AI, lm-eval-harness, HELM), but the upstream, harder-to-automate step — figuring out, from real failures, what to measure at all, and proving your automated judge actually agrees with your humans — remains a manual, spreadsheet-and-notebook practice taught as methodology (Hamel Husain / Shreya Shankar's course, the EvalGen paper) rather than shipped as a tool. That is the real gap.
-
-## Index of entries
-
-- [anthropic-cookbook](anthropic-cookbook.md)
-- [arize-phoenix](arize-phoenix.md)
-- [braintrust-autoevals](braintrust-autoevals.md)
-- [deepeval](deepeval.md)
-- [dspy](dspy.md)
-- [evidently](evidently.md)
-- [evalgen](evalgen.md)
-- [evals-skills](evals-skills.md)
-- [helm](helm.md)
-- [inspect-ai](inspect-ai.md)
-- [langfuse](langfuse.md)
-- [langsmith](langsmith.md)
-- [lm-evaluation-harness](lm-evaluation-harness.md)
-- [openai-evals](openai-evals.md)
-- [opik](opik.md)
-- [promptfoo](promptfoo.md)
-- [pydantic-evals](pydantic-evals.md)
-- [pytest-evals](pytest-evals.md)
-- [ragas](ragas.md)
-- [wandb-weave](wandb-weave.md)
+In short: the ecosystem has matured a lot on *running* evals (datasets, scorers, CI hooks, dashboards) and on *benchmarking foundation models* (lm-eval-harness, HELM, and Inspect AI's benchmark registry), but the upstream, harder-to-automate step — figuring out, from real failures, what to measure at all, and proving your automated judge actually agrees with your humans — remains a manual, spreadsheet-and-notebook practice taught as methodology (Hamel Husain / Shreya Shankar's course, the EvalGen paper) rather than shipped as a tool. That is the real gap.

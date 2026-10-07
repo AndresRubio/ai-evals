@@ -10,6 +10,10 @@ sources:
     read: 2026-09-17
   - url: https://github.com/UKGovernmentBEIS/inspect_evals
     read: 2026-09-17
+  - url: https://inspect.aisi.org.uk/scorers.html
+    read: 2026-10-07
+  - url: https://inspect.aisi.org.uk/scoring.html
+    read: 2026-10-07
 license: MIT
 related: [landscape-overview]
 ---
@@ -48,4 +52,4 @@ No dependency.
 
 ## Corrections
 
-2026-09-30: the first version of this survey filed Inspect with lm-eval-harness and HELM as benchmark-only. Corrected after reading its scorer and scoring-workflow docs on 2026-10-07; see Relation to axial.
+2026-10-07: the first version of this survey filed Inspect with lm-eval-harness and HELM as benchmark-only. Corrected after reading its scorer and scoring-workflow docs on 2026-10-07; see Relation to axial.

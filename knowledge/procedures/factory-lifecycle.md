@@ -1,6 +1,6 @@
 ---
 name: factory-lifecycle
-description: Issue to merged PR with agents doing every stage and humans at two gates, as the Warp factory examples define it
+description: Issue to merged PR with agents doing every stage and humans at three gates, as the Warp factory examples define it
 shelf: procedures
 updated: 2026-10-07
 sources:

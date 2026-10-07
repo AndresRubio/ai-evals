@@ -44,8 +44,9 @@ every change; the gate blocks the merge. The numbers quoted are collected in
    Artifact: a pass or fail exit code. Two runs of the same system differ by a few
    points routinely, so a gate set inside that noise fails builds at random until
    someone disables it. axial's `gate` compares a paired bootstrap interval against a
-   baseline and, with the batch mode the corrected-rates spec adds, a corrected failure
-   rate against a maximum or against a baseline batch.
+   baseline. A batch mode, `gate --batch`, comparing a corrected failure rate against a
+   maximum or against a baseline batch, is proposed in axial's corrected-rates design
+   and not yet implemented.
    Gate: the exit code blocks the merge.
 5. **Watch for saturation.**
    Trigger: a suite stops failing anything.
