@@ -102,3 +102,144 @@ def test_parse_entry_rejects_missing_fence_and_bad_yaml(tmp_path: Path) -> None:
 def test_violation_messages_are_prefixed_with_the_relative_path(tmp_path: Path) -> None:
     found = violations(tmp_path, "knowledge/landscape/evidently.md", GOOD.replace("updated: 2026-10-07\n", ""))
     assert found == ["knowledge/landscape/evidently.md: updated: missing"]
+
+
+def entry_text(name: str, shelf: str, body: str = "Body.\n", **extra_keys: str) -> str:
+    lines = [
+        "---",
+        f"name: {name}",
+        f"description: About {name}",
+        f"shelf: {shelf}",
+        "updated: 2026-10-07",
+        "sources:",
+        "  - url: https://example.invalid/" + name,
+        "    read: 2026-10-07",
+    ]
+    lines += [f"{k}: {v}" for k, v in extra_keys.items()]
+    lines += ["---", f"# {name}", "", body]
+    return "\n".join(lines)
+
+
+def make_repo(tmp_path: Path, files: dict[str, str], pyproject: str = '[project]\nname = "x"\n') -> Path:
+    write(tmp_path, "pyproject.toml", pyproject)
+    write(tmp_path, "knowledge/README.md", "# rules\n")
+    for rel, text in files.items():
+        write(tmp_path, "knowledge/" + rel, text)
+    return tmp_path
+
+
+def test_load_tree_returns_entries_in_shelf_order_then_by_name(tmp_path: Path) -> None:
+    root = make_repo(
+        tmp_path,
+        {
+            "landscape/zeta.md": entry_text("zeta", "landscape"),
+            "landscape/alpha.md": entry_text("alpha", "landscape"),
+            "methodology/spine.md": entry_text("spine", "methodology"),
+            "procedures/loop.md": entry_text("loop", "procedures"),
+        },
+    )
+    assert [e.name for e in ki.load_tree(root)] == ["spine", "loop", "alpha", "zeta"]
+
+
+def tree_violations(root: Path) -> list[str]:
+    with pytest.raises(ki.KnowledgeError) as info:
+        ki.load_tree(root)
+    return info.value.violations
+
+
+def test_load_tree_rejects_duplicate_names_across_shelves(tmp_path: Path) -> None:
+    root = make_repo(
+        tmp_path,
+        {
+            "landscape/same.md": entry_text("same", "landscape"),
+            "procedures/same.md": entry_text("same", "procedures"),
+        },
+    )
+    assert tree_violations(root) == [
+        "knowledge/procedures/same.md: name: 'same' is also used by knowledge/landscape/same.md"
+    ]
+
+
+def test_load_tree_rejects_unknown_related_name(tmp_path: Path) -> None:
+    root = make_repo(tmp_path, {"landscape/a.md": entry_text("a", "landscape", related="[ghost]")})
+    assert tree_violations(root) == ["knowledge/landscape/a.md: related: no entry named 'ghost'"]
+
+
+def test_load_tree_rejects_broken_relative_link_and_accepts_good_ones(tmp_path: Path) -> None:
+    root = make_repo(
+        tmp_path,
+        {
+            "landscape/a.md": entry_text(
+                "a",
+                "landscape",
+                body="See [b](../procedures/b.md), [b again](../procedures/b.md#top), "
+                "[site](https://example.invalid/), [anchor](#what-it-is), "
+                "[missing](../procedures/c.md).\n",
+            ),
+            "procedures/b.md": entry_text("b", "procedures"),
+        },
+    )
+    assert tree_violations(root) == [
+        "knowledge/landscape/a.md: link: '../procedures/c.md' does not exist"
+    ]
+
+
+def test_load_tree_rejects_extra_absent_from_pyproject(tmp_path: Path) -> None:
+    root = make_repo(
+        tmp_path,
+        {"landscape/a.md": entry_text("a", "landscape", extra="evidently")},
+        pyproject='[project]\nname = "x"\n[project.optional-dependencies]\nother = ["y"]\n',
+    )
+    assert tree_violations(root) == [
+        "knowledge/landscape/a.md: extra: 'evidently' is not in [project.optional-dependencies]"
+    ]
+
+
+def test_load_tree_accepts_extra_present_in_pyproject(tmp_path: Path) -> None:
+    root = make_repo(
+        tmp_path,
+        {"landscape/a.md": entry_text("a", "landscape", extra="evidently")},
+        pyproject='[project]\nname = "x"\n[project.optional-dependencies]\nevidently = ["evidently"]\n',
+    )
+    assert ki.load_tree(root)[0].extra == "evidently"
+
+
+def test_load_tree_rejects_extra_outside_landscape(tmp_path: Path) -> None:
+    root = make_repo(
+        tmp_path,
+        {"procedures/a.md": entry_text("a", "procedures", extra="evidently")},
+        pyproject='[project]\nname = "x"\n[project.optional-dependencies]\nevidently = ["evidently"]\n',
+    )
+    assert tree_violations(root) == ["knowledge/procedures/a.md: extra: only landscape entries may declare it"]
+
+
+def test_load_tree_rejects_stray_paths(tmp_path: Path) -> None:
+    root = make_repo(tmp_path, {"landscape/a.md": entry_text("a", "landscape")})
+    write(root, "knowledge/notes.md", "stray\n")
+    write(root, "knowledge/landscape/data.json", "{}")
+    write(root, "knowledge/extra/x.md", entry_text("x", "extra"))
+    assert tree_violations(root) == [
+        "knowledge/extra: not a shelf; only methodology, procedures, landscape are allowed",
+        "knowledge/landscape/data.json: not a Markdown file",
+        "knowledge/notes.md: stray file; only README.md and shelf directories belong here",
+    ]
+
+
+def test_load_tree_collects_violations_from_several_files(tmp_path: Path) -> None:
+    root = make_repo(
+        tmp_path,
+        {
+            "landscape/a.md": entry_text("a", "landscape").replace("updated: 2026-10-07\n", ""),
+            "landscape/b.md": entry_text("b", "landscape", related="[ghost]"),
+        },
+    )
+    found = tree_violations(root)
+    assert found == [
+        "knowledge/landscape/a.md: updated: missing",
+        "knowledge/landscape/b.md: related: no entry named 'ghost'",
+    ]
+
+
+def test_load_tree_fails_when_knowledge_dir_is_missing(tmp_path: Path) -> None:
+    write(tmp_path, "pyproject.toml", '[project]\nname = "x"\n')
+    assert tree_violations(tmp_path) == ["knowledge: directory does not exist"]

@@ -11,6 +11,7 @@ whole list, and a broken tree never produces an index.
 from __future__ import annotations
 
 import re
+import tomllib
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
@@ -190,3 +191,97 @@ def parse_entry(path: Path, root: Path) -> Entry:
         path=path,
         body=body,
     )
+
+
+LINK_RE = re.compile(r"\]\(([^)\s]+)\)")
+EXTERNAL_PREFIXES = ("http://", "https://", "mailto:")
+
+
+def _optional_extras(pyproject: Path) -> set[str]:
+    if not pyproject.exists():
+        return set()
+    with pyproject.open("rb") as fh:
+        data = tomllib.load(fh)
+    project = data.get("project", {})
+    return set(project.get("optional-dependencies", {}).keys())
+
+
+def _layout_violations(knowledge: Path, root: Path) -> tuple[list[str], list[Path]]:
+    """Return (violations, markdown files to parse), checking only the tree's shape."""
+    problems: list[str] = []
+    files: list[Path] = []
+    for child in sorted(knowledge.iterdir()):
+        rel = child.relative_to(root).as_posix()
+        if child.is_dir():
+            if child.name not in SHELVES:
+                problems.append(f"{rel}: not a shelf; only {', '.join(SHELVES)} are allowed")
+                continue
+            for item in sorted(child.iterdir()):
+                item_rel = item.relative_to(root).as_posix()
+                if item.is_dir() or item.suffix != ".md":
+                    problems.append(f"{item_rel}: not a Markdown file")
+                else:
+                    files.append(item)
+        elif child.name != "README.md":
+            problems.append(f"{rel}: stray file; only README.md and shelf directories belong here")
+    return problems, files
+
+
+def _link_violations(entry: Entry, root: Path) -> list[str]:
+    rel = entry.path.relative_to(root).as_posix()
+    problems: list[str] = []
+    for target in LINK_RE.findall(entry.body):
+        if target.startswith(EXTERNAL_PREFIXES) or target.startswith("#"):
+            continue
+        file_part = target.split("#", 1)[0]
+        if not (entry.path.parent / file_part).exists():
+            problems.append(f"{rel}: link: '{target}' does not exist")
+    return problems
+
+
+def load_tree(root: Path) -> list[Entry]:
+    """Parse every file under root/knowledge and apply the cross-file rules.
+
+    Raises KnowledgeError with every violation found; returns entries sorted by
+    shelf order then name.
+    """
+    knowledge = root / KNOWLEDGE_DIR
+    if not knowledge.is_dir():
+        raise KnowledgeError([f"{KNOWLEDGE_DIR}: directory does not exist"])
+
+    problems, files = _layout_violations(knowledge, root)
+    entries: list[Entry] = []
+    for path in files:
+        try:
+            entries.append(parse_entry(path, root))
+        except KnowledgeError as exc:
+            problems.extend(exc.violations)
+
+    by_name: dict[str, Entry] = {}
+    for entry in entries:
+        rel = entry.path.relative_to(root).as_posix()
+        if entry.name in by_name:
+            other = by_name[entry.name].path.relative_to(root).as_posix()
+            problems.append(f"{rel}: name: '{entry.name}' is also used by {other}")
+        else:
+            by_name[entry.name] = entry
+
+    extras = _optional_extras(root / "pyproject.toml")
+    for entry in entries:
+        rel = entry.path.relative_to(root).as_posix()
+        for name in entry.related:
+            if name not in by_name:
+                problems.append(f"{rel}: related: no entry named '{name}'")
+        if entry.extra is not None:
+            if entry.shelf != "landscape":
+                problems.append(f"{rel}: extra: only landscape entries may declare it")
+            elif entry.extra not in extras:
+                problems.append(
+                    f"{rel}: extra: '{entry.extra}' is not in [project.optional-dependencies]"
+                )
+        problems.extend(_link_violations(entry, root))
+
+    if problems:
+        raise KnowledgeError(sorted(problems))
+    entries.sort(key=lambda e: (SHELVES.index(e.shelf), e.name))
+    return entries
