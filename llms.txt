@@ -11,6 +11,13 @@
 - [numbers-and-rules-of-thumb](knowledge/methodology/numbers-and-rules-of-thumb.md): Effort, cadence, sample sizes and agreement thresholds the practitioners quote, and who quotes which (2026-09-17)
 - [points-of-disagreement](knowledge/methodology/points-of-disagreement.md): Where the practitioner sources disagree on method, numbers and judge design (2026-09-17)
 
+## procedures
+
+- [data-contracts-at-ingest](knowledge/procedures/data-contracts-at-ingest.md): Expectation, checkpoint and data docs from Great Expectations mapped onto contract, gate and alignment report, with checks for axial ingest (2026-10-07)
+- [evals-in-ci](knowledge/procedures/evals-in-ci.md): Gate a pull request on a promoted judge and keep the gate honest with deterministic checks first, intervals not points, and a saturation watch (2026-10-07)
+- [factory-lifecycle](knowledge/procedures/factory-lifecycle.md): Issue to merged PR with agents doing every stage and humans at two gates, as the Warp factory examples define it (2026-10-07)
+- [production-monitoring](knowledge/procedures/production-monitoring.md): Sample live traces, measure them with a promoted judge, alert on the interval's lower bound, and feed flagged traces back into review (2026-10-07)
+
 ## landscape
 
 - [anthropic-cookbook](knowledge/landscape/anthropic-cookbook.md): Anthropic's eval notebooks and guidance, rubrics and Claude as judge; recipes to copy, nothing to install (2026-09-17)
@@ -20,6 +27,8 @@
 - [dspy](knowledge/landscape/dspy.md): Stanford's framework that treats an eval metric as the optimisation objective for prompts and few-shots (2026-09-17)
 - [evalgen](knowledge/landscape/evalgen.md): Shankar et al.'s research prototype that picks judge prompts by agreement with human grades and names criteria drift (2026-09-17)
 - [evals-skills](knowledge/landscape/evals-skills.md): The AI Evals course's agent skills, error-discovery and validate-evaluator, which count Pass as the positive class (2026-10-07)
+- [evidently](knowledge/landscape/evidently.md): Open-source ML and LLM evaluation and monitoring; Reports and Tests, descriptors, LLM judges, tracing, scheduled evals (2026-10-07)
+- [great-expectations](knowledge/landscape/great-expectations.md): Data-quality contracts for pipelines, with expectation suites, checkpoints that stop a run, and Data Docs as the record (2026-10-07)
 - [helm](knowledge/landscape/helm.md): Stanford CRFM's holistic foundation-model benchmark framework, in maintenance mode since June 2026 (2026-09-17)
 - [inspect-ai](knowledge/landscape/inspect-ai.md): UK AISI's open harness for model and agent evals, with datasets, solvers, scorers, sandboxed agents and a local log viewer (2026-10-07)
 - [landscape-overview](knowledge/landscape/landscape-overview.md): Two families of eval tools, benchmarking and application evals, and why none closes the error-analysis-first gap (2026-10-07)
@@ -33,3 +42,4 @@
 - [pytest-evals](knowledge/landscape/pytest-evals.md): A thin pytest plugin for running and aggregating LLM eval cases as ordinary tests in existing CI (2026-09-17)
 - [ragas](knowledge/landscape/ragas.md): RAG-specific evaluation and synthetic test-set generation over question, answer, contexts and ground truth (2026-09-17)
 - [wandb-weave](knowledge/landscape/wandb-weave.md): Weights & Biases tracing and evaluation SDK, usable only with a W&B account for storage and the UI (2026-09-17)
+- [warp-factories](knowledge/landscape/warp-factories.md): Warp's agent factory as files, with foreman, triage, spec, implement and review agents, automations, runners and self-grading scorers (2026-10-07)
