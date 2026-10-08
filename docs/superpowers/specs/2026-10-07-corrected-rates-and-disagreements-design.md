@@ -1,6 +1,6 @@
 # Corrected failure rates on new traces, and a dev disagreement listing
 
-**Date:** 2026-10-07
+**Date:** 2026-10-07, revised 2026-10-08 (pairing by input; difference before clipping)
 **Status:** approved design, not yet implemented
 **Builds on:** [`2026-09-17-axial-evals-toolkit-design.md`](2026-09-17-axial-evals-toolkit-design.md)
 
@@ -20,6 +20,14 @@ failures went unflagged. The AI Evals course
 corrects this with the Rogan-Gladen estimator and a bootstrap interval. `axial` has the
 inputs, a promoted judge's test-split confusion matrix, but no estimator.
 
+The correction earns its place in two places: the absolute rate a team reports, and a gate
+on an absolute ceiling. It does not decide whether a *change* is a regression. That call
+depends only on the two batches' flag rates (section 2), and the correction only sets the
+reported size of the difference. What decides whether the regression gate catches anything
+is pairing: CI usually runs the same eval inputs through both versions of a system, and
+comparing those inputs pair by pair needs far fewer of them than comparing two unrelated
+samples.
+
 The second gap is in the loop that produces a promotable judge. Revising a judge means
 reading the cases where it disagrees with the human and asking why. `alignment.md` reports
 the confusion matrix but never names those cases, so the loop runs through hand-written
@@ -35,6 +43,8 @@ the confusion matrix but never names those cases, so the loop runs through hand-
 | Interval method | Monte Carlo over Jeffreys Beta posteriors | A percentile bootstrap gives a judge that scored 30/30 on test zero uncertainty. |
 | Which split supplies TPR and TNR | Test only | Dev was used to revise the judge, so its rates are optimistic. |
 | Test disagreements | Counted, never listed | Listing them turns test into a second dev set. |
+| Comparing two batches | Paired by input when at least 80% of each batch's graded inputs are shared, otherwise unpaired | Pairing approved 2026-10-08; the 80% threshold is a default chosen in this revision, not asked. Simulated, pairing catches a 4-point regression at 500 inputs about twice as often (section 2). |
+| Difference and clipping | The difference is computed before clipping | Clipping each rate first hid real regressions whenever the test split understated TNR (section 2). |
 
 ## Scope
 
@@ -43,14 +53,15 @@ In:
 1. `axial measure`: grade a named batch of unlabelled traces with a promoted judge and
    report a corrected failure rate with a 95% interval.
 2. `axial gate --batch`: gate on one measured batch (`--max-rate`) or on the difference
-   between two (`--baseline-batch`).
+   between two (`--baseline-batch`), paired by input when the batches share their inputs.
 3. A dev disagreement listing in `alignment.md` and `alignment.json`.
 
 Out, each a possible later change:
 
-- Pairing two batches by input when both system versions ran the same inputs. The
-  unpaired interval this design uses is wider, so it is conservative, not wrong.
 - Labelling a random slice of a batch to check the judge's error rates still hold on it.
+  This is the next change after this one: the correction's one untested assumption is that
+  the judge errs on new output as it did on test, and a changed system can produce subtler
+  failures it misses more often.
 - Calling `verify_test_manifest` from `measure` (it has no caller anywhere today).
 - Fixing the judge-vs-judge gate's positional matching (`gate.py:133`, a strict xfail).
 - Critique-before-verdict judge output, and the few-shot JSON-escaping bug
@@ -79,7 +90,8 @@ axial measure <mode> --version N --traces <file> --name <batch> [--adapter A] [-
 2. **Read the batch** with `traces.ingest(path, adapter=...)`, the same loader as
    `axial ingest`. It is never written to `.axial/traces/`, because `ingest` replaces the
    labelled corpus. Refused: an empty batch, and a batch with duplicate trace ids, which
-   would be counted twice.
+   would be counted twice. Each trace's `input_sha256` (SHA-256 of its `input` text, UTF-8)
+   is recorded on its row; it is the pairing key in `gate`.
 3. **Validate the name.** `<batch>` must match `[A-Za-z0-9._-]+`; it becomes a directory.
    If `.axial/measurements/<mode>/<batch>/` exists, refuse unless `--replace`, because a
    re-run costs money and replaces evidence.
@@ -105,8 +117,8 @@ Output files:
 | File | Contents |
 |---|---|
 | `traces.jsonl` | The batch as read, so the measurement is reviewable on its own |
-| `verdicts.jsonl` | Per graded trace: `trace_id`, `verdict`, `model`, `usage`, `attempts`, `latency_s`, `raw`. No `truth`. |
-| `errors.jsonl` | Set-aside traces, with `failure_class` and `detail` |
+| `verdicts.jsonl` | Per graded trace: `trace_id`, `input_sha256`, `verdict`, `model`, `usage`, `attempts`, `latency_s`, `raw`. No `truth`. |
+| `errors.jsonl` | Set-aside traces, with `input_sha256`, `failure_class` and `detail` |
 | `measurement.json` | See below |
 
 `measurement.json` fields: `mode`, `batch`, `judge_version`, `judge_yaml_sha256`,
@@ -157,9 +169,18 @@ In batch mode, `gate`:
    the gate, naming the batch and the command to re-measure it.
 3. With a baseline, refuses batches measured by different judge versions: the difference
    would mix a judge change with a system change.
-4. Prints the candidate's corrected rate and interval, and with a baseline the corrected
+4. With a baseline, **pairs the batches by input** (`measure.pair_batches`):
+   - A pair is an `input_sha256` that appears exactly once among each batch's graded
+     traces. An input graded more than once in either batch is left out of pairing, since
+     there is no single partner to compare it with.
+   - If the pairs cover at least 80% of each batch's graded traces, the comparison is
+     paired and uses only the pairs. Otherwise it is unpaired over both full batches.
+   - Either way the gate prints which, with the counts, for example
+     `paired on 987 shared inputs (13 baseline and 9 candidate traces unmatched)` or
+     `unpaired: only 41% of inputs shared`.
+5. Prints the candidate's corrected rate and interval, and with a baseline the corrected
    difference and its interval.
-5. Fails (exit 1) when:
+6. Fails (exit 1) when:
    - with `--baseline-batch`: the lower end of the difference interval is above 0
      (`REGRESSION`, the same rule as the judge-vs-judge mode);
    - with `--max-rate`: the upper end of the candidate's interval is above `R`
@@ -167,7 +188,9 @@ In batch mode, `gate`:
    - any interval the active checks need is `null`: a gate cannot pass on an interval
      that could not be computed;
    - a named batch has `n_graded = 0`, whatever other options were given.
-6. Prints the saturation warning when the candidate batch flagged nothing.
+7. Prints the saturation warning when the candidate batch flagged nothing, and, when
+   either batch's rate is shown clipped, a note that the difference was computed before
+   clipping (so it can be non-zero while both rates print as 0.000).
 
 With neither `--baseline-batch` nor `--max-rate`, batch mode prints and passes, as the
 judge-vs-judge mode does without `--baseline`.
@@ -228,22 +251,77 @@ single-batch interval, so `--max-rate` is a loose gate until the test split grow
 
 ### Difference between two batches
 
-Same judge, so each draw takes `TPR*` and `TNR*` once and applies them to both batches,
-with `p_A*` and `p_B*` drawn independently:
+Both batches are graded by the same judge, so each draw takes `TPR*` and `TNR*` once and
+applies them to both. The difference is computed **before clipping**:
 
 ```
-Δ* = θ_B* − θ_A*     (each clipped as above)
+Δ* = (p_B* − p_A*) / (TPR* + TNR* − 1)
 ```
 
-Sharing the judge's draws matters. Baseline 60/500 against candidate 80/500, with the test
-matrix above, gives Δ = +0.046, interval [−0.003, +0.097]. Drawing the judge independently
-per batch would give [−0.056, +0.142].
+This is exact under the model, because the correction is linear in `p` with the same slope
+for both batches. Clipping keeps a single rate inside [0, 1] for display; it has no place
+in a difference. The point estimate is `(p̂_B − p̂_A) / Ĵ` from the same counts.
 
-Because `J* > 0.05` in every valid draw, an unclipped `Δ*` has the sign of `p_B* − p_A*`.
-The judge's error rates rescale a difference; they do not create one. Clipping is the
-exception: when both batches clip to 0 in a draw, `Δ* = 0`, so a small regression near zero
-can be hidden. When the point estimates of both batches clip to 0, the gate prints a note
-saying so.
+**Unpaired**, over both full batches: `p_A* ~ Beta(flagged_A + ½, n_A − flagged_A + ½)`,
+likewise `p_B*`, drawn independently.
+
+**Paired**, over the matched pairs only: count the four cells, `n11` (flagged in both),
+`n10` (baseline only), `n01` (candidate only) and `n00` (neither), and draw
+
+```
+(π11*, π10*, π01*, π00*) ~ Dirichlet(n11 + ½, n10 + ½, n01 + ½, n00 + ½)
+p_B* − p_A* = π01* − π10*
+```
+
+`Dirichlet(½, ½, ½, ½)` is the Jeffreys prior for a four-cell multinomial, the same family
+as the single-rate interval. The invalid-draw rule and the 90% survival rule apply as for a
+single rate.
+
+Because `J* > 0.05` in every valid draw, `Δ*` always has the sign of `p_B* − p_A*`. The
+judge's error rates rescale a difference; they can neither create nor hide one, and whether
+a regression is called depends only on the flag rates.
+
+**Why not clip first.** The first version of this design clipped each `θ*` and subtracted.
+When the test split happens to understate TNR, a large share of draws put both batches
+below the judge's false-alarm rate, both clip to 0, and `Δ* = 0` exactly, so the lower
+bound sits at 0 and a real rise from 10% to 14% failures goes uncalled. In simulation that
+capped the paired gate's power at about 0.82 even with 2,000 inputs.
+
+**Worked numbers** (test matrix tp 28, fn 2, tn 66, fp 4; 20,000 draws, seed 0; computed
+2026-10-08):
+
+| Comparison | Point | Interval | Regression called |
+|---|---|---|---|
+| Unpaired, 60/500 against 80/500 | +0.046 | [−0.003, +0.099] | no |
+| Paired, 500 inputs: 20 newly flagged, none newly clean | +0.046 | [+0.028, +0.071] | yes |
+| Paired, 500 inputs: 30 newly flagged, 10 newly clean | +0.046 | [+0.018, +0.078] | yes |
+| Paired, 500 inputs: 15 each way, no net change | +0.000 | [−0.026, +0.026] | no |
+
+Drawing the judge independently for each batch, instead of sharing its draws, widened the
+unpaired interval in the first row to about [−0.056, +0.142] when it was computed with
+clipping on 2026-10-07.
+
+**What the gate can detect.** Simulated, 600 trials per setting, with a judge at TPR 0.93
+and TNR 0.94 on a 30/70 test split, and failures rising from 10% to 14%. Real use lies
+between the two kinds of row: an input whose behaviour did not change either produces the
+identical output, which a deterministic judge grades identically, or produces new wording,
+which the judge grades afresh and may err on.
+
+| Inputs shared | Unchanged inputs with identical output | Paired: regression caught | Unpaired: caught |
+|---|---|---|---|
+| 500 | none | 0.51 | 0.27 |
+| 1,000 | none | 0.81 | 0.58 |
+| 2,000 | none | 0.96 | 0.91 |
+| 500 | 90% | 0.91 | not simulated |
+| 1,000 | 90% | 1.00 | not simulated |
+
+With nothing changed, the paired gate called a regression in 2.7–2.8% of trials against a
+nominal 2.5%, and the difference interval covered the true difference in 94–96% of trials,
+for this judge and for a borderline one (TPR = TNR = 0.90 on 30/30). The borderline judge
+caught the 4-point rise at 1,000 inputs only about 0.55 of the time: a weaker judge needs
+more inputs. The README states the sizing: to catch a 4-point rise reliably with a judge
+like the first, run about 1,000 shared inputs through both versions, or about 500 if most
+unchanged inputs produce identical output.
 
 ### Code
 
@@ -261,14 +339,31 @@ class CorrectedRate:
 def corrected_rate(test: ConfusionMatrix, flagged: int, n: int, *,
                    draws: int = 20_000, seed: int = 0) -> CorrectedRate: ...
 
-def corrected_rate_difference(test: ConfusionMatrix,
-                              baseline: tuple[int, int], candidate: tuple[int, int], *,
-                              draws: int = 20_000, seed: int = 0
-                              ) -> tuple[float, tuple[float, float] | None]: ...
+@dataclass(frozen=True)
+class CorrectedDifference:
+    point: float
+    interval: tuple[float, float] | None
+    paired: bool
+    n: int                      # pairs if paired, else n_A + n_B
+    draws: int
+    seed: int
+
+def corrected_difference_unpaired(test: ConfusionMatrix,
+                                  baseline: tuple[int, int], candidate: tuple[int, int], *,
+                                  draws: int = 20_000, seed: int = 0) -> CorrectedDifference: ...
+
+def corrected_difference_paired(test: ConfusionMatrix,
+                                cells: tuple[int, int, int, int], *,
+                                draws: int = 20_000, seed: int = 0) -> CorrectedDifference: ...
 ```
 
-`baseline` and `candidate` are `(flagged, n_graded)`. Both functions raise `ValueError` on
-`n = 0` or a test matrix with no real failures or no real passes. Promotion requires 30 of
+`baseline` and `candidate` are `(flagged, n_graded)`; `cells` is `(n11, n10, n01, n00)`.
+Matching rows into pairs is not statistics, so it lives in `measure.py`:
+`pair_batches(baseline_rows, candidate_rows) -> Pairing`, returning the four cells, the
+pair count, the unmatched counts and whether the 80% rule was met.
+
+All three statistics functions raise `ValueError` on `n = 0` or a test matrix with no real
+failures or no real passes. Promotion requires 30 of
 each by default, but the floor is configurable, so `measure` checks the test matrix first
 and refuses with an `AxialError` naming the empty class rather than letting the
 `ValueError` escape.
@@ -386,9 +481,11 @@ formula.
 - A perfect test score (30/30, 70/70): the interval's lower bound is below
   `interval_if_judge_exact`'s.
 - A judge near chance (15/30, 35/70): interval `null`.
-- Differences: identical batches straddle 0; Δ has the sign of the observed difference;
-  shared judge draws give a narrower interval than independent ones; two batches whose
-  draws all clip to 0 give Δ = 0.
+- Differences, paired and unpaired: identical batches straddle 0; Δ has the sign of the
+  observed difference; shared judge draws give a narrower interval than independent ones;
+  on the same flags with concentrated changes, the paired interval is narrower than the
+  unpaired one; two batches whose single rates both clip to 0 still give a non-zero Δ when
+  their flag rates differ, the regression the first design hid.
 - **Coverage simulation.** Simulate a known true rate and judge, draw test labels and a
   500-trace batch, build the interval, repeat 1,000 times with 4,000 draws each. Require
   coverage in [0.92, 0.99] at nominal 95% for four settings: true rate 0.10 and 0.01, each
@@ -396,6 +493,12 @@ formula.
   30/30. A scratch run on 2026-10-07 (seed 1) gave 0.952, 0.949, 0.937 and 0.926; across
   nine settings coverage ranged 0.926–0.969, lowest for the borderline 0.90 judge. If the
   test fails, the interval method goes back for review, not the test's band.
+- **Difference simulation.** 1,000 shared inputs, judge outputs graded independently,
+  600 trials with 3,000 draws each, for both judges above. With no change in the true
+  failure rate, the paired gate calls a regression in at most 4% of trials. With a 4-point
+  rise, the paired interval covers the true difference in [0.92, 0.99] of trials, and the
+  0.93/0.94 judge calls the regression in at least 70%. A scratch run on 2026-10-08 (seed 3)
+  gave 2.7%, 0.960 and 0.81.
 
 **`measure`**
 
@@ -416,12 +519,15 @@ formula.
 - `--max-rate` fails above the ceiling and passes below it.
 - With a baseline: regression exits 1, improvement and no change exit 0.
 - Different judge versions across batches are refused.
+- Pairing: batches with the same inputs are compared paired, with the counts printed; an
+  input graded twice in one batch is left unpaired; below 80% shared the comparison is
+  unpaired and says so; set-aside traces never pair.
 - A measurement taken before the judge was re-judged, or before `judge.yaml` was edited,
   fails the gate.
 - Both `--version` and `--batch`, neither, or a mode-mismatched option: non-zero exit with
   a message.
 - The saturation warning when the batch flagged nothing.
-- The note when both batches' point estimates clip to 0.
+- The note when a rate is shown clipped and the difference was computed before clipping.
 - A measurement with `n_graded = 0` fails the gate.
 
 **Disagreements**
@@ -441,10 +547,10 @@ formula.
 - `tests/test_capabilities_cli_failures.py:90` asserts `Missing option '--version'`; it is
   updated to the new message.
 - The judge-vs-judge positional-matching xfail (`test_capabilities_promote_gate.py:262`)
-  is untouched; batch comparison does not pair rows.
+  is untouched; batch comparison pairs by input hash, not by row position.
 
-**Before calling it done:** the full suite, ruff and mypy on Python 3.14 and 3.13; the
-coverage simulation; and an adversarial review of the statistics and the stale-measurement
+**Before calling it done:** the full suite, ruff and mypy on Python 3.14 and 3.13; both
+simulations; and an adversarial review of the statistics and the stale-measurement
 checks by a separate reviewer.
 
 ## 6. Documentation
@@ -455,4 +561,9 @@ checks by a separate reviewer.
   rates, and every measurement states the assumption it rests on." The gate bullet gains
   the batch mode and `--max-rate`.
 - README Quickstart: a final step measuring a batch.
+- README sizing guidance: the shared-input numbers from section 2.
+- `knowledge/procedures/evals-in-ci.md` and `knowledge/procedures/production-monitoring.md`
+  (on `main` since 2026-10-07) describe `measure` and `gate --batch` as proposed. Once this
+  branch sits on a base that has them, they are updated to describe what shipped,
+  including pairing.
 - The positive-class sentence added on 2026-10-07 stays.
