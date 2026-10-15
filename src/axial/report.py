@@ -7,8 +7,9 @@ test split. Everything it prints leads with TPR and TNR.
 from __future__ import annotations
 
 import math
+import re
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from axial.align import Alignment, align
 from axial.config import Thresholds
@@ -107,7 +108,7 @@ def format_promoted_marker(
     Without this binding, `gate` could only check that *some* `PROMOTED` file
     existed, not that the judge or its verdicts still matched what earned it
     -- which is exactly what let a promoted judge be silently replaced under
-    its own marker. `gate._load` recomputes both hashes with `store.hash_file`
+    its own marker. `require_promoted` recomputes both hashes with `store.hash_file`
     and calls `parse_promoted_marker` to compare them against these.
     """
     return (
@@ -130,6 +131,83 @@ def parse_promoted_marker(text: str) -> dict[str, str]:
             key, _, value = line.partition("=")
             values[key.strip()] = value.strip()
     return values
+
+
+_SHA256_HEX_RE = re.compile(r"^[0-9a-f]{64}$")
+
+SATURATION_WARNING = (
+    "saturation warning: no trace failed. A suite nothing fails has stopped carrying "
+    "signal while still costing maintenance — consider harder cases or retiring it."
+)
+
+
+class PromotedHashes(NamedTuple):
+    judge_yaml_sha256: str
+    verdicts_sha256: str
+
+
+def _require_bound_hash(
+    recorded: dict[str, str], key: str, mode: str, version: int
+) -> str:
+    """Pull `key` out of a parsed `PROMOTED` marker and demand it look like a
+    real sha256 hex digest.
+
+    A marker with no hash lines at all -- or one with a value that isn't a
+    64-character hex digest -- carries no binding to check against, which is
+    exactly the hole an earlier version of `gate` left open: it only compared
+    the hashes `if recorded_... is not None`, so a marker with the two hash
+    lines stripped (or one written before this feature existed) skipped both
+    checks and gated on an unverified judge.yaml/verdicts.jsonl. Missing or
+    unparseable is now a violation, not a skip, because the actor who can
+    edit judge.yaml can just as easily edit the marker beside it.
+    """
+    value = recorded.get(key)
+    if value is None or not _SHA256_HEX_RE.fullmatch(value):
+        raise InvariantViolation(
+            f"judge {mode} v{version}'s PROMOTED marker is missing or has an unparseable "
+            f"'{key}' value. The marker predates hash binding or was tampered with, and "
+            "gate cannot verify it against an unbound or malformed hash. Re-run `axial "
+            "promote` on the current judge, or `axial judge --new` to score it as a fresh "
+            "version."
+        )
+    return value
+
+
+def require_promoted(store: Store, mode: str, version: int) -> PromotedHashes:
+    """Refuse unless judge `mode` v`version` is promoted and unchanged since; return
+    the two hashes its `PROMOTED` marker recorded.
+
+    `gate` and `measure` both call this, so they cannot disagree about what
+    "promoted" means. The marker on its own only proves *some* run was promoted
+    once: both hashes it recorded are recomputed, because a hand-edited
+    judge.yaml or a verdicts.jsonl overwritten by a later `run_judge` means the
+    evidence behind PROMOTED no longer describes what is on disk.
+    """
+    directory = store.judge_dir(mode, version)
+    marker_path = directory / "PROMOTED"
+    if not marker_path.exists():
+        raise InvariantViolation(
+            f"judge {mode} v{version} has not been promoted. Run `axial promote` — a judge "
+            "whose agreement with human labels was never measured on test cannot gate a build."
+        )
+    recorded = parse_promoted_marker(marker_path.read_text())
+    recorded_judge_hash = _require_bound_hash(recorded, JUDGE_YAML_HASH_KEY, mode, version)
+    if store.hash_file(directory / "judge.yaml") != recorded_judge_hash:
+        raise InvariantViolation(
+            f"judge {mode} v{version}'s judge.yaml has changed since it was promoted — "
+            "the judge that earned PROMOTED is not the judge on disk. Re-run `axial "
+            "promote` on the current judge, or run `axial judge --new` to score the "
+            "changed prompt as a fresh version."
+        )
+    recorded_verdicts_hash = _require_bound_hash(recorded, VERDICTS_HASH_KEY, mode, version)
+    if store.hash_file(directory / "verdicts.jsonl") != recorded_verdicts_hash:
+        raise InvariantViolation(
+            f"judge {mode} v{version}'s verdicts.jsonl has changed since it was promoted — "
+            "the verdicts that earned PROMOTED are not the verdicts on disk. Re-run `axial "
+            "promote` on the current run, or run `axial judge --new` to score it as a "
+            "fresh version."
+        )
+    return PromotedHashes(recorded_judge_hash, recorded_verdicts_hash)
 
 
 def _fmt_rate(value: float) -> str:

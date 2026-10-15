@@ -157,7 +157,7 @@ class Store:
 
         Used to bind a `PROMOTED` marker to the exact `judge.yaml` and
         `verdicts.jsonl` it was earned on (see `report.promote` and
-        `gate._load`) -- the marker records this hash, and a later mismatch
+        `report.require_promoted`) -- the marker records this hash, and a later mismatch
         means the judge or its verdicts changed since promotion.
         """
         data = path.read_bytes() if path.exists() else b""

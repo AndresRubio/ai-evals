@@ -246,3 +246,37 @@ def test_write_alignment_surfaces_notes(tmp_path: Path):
     )
     text = path.read_text()
     assert "gap check skipped for TPR" in text
+
+
+def test_require_promoted_returns_the_hashes_the_marker_recorded(tmp_path: Path):
+    from axial.report import require_promoted
+
+    store = Store(tmp_path)
+    directory = store.judge_dir("merged", 1)
+    directory.mkdir(parents=True)
+    (directory / "judge.yaml").write_text("mode: merged\n")
+    (directory / "verdicts.jsonl").write_text('{"trace_id": "t1"}\n')
+    promote(store, "merged", 1, perfect(), perfect(), Thresholds())
+
+    hashes = require_promoted(store, "merged", 1)
+
+    marker = parse_promoted_marker((directory / "PROMOTED").read_text())
+    assert hashes.judge_yaml_sha256 == marker[JUDGE_YAML_HASH_KEY]
+    assert hashes.verdicts_sha256 == marker[VERDICTS_HASH_KEY]
+    assert hashes.judge_yaml_sha256 == store.hash_file(directory / "judge.yaml")
+
+
+def test_require_promoted_refuses_an_unpromoted_or_edited_judge(tmp_path: Path):
+    from axial.report import require_promoted
+
+    store = Store(tmp_path)
+    directory = store.judge_dir("merged", 1)
+    directory.mkdir(parents=True)
+    (directory / "judge.yaml").write_text("mode: merged\n")
+    with pytest.raises(InvariantViolation, match="has not been promoted"):
+        require_promoted(store, "merged", 1)
+
+    promote(store, "merged", 1, perfect(), perfect(), Thresholds())
+    (directory / "judge.yaml").write_text("mode: merged\nprompt_template: edited\n")
+    with pytest.raises(InvariantViolation, match="judge.yaml has changed"):
+        require_promoted(store, "merged", 1)
