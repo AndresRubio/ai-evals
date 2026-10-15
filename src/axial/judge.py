@@ -166,6 +166,92 @@ class RunResult:
     errors: list[dict[str, Any]] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class Graded:
+    """A model answer that was read as a verdict."""
+
+    verdict: bool
+    raw: str
+    model: str
+    usage: dict[str, int]
+    attempts: int
+    latency_s: float
+
+
+@dataclass(frozen=True)
+class SetAside:
+    """A trace that could not be scored, and why. Never a verdict."""
+
+    failure_class: str
+    detail: str
+
+
+def resolve_few_shot(
+    spec: JudgeSpec, corpus: list[Trace], labels: list[Label]
+) -> list[tuple[Trace, Label]]:
+    """Look up each of `spec.few_shot_ids` in `corpus` and `labels`, refusing a miss."""
+    corpus_by_id = {t.trace_id: t for t in corpus}
+    label_by_id = {lbl.trace_id: lbl for lbl in labels}
+    few_shot: list[tuple[Trace, Label]] = []
+    for few_shot_id in spec.few_shot_ids:
+        example = corpus_by_id.get(few_shot_id)
+        gold = label_by_id.get(few_shot_id)
+        if example is None or gold is None:
+            missing = "trace" if example is None else "label"
+            raise InvariantViolation(
+                f"few-shot id {few_shot_id!r} could not be resolved: its {missing} is "
+                "missing from the corpus/labels given to run_judge. Silently dropping "
+                "an unresolved few-shot id is what let this go unnoticed before."
+            )
+        few_shot.append((example, gold))
+    return few_shot
+
+
+def grade_trace(
+    spec: JudgeSpec,
+    trace: Trace,
+    few_shot: list[tuple[Trace, Label]],
+    splits: Splits | None,
+    model: Model,
+    *,
+    max_tokens: int,
+) -> Graded | SetAside:
+    """Grade one trace, or say why it was set aside.
+
+    Shared by `run_judge` and `measure`, so a labelled trace and a new one are graded
+    the same way. An `InvariantViolation` from prompt assembly is a refusal, not a
+    per-trace failure, so it propagates.
+    """
+    try:
+        prompt = assemble_prompt(spec, trace, few_shot=few_shot, splits=splits)
+    except InvariantViolation:
+        raise
+    except (KeyError, IndexError, ValueError) as exc:
+        return SetAside("bad_template", f"{type(exc).__name__}: {exc}")
+
+    try:
+        completion = model.complete(prompt, max_tokens=max_tokens, schema=Verdict)
+    except Exception as exc:  # noqa: BLE001 - quarantined, never scored
+        return SetAside("harness", f"{type(exc).__name__}: {exc}")
+
+    if completion.truncated:
+        return SetAside("truncated", f"stop_reason={completion.stop_reason}")
+
+    try:
+        verdict = parse_verdict(completion.text)
+    except ValueError as exc:
+        return SetAside("unparseable", str(exc))
+
+    return Graded(
+        verdict=verdict,
+        raw=completion.text,
+        model=completion.model,
+        usage=completion.usage,
+        attempts=completion.attempts,
+        latency_s=completion.latency_s,
+    )
+
+
 def run_judge(
     store: Store,
     spec: JudgeSpec,
@@ -188,75 +274,19 @@ def run_judge(
     which has nothing to check when its input list is empty) — pass the whole
     corpus explicitly.
     """
-    corpus_traces = traces if corpus is None else corpus
-    corpus_by_id = {t.trace_id: t for t in corpus_traces}
+    few_shot = resolve_few_shot(spec, traces if corpus is None else corpus, labels)
     label_by_id = {lbl.trace_id: lbl for lbl in labels}
-
-    few_shot: list[tuple[Trace, Label]] = []
-    for few_shot_id in spec.few_shot_ids:
-        example = corpus_by_id.get(few_shot_id)
-        gold = label_by_id.get(few_shot_id)
-        if example is None or gold is None:
-            missing = "trace" if example is None else "label"
-            raise InvariantViolation(
-                f"few-shot id {few_shot_id!r} could not be resolved: its {missing} is "
-                "missing from the corpus/labels given to run_judge. Silently dropping "
-                "an unresolved few-shot id is what let this go unnoticed before."
-            )
-        few_shot.append((example, gold))
 
     result = RunResult()
     for trace in traces:
-        try:
-            prompt = assemble_prompt(spec, trace, few_shot=few_shot, splits=splits)
-        except InvariantViolation:
-            # A refusal, not a per-trace failure: it must not be swallowed into an
-            # error row, so it keeps propagating out of run_judge.
-            raise
-        except (KeyError, IndexError, ValueError) as exc:
+        outcome = grade_trace(spec, trace, few_shot, splits, model, max_tokens=max_tokens)
+        if isinstance(outcome, SetAside):
             result.errors.append(
                 {
                     "trace_id": trace.trace_id,
                     "split": split,
-                    "failure_class": "bad_template",
-                    "detail": f"{type(exc).__name__}: {exc}",
-                }
-            )
-            continue
-
-        try:
-            completion = model.complete(prompt, max_tokens=max_tokens, schema=Verdict)
-        except Exception as exc:  # noqa: BLE001 - quarantined, never scored
-            result.errors.append(
-                {
-                    "trace_id": trace.trace_id,
-                    "split": split,
-                    "failure_class": "harness",
-                    "detail": f"{type(exc).__name__}: {exc}",
-                }
-            )
-            continue
-
-        if completion.truncated:
-            result.errors.append(
-                {
-                    "trace_id": trace.trace_id,
-                    "split": split,
-                    "failure_class": "truncated",
-                    "detail": f"stop_reason={completion.stop_reason}",
-                }
-            )
-            continue
-
-        try:
-            verdict = parse_verdict(completion.text)
-        except ValueError as exc:
-            result.errors.append(
-                {
-                    "trace_id": trace.trace_id,
-                    "split": split,
-                    "failure_class": "unparseable",
-                    "detail": str(exc),
+                    "failure_class": outcome.failure_class,
+                    "detail": outcome.detail,
                 }
             )
             continue
@@ -278,13 +308,13 @@ def run_judge(
             {
                 "trace_id": trace.trace_id,
                 "split": split,
-                "verdict": verdict,
+                "verdict": outcome.verdict,
                 "truth": gold.label,
-                "model": completion.model,
-                "usage": completion.usage,
-                "attempts": completion.attempts,
-                "latency_s": completion.latency_s,
-                "raw": completion.text,
+                "model": outcome.model,
+                "usage": outcome.usage,
+                "attempts": outcome.attempts,
+                "latency_s": outcome.latency_s,
+                "raw": outcome.raw,
             }
         )
 

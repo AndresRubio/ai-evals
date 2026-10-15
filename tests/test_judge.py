@@ -4,7 +4,17 @@ import pytest
 
 from axial.dataset import Label, Splits
 from axial.errors import InvariantViolation
-from axial.judge import JudgeSpec, Verdict, assemble_prompt, parse_verdict, run_judge
+from axial.judge import (
+    Graded,
+    JudgeSpec,
+    SetAside,
+    Verdict,
+    assemble_prompt,
+    grade_trace,
+    parse_verdict,
+    resolve_few_shot,
+    run_judge,
+)
 from axial.model import FakeModel
 from axial.store import Store
 from axial.traces import Trace
@@ -270,3 +280,48 @@ def test_a_bad_prompt_template_becomes_an_error_row_not_a_crash(tmp_path: Path):
     assert result.verdicts == []
     assert len(result.errors) == 1
     assert result.errors[0]["failure_class"] == "bad_template"
+
+
+def test_grade_trace_returns_the_verdict_and_what_the_model_said():
+    model = FakeModel(lambda _p: '{"verdict": "fail", "reason": "merged"}', model="m-1")
+    outcome = grade_trace(spec(), trace(1), [], None, model, max_tokens=64)
+    assert isinstance(outcome, Graded)
+    assert (outcome.verdict, outcome.model, outcome.raw) == (
+        True, "m-1", '{"verdict": "fail", "reason": "merged"}',
+    )
+
+
+class _Broken:
+    def complete(self, prompt, *, max_tokens=1024, schema=None):
+        raise TimeoutError("provider timed out")
+
+
+@pytest.mark.parametrize(
+    ("template", "model", "failure_class"),
+    [
+        ("{nonsense}", FakeModel(lambda _p: '{"verdict": "pass"}'), "bad_template"),
+        (TEMPLATE, _Broken(), "harness"),
+        (TEMPLATE, FakeModel(lambda _p: '{"verdict": "pass"}', truncated=True), "truncated"),
+        (TEMPLATE, FakeModel(lambda _p: "maybe?"), "unparseable"),
+    ],
+)
+def test_grade_trace_sets_aside_what_it_cannot_score(template, model, failure_class):
+    outcome = grade_trace(spec(prompt_template=template), trace(1), [], None, model, max_tokens=64)
+    assert isinstance(outcome, SetAside)
+    assert outcome.failure_class == failure_class
+
+
+def test_grade_trace_lets_a_refusal_propagate():
+    splits = Splits(train=[], dev=["t2"], test=[])
+    with pytest.raises(InvariantViolation, match="not in the train split"):
+        grade_trace(
+            spec(), trace(1), [(trace(2), label(2, True))], splits,
+            FakeModel(lambda _p: '{"verdict": "pass"}'), max_tokens=64,
+        )
+
+
+def test_resolve_few_shot_refuses_an_id_it_cannot_find():
+    gold = label(1, True)
+    with pytest.raises(InvariantViolation, match="'t9' could not be resolved"):
+        resolve_few_shot(spec(few_shot_ids=["t9"]), [trace(1)], [gold])
+    assert resolve_few_shot(spec(few_shot_ids=["t1"]), [trace(1)], [gold]) == [(trace(1), gold)]
