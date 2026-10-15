@@ -29,6 +29,7 @@ known, documented limitation, not an oversight.
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -382,4 +383,108 @@ def corrected_rate(
         clipped=clipped,
         draws=draws,
         seed=seed,
+    )
+
+
+@dataclass(frozen=True)
+class CorrectedDifference:
+    """Candidate minus baseline corrected failure rate, computed before clipping.
+
+    `n` is the number of pairs when `paired`, otherwise both batches' graded counts
+    added together.
+    """
+
+    point: float
+    interval: tuple[float, float] | None
+    paired: bool
+    n: int
+    draws: int
+    seed: int
+
+
+def _corrected_difference(
+    test: ConfusionMatrix,
+    observed_difference: float,
+    draw_differences: Callable[[np.random.Generator], NDArray[np.float64]],
+    *,
+    paired: bool,
+    n: int,
+    draws: int,
+    seed: int,
+) -> CorrectedDifference:
+    """Shared tail of both difference estimators.
+
+    The judge is drawn once per draw and applied to both batches, because one judge
+    graded both. The difference is divided by J* before any clipping: the correction
+    is linear in p with the same slope for both batches, and clipping each rate first
+    turns real rises below the judge's false-alarm rate into a difference of exactly 0.
+    """
+    tpr, tnr = _judge_rates(test)
+    youden = tpr + tnr - 1.0
+    point = observed_difference / youden if youden > _MIN_YOUDEN_J else math.nan
+
+    rng = np.random.default_rng(seed)
+    _, youden_s = _youden_draws(rng, test, draws)
+    flag_difference_s = draw_differences(rng)
+    valid = youden_s > _MIN_YOUDEN_J
+    interval = _percentile_interval(flag_difference_s[valid] / youden_s[valid], draws)
+    return CorrectedDifference(
+        point=point, interval=interval, paired=paired, n=n, draws=draws, seed=seed
+    )
+
+
+def corrected_difference_unpaired(
+    test: ConfusionMatrix,
+    baseline: tuple[int, int],
+    candidate: tuple[int, int],
+    *,
+    draws: int = 20_000,
+    seed: int = 0,
+) -> CorrectedDifference:
+    """Corrected (candidate - baseline) failure rate for two unrelated batches.
+
+    `baseline` and `candidate` are `(flagged, n_graded)`.
+    """
+    flagged_a, n_a = baseline
+    flagged_b, n_b = candidate
+    _check_count(flagged_a, n_a, "baseline")
+    _check_count(flagged_b, n_b, "candidate")
+
+    def draw(rng: np.random.Generator) -> NDArray[np.float64]:
+        p_a = _jeffreys(rng, flagged_a, n_a, draws)
+        p_b = _jeffreys(rng, flagged_b, n_b, draws)
+        return p_b - p_a
+
+    return _corrected_difference(
+        test, flagged_b / n_b - flagged_a / n_a, draw,
+        paired=False, n=n_a + n_b, draws=draws, seed=seed,
+    )
+
+
+def corrected_difference_paired(
+    test: ConfusionMatrix,
+    cells: tuple[int, int, int, int],
+    *,
+    draws: int = 20_000,
+    seed: int = 0,
+) -> CorrectedDifference:
+    """Corrected (candidate - baseline) failure rate over matched pairs.
+
+    `cells` is `(n11, n10, n01, n00)`: flagged in both, baseline only, candidate only,
+    neither. The four cell shares are drawn from their Jeffreys posterior,
+    Dirichlet(n + 1/2), and the flag-rate difference is pi01 - pi10.
+    """
+    if any(c < 0 for c in cells):
+        raise ValueError(f"paired cells must be non-negative, got {cells}")
+    n11, n10, n01, n00 = cells
+    n = n11 + n10 + n01 + n00
+    if n == 0:
+        raise ValueError("cannot compare two batches over zero pairs")
+
+    def draw(rng: np.random.Generator) -> NDArray[np.float64]:
+        shares = rng.dirichlet([n11 + 0.5, n10 + 0.5, n01 + 0.5, n00 + 0.5], draws)
+        return shares[:, 2] - shares[:, 1]
+
+    return _corrected_difference(
+        test, (n01 - n10) / n, draw, paired=True, n=n, draws=draws, seed=seed
     )
