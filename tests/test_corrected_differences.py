@@ -60,19 +60,26 @@ def test_the_worked_unpaired_and_paired_comparisons():
 
 
 def test_sharing_the_judge_draws_narrows_the_difference():
-    """Drawing the judge independently per batch, as if two judges graded them, is wider."""
+    """One judge graded both batches, so the shared draw should be narrower than two judges.
+
+    The comparator draws each judge's TPR and TNR once and uses that judge for both the
+    numerator and J, as two judges would. The margin is the guard: a separate judge per
+    batch comes out about as wide as this comparator, so it fails.
+    """
     shared = corrected_difference_unpaired(JUDGE, (60, 500), (80, 500))
     rng = np.random.default_rng(0)
     d = 20_000
-    j_a = rng.beta(28.5, 2.5, d) + rng.beta(66.5, 4.5, d) - 1
+    tpr_a = rng.beta(28.5, 2.5, d)
     tnr_a = rng.beta(66.5, 4.5, d)
-    j_b = rng.beta(28.5, 2.5, d) + rng.beta(66.5, 4.5, d) - 1
+    tpr_b = rng.beta(28.5, 2.5, d)
     tnr_b = rng.beta(66.5, 4.5, d)
+    j_a = tpr_a + tnr_a - 1
+    j_b = tpr_b + tnr_b - 1
     p_a = rng.beta(60.5, 440.5, d)
     p_b = rng.beta(80.5, 420.5, d)
     independent = (p_b + tnr_b - 1) / j_b - (p_a + tnr_a - 1) / j_a
     low, high = np.percentile(independent, [2.5, 97.5])
-    assert width(shared.interval) < high - low
+    assert width(shared.interval) < 0.75 * (high - low)
 
 
 def test_pairing_narrows_the_difference_when_changes_are_concentrated():
