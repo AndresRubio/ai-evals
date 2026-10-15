@@ -132,3 +132,40 @@ def test_read_jsonl_reports_the_file_and_line_number_on_corrupt_json(tmp_path: P
     path.write_text('{"a": 1}\nnot json\n{"a": 3}\n')
     with pytest.raises(ValueError, match=r"bad\.jsonl.*line 2"):
         s.read_jsonl(path)
+
+
+def test_write_dir_atomically_writes_every_file(tmp_path: Path):
+    store = Store(tmp_path)
+    target = store.root / "measurements" / "m" / "b1"
+    store.write_dir_atomically(target, {"a.txt": "one\n", "b.txt": "two\n"})
+    assert {p.name: p.read_text() for p in target.iterdir()} == {"a.txt": "one\n", "b.txt": "two\n"}
+    assert sorted(p.name for p in target.parent.iterdir()) == ["b1"]
+
+
+def test_write_dir_atomically_replaces_the_whole_directory(tmp_path: Path):
+    store = Store(tmp_path)
+    target = tmp_path / "out"
+    store.write_dir_atomically(target, {"old.txt": "x", "kept-name.txt": "old"})
+    store.write_dir_atomically(target, {"kept-name.txt": "new"})
+    assert {p.name: p.read_text() for p in target.iterdir()} == {"kept-name.txt": "new"}
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["out"]
+
+
+def test_write_dir_atomically_leaves_the_old_directory_when_a_write_fails(tmp_path: Path):
+    store = Store(tmp_path)
+    target = tmp_path / "out"
+    store.write_dir_atomically(target, {"a.txt": "old"})
+    with pytest.raises(FileNotFoundError):
+        # A name inside a subdirectory that was never created fails mid-write.
+        store.write_dir_atomically(target, {"a.txt": "new", "missing/b.txt": "x"})
+    assert {p.name: p.read_text() for p in target.iterdir()} == {"a.txt": "old"}
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["out"]
+
+
+def test_write_dir_atomically_gives_the_directory_a_normal_mode(tmp_path: Path):
+    store = Store(tmp_path)
+    target = tmp_path / "out"
+    store.write_dir_atomically(target, {"a.txt": "x"})
+    mask = os.umask(0)
+    os.umask(mask)
+    assert stat.S_IMODE(target.stat().st_mode) == 0o777 & ~mask

@@ -9,8 +9,10 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import stat
 import tempfile
+import uuid
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
@@ -29,6 +31,16 @@ def _current_umask() -> int:
     mask = os.umask(0)
     os.umask(mask)
     return mask
+
+
+def jsonl_text(rows: Iterable[dict[str, Any]]) -> str:
+    """The exact bytes `Store.write_jsonl` writes for `rows`."""
+    return "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows)
+
+
+def json_text(obj: Any) -> str:
+    """The exact bytes `Store.write_json` writes for `obj`."""
+    return json.dumps(obj, indent=2, sort_keys=True) + "\n"
 
 
 class Store:
@@ -62,6 +74,9 @@ class Store:
 
     def judge_dir(self, mode: str, version: int) -> Path:
         return self.root / "judges" / mode / f"v{version}"
+
+    def measurement_dir(self, mode: str, batch: str) -> Path:
+        return self.root / "measurements" / mode / batch
 
     def latest_judge_version(self, mode: str) -> int | None:
         """The highest existing judge version for `mode`, or `None` if none exists yet.
@@ -142,12 +157,42 @@ class Store:
             raise
 
     def write_jsonl(self, path: Path, rows: Iterable[dict[str, Any]]) -> None:
-        data = "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows)
-        self._atomic_write(path, data)
+        self._atomic_write(path, jsonl_text(rows))
 
     def write_json(self, path: Path, obj: Any) -> None:
-        data = json.dumps(obj, indent=2, sort_keys=True) + "\n"
-        self._atomic_write(path, data)
+        self._atomic_write(path, json_text(obj))
+
+    def write_dir_atomically(self, path: Path, files: dict[str, str]) -> None:
+        """Make `path` a directory holding exactly `files` (name -> text), all or nothing.
+
+        The files go into a hidden sibling directory that is then renamed onto
+        `path`; an existing `path` is renamed aside first and removed only once the
+        new one is in place, and put back if that rename fails. A run interrupted
+        part-way leaves `path` as it was, never half-written -- the same guarantee
+        `_atomic_write` gives a single file, for a set of files that only mean
+        something together. `mkdtemp` creates its directory mode 0700, so the mode
+        is fixed up to what a plain `mkdir` would give.
+        """
+        path.parent.mkdir(parents=True, exist_ok=True)
+        staging = Path(tempfile.mkdtemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp"))
+        try:
+            os.chmod(staging, 0o777 & ~_current_umask())
+            for name, data in files.items():
+                (staging / name).write_text(data)
+            if not path.exists():
+                os.replace(staging, path)
+                return
+            retired = path.with_name(f".{path.name}.{uuid.uuid4().hex}.old")
+            os.replace(path, retired)
+            try:
+                os.replace(staging, path)
+            except BaseException:
+                os.replace(retired, path)
+                raise
+            shutil.rmtree(retired)
+        except BaseException:
+            shutil.rmtree(staging, ignore_errors=True)
+            raise
 
     def read_json(self, path: Path) -> Any:
         return json.loads(path.read_text())
