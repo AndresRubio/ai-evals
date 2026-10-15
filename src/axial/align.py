@@ -30,8 +30,10 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from typing import Literal
 
 import numpy as np
+from numpy.typing import NDArray
 
 _Z_95 = 1.959963984540054
 
@@ -39,6 +41,11 @@ _Z_95 = 1.959963984540054
 # the f1/kappa bootstrap interval to be reported at all. Below this, "None" is more
 # honest than an interval resting on a small, undisclosed slice of the draws.
 _MIN_SURVIVING_FRACTION = 0.9
+
+# A judge whose TPR + TNR - 1 (Youden's J) is at or below this is no better than chance
+# for correcting a rate: dividing by a J near zero sends the corrected rate anywhere.
+# Monte Carlo draws below it are invalid, and a point estimate below it is undefined.
+_MIN_YOUDEN_J = 0.05
 
 
 @dataclass(frozen=True)
@@ -260,3 +267,119 @@ def paired_bootstrap_ci(
         diffs.append(c - b)
     low, high = np.percentile(diffs, [2.5, 97.5])
     return float(low), float(high)
+
+
+@dataclass(frozen=True)
+class CorrectedRate:
+    """A batch's flag rate corrected for the judge's own errors (Rogan-Gladen).
+
+    `point` is clipped to [0, 1] and `clipped` says which way, if at all; it is nan
+    when the judge's test-split Youden's J is at most `_MIN_YOUDEN_J`. `interval` lets
+    the judge's error rates vary with their test-split counts; `interval_if_judge_exact`
+    holds them at their point estimates, so comparing the two shows whether more test
+    labels or a bigger batch would tighten the result. Either is `None` when it cannot
+    be computed honestly.
+    """
+
+    observed: float
+    point: float
+    interval: tuple[float, float] | None
+    interval_if_judge_exact: tuple[float, float] | None
+    clipped: Literal["low", "high"] | None
+    draws: int
+    seed: int
+
+
+def _judge_rates(test: ConfusionMatrix) -> tuple[float, float]:
+    positives = test.tp + test.fn
+    negatives = test.tn + test.fp
+    if positives == 0 or negatives == 0:
+        missing = "real failures" if positives == 0 else "real passes"
+        raise ValueError(
+            f"the test matrix has no {missing}, so the judge's error rates are undefined"
+        )
+    return test.tp / positives, test.tn / negatives
+
+
+def _check_count(flagged: int, n: int, what: str) -> None:
+    if n <= 0:
+        raise ValueError(f"{what}: cannot correct a rate over {n} graded traces")
+    if not 0 <= flagged <= n:
+        raise ValueError(f"{what}: flagged={flagged} is outside [0, {n}]")
+
+
+def _jeffreys(rng: np.random.Generator, k: int, n: int, size: int) -> NDArray[np.float64]:
+    """Draws from the Jeffreys posterior Beta(k + 1/2, n - k + 1/2) of a proportion.
+
+    Unlike resampling, this keeps a 30-of-30 count uncertain: its draws sit below 1.
+    """
+    return rng.beta(k + 0.5, n - k + 0.5, size)
+
+
+def _youden_draws(
+    rng: np.random.Generator, test: ConfusionMatrix, draws: int
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """TNR* and J* = TPR* + TNR* - 1, one pair per draw, TPR drawn first."""
+    tpr = _jeffreys(rng, test.tp, test.tp + test.fn, draws)
+    tnr = _jeffreys(rng, test.tn, test.tn + test.fp, draws)
+    return tnr, tpr + tnr - 1.0
+
+
+def _percentile_interval(
+    values: NDArray[np.float64], draws: int
+) -> tuple[float, float] | None:
+    """The central 95% of `values`, if they are at least 90% of the requested draws."""
+    if draws <= 0 or len(values) < _MIN_SURVIVING_FRACTION * draws:
+        return None
+    low, high = np.percentile(values, [2.5, 97.5])
+    return float(low), float(high)
+
+
+def corrected_rate(
+    test: ConfusionMatrix,
+    flagged: int,
+    n: int,
+    *,
+    draws: int = 20_000,
+    seed: int = 0,
+) -> CorrectedRate:
+    """Correct a batch's flag rate with the judge's test-split TPR and TNR.
+
+    theta = (p + TNR - 1) / (TPR + TNR - 1), from p = TPR * theta + (1 - TNR) * (1 - theta).
+    Raises `ValueError` on an empty batch or a test matrix missing a class.
+    """
+    tpr, tnr = _judge_rates(test)
+    _check_count(flagged, n, "batch")
+    observed = flagged / n
+    youden = tpr + tnr - 1.0
+
+    point = math.nan
+    clipped: Literal["low", "high"] | None = None
+    if youden > _MIN_YOUDEN_J:
+        raw = (observed + tnr - 1.0) / youden
+        if raw < 0.0:
+            clipped = "low"
+        elif raw > 1.0:
+            clipped = "high"
+        point = min(1.0, max(0.0, raw))
+
+    rng = np.random.default_rng(seed)
+    tnr_s, youden_s = _youden_draws(rng, test, draws)
+    p_s = _jeffreys(rng, flagged, n, draws)
+    valid = youden_s > _MIN_YOUDEN_J
+    theta_s = np.clip((p_s[valid] + tnr_s[valid] - 1.0) / youden_s[valid], 0.0, 1.0)
+    interval = _percentile_interval(theta_s, draws)
+
+    exact = None
+    if youden > _MIN_YOUDEN_J:
+        exact = _percentile_interval(np.clip((p_s + tnr - 1.0) / youden, 0.0, 1.0), draws)
+
+    return CorrectedRate(
+        observed=observed,
+        point=point,
+        interval=interval,
+        interval_if_judge_exact=exact,
+        clipped=clipped,
+        draws=draws,
+        seed=seed,
+    )
