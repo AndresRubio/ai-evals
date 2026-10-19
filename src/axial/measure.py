@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import hashlib
 import math
-import re
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -27,10 +26,6 @@ from axial.model import Model
 from axial.report import SATURATION_WARNING, require_promoted
 from axial.store import Store, json_text, jsonl_text
 from axial.traces import Trace
-
-# A batch name becomes a directory. It must start with a letter or digit, which also
-# keeps "." and ".." out and leaves dot-names free for `write_dir_atomically`'s staging.
-BATCH_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 
 # Above this share of set-aside traces, a measurement says the rate may be biased.
 SET_ASIDE_NOTE_SHARE = 0.05
@@ -49,15 +44,6 @@ ASSUMPTION_NOTE = (
 def input_sha256(text: str) -> str:
     """The pairing key: SHA-256 of a trace's input text, UTF-8."""
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
-
-
-def validate_batch_name(name: str) -> str:
-    if not BATCH_NAME_RE.fullmatch(name):
-        raise AxialError(
-            f"batch name {name!r} is not allowed: it becomes a directory, so use letters, "
-            "digits, '.', '_' and '-', starting with a letter or digit"
-        )
-    return name
 
 
 @dataclass(frozen=True)
@@ -264,7 +250,7 @@ def measure_batch(
     at once, so an interrupted run leaves no partial measurement behind.
     """
     hashes = require_promoted(store, mode, version)
-    directory = store.measurement_dir(mode, validate_batch_name(batch_name))
+    directory = store.measurement_dir(mode, batch_name)
     if directory.exists() and not replace:
         raise AxialError(
             f"a measurement named {batch_name!r} already exists for {mode} at {directory}. "
@@ -355,7 +341,7 @@ def load_measurement(
     store: Store, mode: str, batch: str
 ) -> tuple[Measurement, list[dict[str, Any]]]:
     """Read a measurement and its graded rows, refusing anything that does not add up."""
-    directory = store.measurement_dir(mode, validate_batch_name(batch))
+    directory = store.measurement_dir(mode, batch)
     path = directory / "measurement.json"
     if not path.exists():
         raise AxialError(

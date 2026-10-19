@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import stat
 import tempfile
@@ -17,7 +18,28 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
+from axial.errors import AxialError
 from axial.traces import Trace
+
+# A mode or a batch name becomes one directory name under `.axial/`. Starting with a
+# letter or digit keeps "." and ".." out and leaves dot-names free for the hidden
+# siblings `_atomic_write` and `write_dir_atomically` stage in.
+NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+
+
+def validate_name(name: str, kind: str) -> str:
+    """Refuse a `kind` ("mode" or "batch") name that is not one plain directory name.
+
+    Unchecked, `../judges/x` or an absolute path resolves outside its own tree, and
+    `x/y` lands inside another mode's directory, where `write_dir_atomically` would
+    replace whatever it found.
+    """
+    if not NAME_RE.fullmatch(name):
+        raise AxialError(
+            f"{kind} name {name!r} is not allowed: it becomes a directory, so use letters, "
+            "digits, '.', '_' and '-', starting with a letter or digit"
+        )
+    return name
 
 
 def _current_umask() -> int:
@@ -69,14 +91,19 @@ class Store:
     def gates_path(self) -> Path:
         return self.root / "gates.yaml"
 
+    def _mode_dir(self, tree: str, mode: str) -> Path:
+        """`.axial/<tree>/<mode>`: every mode-keyed path is built here, so none can
+        skip the check on `mode`."""
+        return self.root / tree / validate_name(mode, "mode")
+
     def dataset_dir(self, mode: str) -> Path:
-        return self.root / "datasets" / mode
+        return self._mode_dir("datasets", mode)
 
     def judge_dir(self, mode: str, version: int) -> Path:
-        return self.root / "judges" / mode / f"v{version}"
+        return self._mode_dir("judges", mode) / f"v{version}"
 
     def measurement_dir(self, mode: str, batch: str) -> Path:
-        return self.root / "measurements" / mode / batch
+        return self._mode_dir("measurements", mode) / validate_name(batch, "batch")
 
     def latest_judge_version(self, mode: str) -> int | None:
         """The highest existing judge version for `mode`, or `None` if none exists yet.
@@ -85,7 +112,7 @@ class Store:
         judge" action, this one is for "resume whatever is already there" — the
         default a caller should reach for when no version was named.
         """
-        parent = self.root / "judges" / mode
+        parent = self._mode_dir("judges", mode)
         if not parent.exists():
             return None
         versions = [int(p.name[1:]) for p in parent.iterdir() if p.name.startswith("v")]

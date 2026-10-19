@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from axial.errors import AxialError
 from axial.store import Store
 from axial.traces import Trace
 
@@ -45,6 +46,37 @@ def test_next_judge_version_starts_at_one_and_increments(tmp_path: Path):
     assert s.next_judge_version("mode") == 1
     s.judge_dir("mode", 1).mkdir(parents=True)
     assert s.next_judge_version("mode") == 2
+
+
+# A mode becomes a directory under judges/, datasets/ and measurements/. Each of these
+# once resolved to a path outside its own tree, or inside another mode's.
+NOT_A_PLAIN_NAME = [
+    "../judges/merged", "/elsewhere/.axial/judges/merged", "merged/x", "merged/",
+    "", ".", "..", ".hidden", "sp ace",
+]
+
+
+@pytest.mark.parametrize("mode", NOT_A_PLAIN_NAME)
+def test_every_mode_keyed_path_refuses_a_mode_that_is_not_a_plain_name(tmp_path: Path, mode: str):
+    s = Store(tmp_path)
+    for path_for in (
+        s.dataset_dir,
+        lambda m: s.judge_dir(m, 1),
+        lambda m: s.measurement_dir(m, "rel-1"),
+        s.latest_judge_version,
+        s.next_judge_version,
+    ):
+        with pytest.raises(AxialError, match="mode name .* is not allowed"):
+            path_for(mode)
+    assert not s.root.exists()
+
+
+@pytest.mark.parametrize("mode", ["merged", "merged_stories", "m", "wrong_topic", "v1.2-rc_3"])
+def test_a_plain_mode_name_is_one_directory_under_each_tree(tmp_path: Path, mode: str):
+    s = Store(tmp_path)
+    assert s.judge_dir(mode, 1) == s.root / "judges" / mode / "v1"
+    assert s.dataset_dir(mode) == s.root / "datasets" / mode
+    assert s.measurement_dir(mode, "rel-1") == s.root / "measurements" / mode / "rel-1"
 
 
 # --- Finding 5: atomic writes and diagnosable parse errors ---

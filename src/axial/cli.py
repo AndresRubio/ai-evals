@@ -35,7 +35,7 @@ from axial.report import (
 )
 from axial.report import promote as do_promote
 from axial.sample import all_reviews, create_session, read_session, sample_batch
-from axial.store import Store
+from axial.store import Store, validate_name
 from axial.taxonomy import Taxonomy, count_open_codes, propose_taxonomy, saturation_curve
 from axial.traces import ingest as do_ingest
 
@@ -59,6 +59,19 @@ BatchTracesOption = typer.Option(
 def _fail(message: str) -> NoReturn:
     typer.echo(message)
     raise typer.Exit(code=1)
+
+
+def _plain_mode(mode: str) -> str:
+    try:
+        return validate_name(mode, "mode")
+    except AxialError as exc:
+        _fail(str(exc))
+
+
+# Every command that takes a mode checks it while parsing, before it reads or writes
+# anything: a mode becomes a directory, and `../judges/x` once let `measure --replace`
+# delete a promoted judge.
+ModeArgument = typer.Argument(..., callback=_plain_mode)
 
 
 @app.command()
@@ -191,7 +204,7 @@ def taxonomy(repo: str = RepoOption) -> None:
 
 @app.command("label-import")
 def label_import(
-    mode: str,
+    mode: str = ModeArgument,
     path: Path = LabelPathOption,
     repo: str = RepoOption,
 ) -> None:
@@ -207,7 +220,7 @@ def label_import(
 
 @app.command("label-from-reviews")
 def label_from_reviews(
-    mode: str,
+    mode: str = ModeArgument,
     sessions: list[str] = SessionsArgument,
     repo: str = RepoOption,
 ) -> None:
@@ -230,7 +243,7 @@ def label_from_reviews(
 
 
 @app.command()
-def split(mode: str, seed: int = typer.Option(0), repo: str = RepoOption) -> None:
+def split(mode: str = ModeArgument, seed: int = typer.Option(0), repo: str = RepoOption) -> None:
     """Draw a stratified train/dev/test split and freeze the test manifest."""
     store = Store(repo)
     config = load_config(store)
@@ -266,7 +279,7 @@ NewOption = typer.Option(
 
 @app.command()
 def judge(
-    mode: str,
+    mode: str = ModeArgument,
     split_name: str = typer.Option("dev", "--split", help="dev | test"),
     version: int = typer.Option(
         0,
@@ -342,7 +355,9 @@ def judge(
 
 
 @app.command()
-def align(mode: str, version: int, repo: str = RepoOption) -> None:
+def align(
+    mode: str = ModeArgument, version: int = typer.Argument(...), repo: str = RepoOption
+) -> None:
     """Report agreement between a judge and your labels."""
     store = Store(repo)
     config = load_config(store)
@@ -373,8 +388,8 @@ def align(mode: str, version: int, repo: str = RepoOption) -> None:
 
 @app.command()
 def checks(
-    mode: str,
-    version: int,
+    mode: str = ModeArgument,
+    version: int = typer.Argument(...),
     key: str = typer.Option(None, "--slice-by", help="Metadata key to break alignment down by"),
     split_name: str = typer.Option("test", "--split"),
     repo: str = RepoOption,
@@ -429,7 +444,9 @@ def checks(
 
 
 @app.command()
-def promote(mode: str, version: int, repo: str = RepoOption) -> None:
+def promote(
+    mode: str = ModeArgument, version: int = typer.Argument(...), repo: str = RepoOption
+) -> None:
     """Promote a judge to CI, if its test alignment clears the bar."""
     store = Store(repo)
     config = load_config(store)
@@ -455,7 +472,7 @@ def promote(mode: str, version: int, repo: str = RepoOption) -> None:
 
 @app.command()
 def measure(
-    mode: str,
+    mode: str = ModeArgument,
     version: int = typer.Option(..., "--version", help="Promoted judge version to grade with"),
     traces: Path = BatchTracesOption,
     name: str = typer.Option(
@@ -490,7 +507,7 @@ def measure(
 
 @app.command()
 def gate(
-    mode: str,
+    mode: str = ModeArgument,
     version: int | None = typer.Option(
         None, "--version", help="Promoted judge version to gate on (compares judge versions)"
     ),

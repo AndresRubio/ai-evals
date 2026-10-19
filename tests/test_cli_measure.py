@@ -38,6 +38,58 @@ def measure(repo: Path, name: str, n_bad: int, n: int = 500, *more: str) -> Resu
     return axial("measure", MEASURE_MODE, "--version", "1", "--traces", str(path), "--name", name, *more)
 
 
+def tree(root: Path) -> dict[str, bytes | None]:
+    """Every path under `root` with its bytes, `None` for a directory."""
+    return {
+        str(p.relative_to(root)): None if p.is_dir() else p.read_bytes()
+        for p in sorted(root.rglob("*"))
+    }
+
+
+# --- modes that are not one plain directory name ------------------------------------
+
+
+def bad_mode(repo: Path, kind: str) -> str:
+    """Each mode resolves to a path outside .axial/measurements/<mode>/; the first two
+    to the promoted judge's own directory, which `measure --replace` then replaced."""
+    return {
+        "dotdot": f"../judges/{MEASURE_MODE}",
+        "absolute": str(repo / ".axial" / "judges" / MEASURE_MODE),
+        "slash": f"{MEASURE_MODE}/x",
+        "trailing-slash": f"{MEASURE_MODE}/",
+    }[kind]
+
+
+MODE_KINDS = ["dotdot", "absolute", "slash", "trailing-slash"]
+
+
+@pytest.mark.parametrize("kind", MODE_KINDS)
+def test_measure_refuses_a_mode_that_is_not_a_plain_name_and_touches_nothing(repo: Path, kind: str):
+    path = write_batch(repo / "b.jsonl", ["GOOD"] * 5)
+    before = tree(repo / ".axial")
+    result = axial(
+        "measure", bad_mode(repo, kind), "--version", "1", "--traces", str(path),
+        "--name", "v1", "--replace",
+    )
+    assert_clean(result, 1, "mode name", "is not allowed")
+    assert len(result.output.strip().splitlines()) == 1
+    assert tree(repo / ".axial") == before
+
+
+@pytest.mark.parametrize("kind", MODE_KINDS)
+@pytest.mark.parametrize(
+    "command", [("judge", "--split", "dev"), ("align", "1"), ("promote", "1"), ("gate", "--version", "1")]
+)
+def test_judge_align_promote_and_gate_refuse_a_mode_that_is_not_a_plain_name(
+    repo: Path, kind: str, command: tuple[str, ...]
+):
+    before = tree(repo / ".axial")
+    result = axial(command[0], bad_mode(repo, kind), *command[1:])
+    assert_clean(result, 1, "mode name", "is not allowed")
+    assert len(result.output.strip().splitlines()) == 1
+    assert tree(repo / ".axial") == before
+
+
 # --- measure ------------------------------------------------------------------------
 
 
