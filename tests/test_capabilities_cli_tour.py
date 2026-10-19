@@ -558,8 +558,8 @@ def test_judge_reads_the_key_from_dotenv_in_the_repo_root(
 ) -> None:
     """`axial judge` picks a key up from `<repo>/.env` when the shell exports none.
 
-    README: "`.env` is gitignored, read from the repo root by `axial taxonomy` and
-    `axial judge`"
+    README: "`.env` is gitignored, read from the repo root by `axial taxonomy`, `axial judge`
+    and `axial measure`"
     """
     repo = tmp_path / "repo"
     monkeypatch.chdir(tmp_path)

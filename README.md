@@ -87,11 +87,11 @@ The refusals are the product.
   that `measure` graded: `--max-rate` fails when the upper end of a batch's corrected
   failure rate interval is above the ceiling, and `--baseline-batch` fails when the
   interval on the difference from a baseline batch excludes zero on the side of more
-  failures. The difference is paired by input when the two batches share at least
-  80% of their inputs. `gate --version` compares a judge's own verdicts across judge
-  versions with `--baseline`; without a baseline or a ceiling, either mode only
-  prints and passes. Both warn when a suite stops failing anything: a saturated
-  eval has stopped carrying signal.
+  failures. The difference is paired by input when the shared inputs cover at least
+  80% of each batch's graded traces, and unpaired otherwise. `gate --version` compares
+  a judge's own verdicts across judge versions with `--baseline`; without a baseline
+  or a ceiling, either mode only prints and passes. Both warn when a suite stops
+  failing anything: a saturated eval has stopped carrying signal.
 - **A corrected rate comes only from a promoted judge's test-split error rates,
   and every measurement states the assumption it rests on:** that the judge errs on
   the new batch as it did on test. A measurement taken by a judge that has since
@@ -175,7 +175,8 @@ with an interval that includes the judge's own uncertainty, and writes everythin
 and TNR 0.94 on 30 real failures and 70 real passes, catching a rise from 10% to 14%
 failing reliably takes about 1,000 inputs run through both versions, or about 500 if
 most inputs whose behaviour did not change produce identical output. A weaker judge
-needs more. Unrelated batches, compared unpaired, need about twice as many.
+needs more. Compared unpaired, 1,000 inputs from unrelated batches catch the same rise
+only 58% of the time, against 81% when paired.
 
 ## Decision models
 

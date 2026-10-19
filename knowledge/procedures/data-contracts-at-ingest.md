@@ -2,7 +2,7 @@
 name: data-contracts-at-ingest
 description: Expectation, checkpoint and data docs from Great Expectations mapped onto contract, gate and alignment report, with checks for axial ingest
 shelf: procedures
-updated: 2026-10-07
+updated: 2026-10-20
 sources:
   - url: https://greatexpectations.io/
     read: 2026-10-07
@@ -21,7 +21,7 @@ than warning.
 |---|---|---|
 | Expectation | one testable assertion about data | one labelled failure mode |
 | Expectation Suite | the assertions that define acceptable data | the labelled split for a mode |
-| Validation | running a suite against a batch | `judge` on a split; `measure` on a batch is proposed, not yet built |
+| Validation | running a suite against a batch | `judge` on a split; `measure` on a batch |
 | Checkpoint | the orchestration point that runs validations and acts | `gate`, and its exit code |
 | Data Docs | generated human-readable record of each run | `alignment.md` and `alignment.json` |
 
@@ -41,8 +41,8 @@ than warning.
    written and report all of them.
    Gate: a failed contract stops the ingest. Nothing is written.
 3. **Validate on exit.**
-   Trigger: a review batch, a split or a measurement is written (`measure` is proposed
-   in axial's corrected-rates design and not yet implemented).
+   Trigger: a review batch, a split or a measurement
+   (`.axial/measurements/<mode>/<name>/`) is written.
    Artifact: the same contract applied to the artifact: a split with every trace id
    resolvable, a batch with no duplicates, a measurement whose traces all parsed.
    Gate: a failed check stops the command.

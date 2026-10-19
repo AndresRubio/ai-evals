@@ -47,8 +47,9 @@ every change; the gate blocks the merge. The numbers quoted are collected in
    and corrects the flag rate for the judge's test-split errors; `gate --batch` then
    fails on a corrected rate whose interval reaches above a ceiling (`--max-rate`), or
    on a rise against a baseline batch (`--baseline-batch`). Running the same inputs
-   through both versions lets the comparison pair them, which needs about half as many
-   inputs as comparing two unrelated batches.
+   through both versions lets the comparison pair them, which catches more: in axial's
+   simulation, 1,000 shared inputs caught a 4-point rise 81% of the time paired and 58%
+   unpaired.
    Gate: the exit code blocks the merge.
 5. **Watch for saturation.**
    Trigger: a suite stops failing anything.
