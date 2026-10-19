@@ -204,6 +204,7 @@ def test_gate_batch_names_a_missing_measurement(repo: Path):
         (("--batch", "x", "--baseline", "1"), ("--baseline", "--baseline-batch")),
         (("--batch", "x", "--max-rate", "1.5"), ("strictly between 0 and 1",)),
         (("--batch", "x", "--max-rate", "0"), ("strictly between 0 and 1",)),
+        (("--batch", "x", "--baseline-batch", "x"), ("--baseline-batch", "the same batch")),
     ],
 )
 def test_gate_option_mistakes_are_usage_errors(repo: Path, args: tuple[str, ...], fragments: tuple[str, ...]):

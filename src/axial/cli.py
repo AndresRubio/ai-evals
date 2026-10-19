@@ -545,6 +545,11 @@ def gate(
         )
     if max_rate is not None and not 0 < max_rate < 1:
         raise typer.BadParameter("--max-rate must lie strictly between 0 and 1")
+    if batch is not None and batch == baseline_batch:
+        raise typer.BadParameter(
+            "--baseline-batch names the same batch as --batch; a batch compared with itself "
+            "can never regress"
+        )
     store = Store(repo)
     try:
         if version is not None:

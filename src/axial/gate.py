@@ -174,6 +174,11 @@ def gate_batches(
     draws: int = 20_000,
     seed: int = 0,
 ) -> GateResult:
+    if baseline_batch == batch:
+        raise AxialError(
+            f"batch {batch!r} is both the candidate and the baseline; a batch compared with "
+            "itself can never regress, so name the batch to compare against"
+        )
     candidate, candidate_rows = _load_fresh(store, mode, batch)
     assert candidate.rate is not None  # _load_fresh refuses a batch with no rate
     messages = summary_lines(candidate)

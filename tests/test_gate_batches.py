@@ -112,6 +112,13 @@ def test_batches_without_shared_inputs_are_compared_unpaired(store: Store):
     assert result.passed  # the unpaired interval for 60 vs 80 of 500 straddles zero
 
 
+def test_a_batch_compared_with_itself_is_refused(store: Store):
+    """It can never regress, so a copy-paste slip in CI would pass every build."""
+    measure(store, "rel-1", flags(60))
+    with pytest.raises(AxialError, match="both the candidate and the baseline"):
+        run(store, "rel-1", baseline_batch="rel-1")
+
+
 def test_batches_measured_by_different_judge_versions_are_refused(store: Store):
     build_promoted_judge(store, version=2)
     measure(store, "base", flags(40), version=1)
