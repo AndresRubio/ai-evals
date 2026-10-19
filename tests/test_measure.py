@@ -129,6 +129,29 @@ def test_an_existing_name_is_refused_unless_replaced(store: Store):
     assert sorted(p.name for p in directory.parent.iterdir()) == ["rel-1"]
 
 
+# On a case-insensitive filesystem (the macOS default) REL-1 and rel-1 are one directory.
+# Each test creates rel-1 and asks for REL-1, so it behaves the same on either kind.
+
+
+def test_a_name_differing_only_in_case_from_an_existing_batch_is_refused(store: Store):
+    measure(store, batch_traces(["BAD"] * 3), name="rel-1")
+    before = snapshot(store.root / "measurements")
+    prompts: list[str] = []
+    with pytest.raises(AxialError, match="named 'rel-1' already exists .* only in case"):
+        measure_batch(
+            store, MEASURE_MODE, 1, "REL-1", batch_traces(["GOOD"] * 3),
+            fake_judge_builder(prompts=prompts), replace=True, draws=2000,
+        )
+    assert prompts == []
+    assert snapshot(store.root / "measurements") == before
+
+
+def test_reading_a_name_differing_only_in_case_from_an_existing_batch_is_refused(store: Store):
+    measure(store, batch_traces(["BAD"] * 3), name="rel-1")
+    with pytest.raises(AxialError, match="named 'rel-1' already exists .* only in case"):
+        load_measurement(store, MEASURE_MODE, "REL-1")
+
+
 def test_a_test_split_missing_a_class_is_refused(store: Store):
     path = store.judge_dir(MEASURE_MODE, 1) / "verdicts.jsonl"
     rows = [r for r in store.read_jsonl(path) if not (r["split"] == "test" and r["truth"])]

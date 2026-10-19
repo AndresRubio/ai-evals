@@ -209,6 +209,18 @@ def test_gate_batch_refuses_a_nan_interval_in_one_line(repo: Path):
     assert len(result.output.strip().splitlines()) == 1
 
 
+def test_a_batch_name_differing_only_in_case_neither_replaces_nor_reads_the_other(repo: Path):
+    assert measure(repo, "rel-1", 60).exit_code == 0
+    before = tree(repo / ".axial")
+    for result in (
+        measure(repo, "REL-1", 80, 500, "--replace"),
+        axial("gate", MEASURE_MODE, "--batch", "REL-1"),
+    ):
+        assert_clean(result, 1, "'rel-1'", "only in case")
+        assert len(result.output.strip().splitlines()) == 1
+    assert tree(repo / ".axial") == before
+
+
 def test_gate_batch_names_a_missing_measurement(repo: Path):
     assert_clean(axial("gate", MEASURE_MODE, "--batch", "nope"), 1, "no measurement named 'nope'")
 

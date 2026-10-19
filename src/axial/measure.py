@@ -16,6 +16,7 @@ from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from axial.align import ConfusionMatrix, CorrectedRate, confusion_matrix, corrected_rate
@@ -193,6 +194,25 @@ def _check_batch(batch: list[Trace]) -> None:
                 ) from exc
 
 
+def _refuse_case_variant(directory: Path, mode: str, batch: str) -> None:
+    """Refuse `batch` if a batch whose name differs from it only in case is on disk.
+
+    On a case-insensitive filesystem (the macOS default) both names open one directory,
+    so `measure` would replace the other batch and `gate` would read it. Refusing on
+    every filesystem keeps a repository that works on Linux working on a Mac.
+    """
+    if not directory.parent.is_dir():
+        return
+    for entry in directory.parent.iterdir():
+        if entry.name != batch and entry.name.casefold() == batch.casefold():
+            raise AxialError(
+                f"a measurement named {entry.name!r} already exists for {mode}, and "
+                f"{batch!r} differs from it only in case, which many filesystems treat as "
+                f"the same directory; use {entry.name!r} or a name that differs in more "
+                "than case"
+            )
+
+
 def judge_test_matrix(store: Store, mode: str, version: int) -> ConfusionMatrix:
     """The judge's test-split confusion matrix, which every corrected rate it gives uses."""
     rows = [
@@ -265,6 +285,7 @@ def measure_batch(
     """
     hashes = require_promoted(store, mode, version)
     directory = store.measurement_dir(mode, batch_name)
+    _refuse_case_variant(directory, mode, batch_name)
     if directory.exists() and not replace:
         raise AxialError(
             f"a measurement named {batch_name!r} already exists for {mode} at {directory}. "
@@ -393,6 +414,7 @@ def load_measurement(
 ) -> tuple[Measurement, list[dict[str, Any]]]:
     """Read a measurement and its graded rows, refusing anything that does not add up."""
     directory = store.measurement_dir(mode, batch)
+    _refuse_case_variant(directory, mode, batch)
     path = directory / "measurement.json"
     if not path.exists():
         raise AxialError(
