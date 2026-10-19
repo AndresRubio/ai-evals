@@ -6,6 +6,7 @@ test split. Everything it prints leads with TPR and TNR.
 
 from __future__ import annotations
 
+import html
 import json
 import math
 import re
@@ -356,15 +357,37 @@ def disagreement_counts(disagreements: list[Disagreement]) -> str:
     )
 
 
+def _longest_backtick_run(text: str) -> int:
+    return max((len(run) for run in re.findall(r"`+", text)), default=0)
+
+
 def _fence(text: str) -> str:
     """A code fence one backtick longer than the longest backtick run in `text`, so
     trace text can never close it early."""
-    longest = max((len(run) for run in re.findall(r"`+", text)), default=0)
-    return "`" * max(3, longest + 1)
+    return "`" * max(3, _longest_backtick_run(text) + 1)
 
 
 def _one_line(text: str) -> str:
     return " ".join(text.split())
+
+
+def _inline_text(text: str) -> str:
+    """Human or model text on one line with &, < and > escaped, so a stray tag stays text:
+    an unclosed <details> would hide the rest of the file on GitHub."""
+    return html.escape(_one_line(text), quote=False)
+
+
+def _code_span(text: str) -> str:
+    """`text` on one line as an inline code span nothing in it can close early.
+
+    One line keeps a newline from starting a heading. The fence is one backtick longer
+    than any run inside, as `_fence` does for blocks, and since CommonMark strips one
+    space from each end of a span, padding lets the text start or end with a backtick.
+    """
+    text = _one_line(text)
+    fence = "`" * (_longest_backtick_run(text) + 1)
+    pad = " " if not text or text.startswith("`") or text.endswith("`") else ""
+    return f"{fence}{pad}{text}{pad}{fence}"
 
 
 def _excerpt_lines(name: str, excerpt: str | None, length: int | None) -> list[str]:
@@ -396,11 +419,11 @@ def _disagreement_section(mode: str, disagreements: list[Disagreement]) -> list[
             for d in group:
                 title = "missed failure" if d.kind == "missed_failure" else "false alarm"
                 lines += [
-                    f"#### {title} — `{d.trace_id}`",
+                    f"#### {title} — {_code_span(d.trace_id)}",
                     "",
-                    f"**Human** (annotator `{d.annotator}`): {_one_line(d.critique)}",
+                    f"**Human** (annotator {_code_span(d.annotator)}): {_inline_text(d.critique)}",
                     "",
-                    f"**Judge:** {_one_line(d.judge_reason)}",
+                    f"**Judge:** {_inline_text(d.judge_reason)}",
                     "",
                 ]
                 lines += _excerpt_lines("Input", d.input_excerpt, d.input_length)

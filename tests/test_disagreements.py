@@ -141,6 +141,41 @@ def test_a_missing_trace_is_named_in_the_markdown(tmp_path: Path):
     assert "Input: (trace not found in .axial/traces)" in md
 
 
+def test_html_in_the_critique_and_the_reason_is_shown_as_text(tmp_path: Path):
+    # An unclosed <details> would collapse the rest of the file on GitHub.
+    critique = "opened a <details> block and\nnever closed it"
+    raw = json.dumps({"verdict": "pass", "reason": "it said <script>x</script> & left"})
+    found = find_disagreements(
+        [row("d0", True, False, raw=raw)], [label("d0", True, critique)], [trace("d0")]
+    )
+    md, data = render(tmp_path, found)
+    assert "<details>" not in md and "<script>" not in md
+    assert "**Human** (annotator `andres`): opened a &lt;details&gt; block and never closed it\n" in md
+    assert "**Judge:** it said &lt;script&gt;x&lt;/script&gt; &amp; left\n" in md
+    # alignment.json is data, not Markdown, so it keeps the text as written.
+    assert data["disagreements"]["dev"][0]["critique"] == critique
+
+
+@pytest.mark.parametrize(
+    ("text", "span"),
+    [
+        ("d0", "`d0`"),
+        ("a`b", "``a`b``"),
+        # CommonMark strips one space from each side, so a span may start or end with `.
+        ("`x``", "``` `x`` ```"),
+        ("two\n#### lines", "`two #### lines`"),
+    ],
+)
+def test_trace_ids_and_annotators_are_safe_code_spans(tmp_path: Path, text: str, span: str):
+    found = find_disagreements(
+        [row(text, True, False)], [Label(trace_id=text, label=True, critique="c", annotator=text)], []
+    )
+    md, _ = render(tmp_path, found)
+    assert f"#### missed failure — {span}\n" in md
+    assert f"**Human** (annotator {span}): c\n" in md
+    assert not any(line.startswith("#### lines") for line in md.splitlines())
+
+
 def test_no_disagreements_says_so(tmp_path: Path):
     md, data = render(tmp_path, [])
     assert "## Dev disagreements\n\nNo dev disagreements.\n" in md
