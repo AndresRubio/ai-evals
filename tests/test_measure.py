@@ -80,6 +80,24 @@ def test_duplicate_trace_ids_are_refused(store: Store):
         measure(store, twice)
 
 
+@pytest.mark.parametrize("field", ["input", "output"])
+def test_text_that_is_not_valid_utf8_is_refused_before_any_model_call(store: Store, field: str):
+    """JSON allows a lone surrogate such as "\\ud83d", which JavaScript writes when it
+    cuts an emoji in half. It cannot be hashed or sent, and used to crash the run
+    after the traces before it had been graded and paid for."""
+    cut = Trace(trace_id="cut", input="fine", output="GOOD").model_copy(
+        update={field: "emoji cut \ud83d"}
+    )
+    prompts: list[str] = []
+    with pytest.raises(AxialError, match=f"trace 'cut' has an {field} that is not valid UTF-8"):
+        measure_batch(
+            store, MEASURE_MODE, 1, "rel-1", batch_traces(["GOOD"] * 3) + [cut],
+            fake_judge_builder(prompts=prompts), draws=2000,
+        )
+    assert prompts == []
+    assert not (store.root / "measurements").exists()
+
+
 @pytest.mark.parametrize("name", ["", ".", "..", "../escape", "a/b", ".hidden", "sp ace"])
 def test_a_name_that_is_not_a_plain_directory_name_is_refused(store: Store, name: str):
     with pytest.raises(AxialError, match="not allowed"):

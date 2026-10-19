@@ -154,6 +154,17 @@ def test_measure_reports_a_failed_write_in_one_line(repo: Path, monkeypatch: pyt
     assert len(result.output.strip().splitlines()) == 1
 
 
+def test_measure_refuses_a_lone_surrogate_in_one_line(repo: Path):
+    path = repo / "cut.jsonl"
+    path.write_text(
+        '{"trace_id": "a", "input": "fine", "output": "GOOD"}\n'
+        '{"trace_id": "b", "input": "emoji cut \\ud83d", "output": "GOOD"}\n'
+    )
+    result = axial("measure", MEASURE_MODE, "--version", "1", "--traces", str(path), "--name", "s")
+    assert_clean(result, 1, "trace 'b' has an input that is not valid UTF-8")
+    assert len(result.output.strip().splitlines()) == 1
+
+
 def test_measure_exits_non_zero_after_writing_a_batch_nothing_could_grade(repo: Path):
     path = write_batch(repo / "garbled.jsonl", ["GARBLED"] * 3)
     result = axial("measure", MEASURE_MODE, "--version", "1", "--traces", str(path), "--name", "g")

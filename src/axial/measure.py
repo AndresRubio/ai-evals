@@ -178,6 +178,19 @@ def _check_batch(batch: list[Trace]) -> None:
             f"the batch repeats {len(repeated)} trace id(s) ({', '.join(repeated[:3])}); "
             "each would be counted more than once"
         )
+    # JSON allows a lone surrogate (JavaScript writes one when it cuts an emoji in half).
+    # Such text has no UTF-8 form to hash or send, and finding out mid-run would come
+    # after the traces before it were graded and paid for.
+    for trace in batch:
+        for field, text in (("input", trace.input), ("output", trace.output)):
+            try:
+                text.encode("utf-8")
+            except UnicodeEncodeError as exc:
+                raise AxialError(
+                    f"trace {trace.trace_id!r} has an {field} that is not valid UTF-8 (a lone "
+                    f"surrogate at character {exc.start}, as a cut emoji leaves); fix it in "
+                    "the batch file"
+                ) from exc
 
 
 def judge_test_matrix(store: Store, mode: str, version: int) -> ConfusionMatrix:
