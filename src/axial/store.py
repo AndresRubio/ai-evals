@@ -26,14 +26,25 @@ from axial.traces import Trace
 # siblings `_atomic_write` and `write_dir_atomically` stage in.
 NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 
+# `write_dir_atomically` moves an old directory to `.<name>.<32 hex>.old`, 38 bytes
+# longer than the name, and file names stop at 255 bytes. Capping well below that
+# also leaves room for `mkdtemp`'s and `mkstemp`'s own hidden names.
+MAX_NAME_LENGTH = 100
+
 
 def validate_name(name: str, kind: str) -> str:
     """Refuse a `kind` ("mode" or "batch") name that is not one plain directory name.
 
     Unchecked, `../judges/x` or an absolute path resolves outside its own tree, and
     `x/y` lands inside another mode's directory, where `write_dir_atomically` would
-    replace whatever it found.
+    replace whatever it found. A name too long for the hidden siblings fails only
+    when they are created, which for `measure` is after every trace was graded.
     """
+    if len(name) > MAX_NAME_LENGTH:
+        raise AxialError(
+            f"{kind} name {name[:20]!r}... is {len(name)} characters long; it becomes a "
+            f"directory, so keep it to {MAX_NAME_LENGTH}"
+        )
     if not NAME_RE.fullmatch(name):
         raise AxialError(
             f"{kind} name {name!r} is not allowed: it becomes a directory, so use letters, "

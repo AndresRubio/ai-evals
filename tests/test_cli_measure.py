@@ -71,7 +71,7 @@ def test_measure_refuses_a_mode_that_is_not_a_plain_name_and_touches_nothing(rep
         "measure", bad_mode(repo, kind), "--version", "1", "--traces", str(path),
         "--name", "v1", "--replace",
     )
-    assert_clean(result, 1, "mode name", "is not allowed")
+    assert_clean(result, 1, "mode name")
     assert len(result.output.strip().splitlines()) == 1
     assert tree(repo / ".axial") == before
 
@@ -85,7 +85,7 @@ def test_judge_align_promote_and_gate_refuse_a_mode_that_is_not_a_plain_name(
 ):
     before = tree(repo / ".axial")
     result = axial(command[0], bad_mode(repo, kind), *command[1:])
-    assert_clean(result, 1, "mode name", "is not allowed")
+    assert_clean(result, 1, "mode name")
     assert len(result.output.strip().splitlines()) == 1
     assert tree(repo / ".axial") == before
 
@@ -132,6 +132,25 @@ def test_measure_reports_a_csv_field_over_the_parser_limit(repo: Path):
     bad.write_text("input,output\n" + "x" * 131073 + ",y\n")
     result = axial("measure", MEASURE_MODE, "--version", "1", "--traces", str(bad), "--name", "x")
     assert_clean(result, 1, "could not read")
+
+
+def test_measure_refuses_a_batch_name_over_the_length_cap_in_one_line(repo: Path):
+    path = write_batch(repo / "long.jsonl", ["BAD"] * 5 + ["GOOD"] * 15)
+    result = axial(
+        "measure", MEASURE_MODE, "--version", "1", "--traces", str(path), "--name", "a" * 250
+    )
+    assert_clean(result, 1, "250 characters long")
+    assert len(result.output.strip().splitlines()) == 1
+
+
+def test_measure_reports_a_failed_write_in_one_line(repo: Path, monkeypatch: pytest.MonkeyPatch):
+    def disk_full(self: Store, path: Path, files: dict[str, str]) -> None:
+        raise OSError(28, "No space left on device", str(path))
+
+    monkeypatch.setattr(Store, "write_dir_atomically", disk_full)
+    result = measure(repo, "rel-1", 5, 20)
+    assert_clean(result, 1, "No space left on device")
+    assert len(result.output.strip().splitlines()) == 1
 
 
 def test_measure_exits_non_zero_after_writing_a_batch_nothing_could_grade(repo: Path):

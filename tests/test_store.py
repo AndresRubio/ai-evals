@@ -71,6 +71,26 @@ def test_every_mode_keyed_path_refuses_a_mode_that_is_not_a_plain_name(tmp_path:
     assert not s.root.exists()
 
 
+def test_a_name_over_the_length_cap_is_refused_as_mode_and_as_batch(tmp_path: Path):
+    s = Store(tmp_path)
+    with pytest.raises(AxialError, match="101 characters long"):
+        s.judge_dir("m" * 101, 1)
+    with pytest.raises(AxialError, match="101 characters long"):
+        s.measurement_dir("merged", "b" * 101)
+    assert s.measurement_dir("m" * 100, "b" * 100).name == "b" * 100
+
+
+def test_a_name_at_the_length_cap_leaves_room_for_the_hidden_siblings(tmp_path: Path):
+    """`write_dir_atomically` stages in `.<name>.<random>.tmp` and moves the old copy to
+    `.<name>.<32 hex>.old`; both have to fit in a 255-byte file name."""
+    s = Store(tmp_path)
+    target = s.measurement_dir("m" * 100, "b" * 100)
+    s.write_dir_atomically(target, {"a.txt": "old"})
+    s.write_dir_atomically(target, {"a.txt": "new"})
+    assert (target / "a.txt").read_text() == "new"
+    assert sorted(p.name for p in target.parent.iterdir()) == ["b" * 100]
+
+
 @pytest.mark.parametrize("mode", ["merged", "merged_stories", "m", "wrong_topic", "v1.2-rc_3"])
 def test_a_plain_mode_name_is_one_directory_under_each_tree(tmp_path: Path, mode: str):
     s = Store(tmp_path)

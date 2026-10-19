@@ -497,6 +497,8 @@ def measure(
         )
     except AxialError as exc:
         _fail(str(exc))
+    except OSError as exc:
+        _fail(f"could not measure {name!r}: {exc}")
     for line in summary_lines(result):
         typer.echo(line)
     for note in result.notes:

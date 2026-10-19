@@ -85,6 +85,19 @@ def test_a_name_that_is_not_a_plain_directory_name_is_refused(store: Store, name
         measure(store, batch_traces(["GOOD"]), name=name)
 
 
+def test_a_name_too_long_for_its_hidden_siblings_is_refused_before_grading(store: Store):
+    """At 250 characters `mkdtemp`'s `.<name>.<random>.tmp` is over the file-name limit,
+    which used to surface as an OSError only after every trace had been graded."""
+    prompts: list[str] = []
+    with pytest.raises(AxialError, match="250 characters long"):
+        measure_batch(
+            store, MEASURE_MODE, 1, "a" * 250, batch_traces(["GOOD"] * 3),
+            fake_judge_builder(prompts=prompts), draws=2000,
+        )
+    assert prompts == []
+    assert not (store.root / "measurements").exists()
+
+
 def test_an_existing_name_is_refused_unless_replaced(store: Store):
     measure(store, batch_traces(["GOOD"] * 3))
     with pytest.raises(AxialError, match="already exists"):
