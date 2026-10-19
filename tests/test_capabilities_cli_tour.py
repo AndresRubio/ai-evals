@@ -752,7 +752,7 @@ def test_gate_without_a_baseline_only_prints_the_failure_rate_and_passes(
 ) -> None:
     """With no `--baseline`, `gate` exits 0 whatever the failure rate, and compares nothing.
 
-    README: "Without one, `gate` only prints the failure rate and always passes"
+    README: "without a baseline or a ceiling, either mode only prints and passes"
     """
     result = axial("gate", MODE, "--version", "1")
     rate = number_after("failure rate ", result.output)
@@ -765,8 +765,8 @@ def test_gate_exit_codes_across_promoted_versions(
 ) -> None:
     """`gate` exits 1 on a CI-backed regression or an unpromoted judge, 0 otherwise.
 
-    README: "pass a baseline version to get a paired confidence interval and an actual
-    regression check."
+    README: "`gate --version` compares a judge's own verdicts across judge versions with
+    `--baseline`"
     """
     use_fake_judge(monkeypatch, regressed_judge)
     axial("judge", MODE, "--split", "dev", "--new")

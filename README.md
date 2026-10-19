@@ -151,6 +151,12 @@ uv run axial promote merged_stories 1
 uv run axial gate merged_stories --version 1
 ```
 
+`label-from-reviews` is what turns the `annotate` app's output into ground truth —
+every completed review already carries a verdict, a critique and an annotator, so
+there is no separate hand-built file to write. See
+[`examples/newsroom/`](examples/newsroom/) for the fully offline, `FakeModel`-backed
+version of this same walkthrough.
+
 Once promoted, the judge grades new output. Put a batch of the system's traces in a
 JSONL or CSV file (it is never merged into the labelled corpus), measure it, and gate
 on the result:
@@ -170,12 +176,6 @@ and TNR 0.94 on 30 real failures and 70 real passes, catching a rise from 10% to
 failing reliably takes about 1,000 inputs run through both versions, or about 500 if
 most inputs whose behaviour did not change produce identical output. A weaker judge
 needs more. Unrelated batches, compared unpaired, need about twice as many.
-
-`label-from-reviews` is what turns the `annotate` app's output into ground truth —
-every completed review already carries a verdict, a critique and an annotator, so
-there is no separate hand-built file to write. See
-[`examples/newsroom/`](examples/newsroom/) for the fully offline, `FakeModel`-backed
-version of this same walkthrough.
 
 ## Decision models
 
