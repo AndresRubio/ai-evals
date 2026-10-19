@@ -326,6 +326,21 @@ def _jeffreys(rng: np.random.Generator, k: int, n: int, size: int) -> NDArray[np
     return rng.beta(k + 0.5, n - k + 0.5, size)
 
 
+def _jeffreys_boundary(
+    interval: tuple[float, float] | None, flagged: int, n: int
+) -> tuple[float, float] | None:
+    """The Jeffreys boundary rule: the lower end is 0 when nothing was flagged and the
+    upper end is 1 when everything was.
+
+    That is where the corrected point sits for any judge better than chance, while the
+    equal-tailed interval of 0 of 500 starts near 1e-6 and would leave the point outside.
+    """
+    if interval is None:
+        return None
+    low, high = interval
+    return (0.0 if flagged == 0 else low, 1.0 if flagged == n else high)
+
+
 def _youden_draws(
     rng: np.random.Generator, test: ConfusionMatrix, draws: int
 ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
@@ -388,8 +403,8 @@ def corrected_rate(
     return CorrectedRate(
         observed=observed,
         point=point,
-        interval=interval,
-        interval_if_judge_exact=exact,
+        interval=_jeffreys_boundary(interval, flagged, n),
+        interval_if_judge_exact=_jeffreys_boundary(exact, flagged, n),
         clipped=clipped,
         draws=draws,
         seed=seed,

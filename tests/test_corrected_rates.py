@@ -94,6 +94,45 @@ def test_a_perfect_test_score_still_leaves_the_judge_uncertain():
     assert result.interval == pytest.approx((0.080, 0.151), abs=MC)
 
 
+@pytest.mark.parametrize(
+    ("test", "flagged", "n"),
+    [
+        (PERFECT, 0, 500),
+        (PERFECT, 500, 500),
+        # A test split far larger than the batch: even the varying-judge interval's
+        # equal-tailed end misses the point here.
+        (ConfusionMatrix(tp=30, fn=0, tn=10_000, fp=0), 0, 10),
+        (ConfusionMatrix(tp=10_000, fn=0, tn=70, fp=0), 10, 10),
+    ],
+)
+def test_nothing_or_everything_flagged_keeps_the_point_inside_both_intervals(
+    test: ConfusionMatrix, flagged: int, n: int
+):
+    # 0 of n gives a point of 0 for any judge, n of n a point of 1. The equal-tailed Jeffreys
+    # interval of 0 of 500 starts near 1e-6, so the Jeffreys boundary rule sets that end to
+    # 0 (and the upper end to 1 for n of n).
+    result = corrected_rate(test, flagged, n)
+    edge = 0.0 if flagged == 0 else 1.0
+    assert (result.point, result.clipped) == (edge, None)
+    for interval in (result.interval, result.interval_if_judge_exact):
+        assert interval is not None
+        assert interval[0 if flagged == 0 else 1] == edge
+
+
+def test_the_boundary_rule_moves_only_the_end_at_the_boundary():
+    # With TPR = TNR = 1 the judge-exact interval is the Jeffreys interval of p. The
+    # 97.5th percentile of Beta(0.5, 500.5) is about chi2(1, 0.975) / (2 * 500.5)
+    # = 5.024 / 1001 = 0.0050.
+    assert corrected_rate(PERFECT, 0, 500).interval_if_judge_exact == pytest.approx(
+        (0.0, 0.0050), abs=MC
+    )
+    assert corrected_rate(PERFECT, 500, 500).interval_if_judge_exact == pytest.approx(
+        (0.9950, 1.0), abs=MC
+    )
+    one = corrected_rate(PERFECT, 1, 500).interval_if_judge_exact
+    assert one is not None and 0.0 < one[0] < 0.002 < one[1]
+
+
 def test_a_judge_near_chance_gets_no_interval_and_no_point():
     result = corrected_rate(CHANCE, 60, 500)
     assert result.interval is None
