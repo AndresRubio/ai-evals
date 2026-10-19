@@ -6,15 +6,19 @@ test split. Everything it prints leads with TPR and TNR.
 
 from __future__ import annotations
 
+import json
 import math
 import re
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import Any, Literal, NamedTuple
 
 from axial.align import Alignment, align
 from axial.config import Thresholds
+from axial.dataset import Label
 from axial.errors import InvariantViolation
 from axial.store import Store
+from axial.traces import Trace
 
 
 def alignment_from_verdicts(
@@ -240,6 +244,165 @@ def _json_safe(obj: object) -> object:
     return obj
 
 
+EXCERPT_CHARS = 300
+
+DisagreementKind = Literal["missed_failure", "false_alarm"]
+
+
+@dataclass(frozen=True)
+class Disagreement:
+    """One dev trace where the judge and the human label disagree.
+
+    A missed failure (human fail, judge pass) lowers TPR; a false alarm (human pass,
+    judge fail) lowers TNR. "False pass" and "false fail" are avoided because they flip
+    meaning under the AI Evals course's Pass-is-positive convention.
+    """
+
+    trace_id: str
+    kind: DisagreementKind
+    critique: str
+    annotator: str
+    judge_reason: str
+    input_excerpt: str | None
+    input_length: int | None
+    output_excerpt: str | None
+    output_length: int | None
+
+
+def parse_reason(raw: str) -> str:
+    """The judge's stated reason, read from its stored raw answer.
+
+    The JSON `reason` field, else a `critique` field, else the raw text cut to
+    `EXCERPT_CHARS`. Reading it from `raw` at report time leaves `run_judge` and the
+    hash-bound `verdicts.jsonl` alone, and gives runs made before this a listing too.
+    """
+    match = re.search(r"\{.*\}", raw, re.DOTALL)
+    if match:
+        try:
+            payload = json.loads(match.group(0))
+        except json.JSONDecodeError:
+            payload = None
+        if isinstance(payload, dict):
+            for key in ("reason", "critique"):
+                value = payload.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+    text = raw.strip()
+    if not text:
+        return "(no reason recorded)"
+    return text if len(text) <= EXCERPT_CHARS else text[:EXCERPT_CHARS] + "…"
+
+
+def find_disagreements(
+    verdicts: list[dict[str, Any]],
+    labels: list[Label],
+    traces: list[Trace],
+    split: str = "dev",
+) -> list[Disagreement]:
+    """Every verdict on `split` that disagrees with its label, missed failures first,
+    then false alarms, each sorted by trace id so the listing diffs cleanly."""
+    if split == "test":
+        raise InvariantViolation(
+            "test disagreements are counted, never listed: reading them to revise the "
+            "judge turns test into a second dev set and inflates the number measured on it"
+        )
+    label_by_id = {lbl.trace_id: lbl for lbl in labels}
+    trace_by_id = {t.trace_id: t for t in traces}
+    found: list[Disagreement] = []
+    for row in verdicts:
+        if row.get("split") != split or row.get("truth") is None:
+            continue
+        truth, verdict = bool(row["truth"]), bool(row["verdict"])
+        if truth == verdict:
+            continue
+        trace_id = str(row["trace_id"])
+        label = label_by_id.get(trace_id)
+        trace = trace_by_id.get(trace_id)
+        found.append(
+            Disagreement(
+                trace_id=trace_id,
+                kind="missed_failure" if truth else "false_alarm",
+                critique=(label.critique.strip() if label else "") or "(no critique recorded)",
+                annotator=label.annotator if label else "(unknown)",
+                judge_reason=parse_reason(str(row.get("raw", ""))),
+                input_excerpt=trace.input[:EXCERPT_CHARS] if trace else None,
+                input_length=len(trace.input) if trace else None,
+                output_excerpt=trace.output[:EXCERPT_CHARS] if trace else None,
+                output_length=len(trace.output) if trace else None,
+            )
+        )
+    order = {"missed_failure": 0, "false_alarm": 1}
+    return sorted(found, key=lambda d: (order[d.kind], d.trace_id))
+
+
+def disagreement_counts(disagreements: list[Disagreement]) -> str:
+    """The one line `axial align` prints."""
+    if not disagreements:
+        return "dev: no disagreements"
+    missed = sum(1 for d in disagreements if d.kind == "missed_failure")
+    alarms = len(disagreements) - missed
+    return (
+        f"dev: {missed} missed failure{'' if missed == 1 else 's'}, "
+        f"{alarms} false alarm{'' if alarms == 1 else 's'} (listed in alignment.md)"
+    )
+
+
+def _fence(text: str) -> str:
+    """A code fence one backtick longer than the longest backtick run in `text`, so
+    trace text can never close it early."""
+    longest = max((len(run) for run in re.findall(r"`+", text)), default=0)
+    return "`" * max(3, longest + 1)
+
+
+def _one_line(text: str) -> str:
+    return " ".join(text.split())
+
+
+def _excerpt_lines(name: str, excerpt: str | None, length: int | None) -> list[str]:
+    if excerpt is None or length is None:
+        return [f"{name}: (trace not found in .axial/traces)", ""]
+    shown = f"first {len(excerpt):,} of {length:,}" if length > len(excerpt) else f"all {length:,}"
+    fence = _fence(excerpt)
+    return [f"{name} ({shown} characters):", "", fence, excerpt, fence, ""]
+
+
+def _disagreement_section(mode: str, disagreements: list[Disagreement]) -> list[str]:
+    lines = ["## Dev disagreements", ""]
+    if not disagreements:
+        lines += ["No dev disagreements.", ""]
+    else:
+        lines += [
+            "Each case is a dev trace where the judge and the human label disagree. A missed",
+            "failure usually means the failure mode's definition or examples are too narrow;",
+            "a false alarm, that they are too broad. Revise the judge, then run",
+            f"`axial judge {mode} --split dev` again (with `--new` once this version has",
+            "been scored on test).",
+            "",
+        ]
+        for kind, heading in (("missed_failure", "Missed failures"), ("false_alarm", "False alarms")):
+            group = [d for d in disagreements if d.kind == kind]
+            if not group:
+                continue
+            lines += [f"### {heading} ({len(group)})", ""]
+            for d in group:
+                title = "missed failure" if d.kind == "missed_failure" else "false alarm"
+                lines += [
+                    f"#### {title} — `{d.trace_id}`",
+                    "",
+                    f"**Human** (annotator `{d.annotator}`): {_one_line(d.critique)}",
+                    "",
+                    f"**Judge:** {_one_line(d.judge_reason)}",
+                    "",
+                ]
+                lines += _excerpt_lines("Input", d.input_excerpt, d.input_length)
+                lines += _excerpt_lines("Output", d.output_excerpt, d.output_length)
+    lines.append(
+        "Test disagreements are counted in the table above and never listed here, so the "
+        "test split stays a held-out measurement."
+    )
+    return lines
+
+
 def write_alignment(
     store: Store,
     mode: str,
@@ -248,22 +411,33 @@ def write_alignment(
     test: Alignment | None,
     n_errors: int,
     notes: list[str] | None = None,
+    disagreements: list[Disagreement] | None = None,
 ) -> Path:
+    """Write alignment.json and alignment.md. With `disagreements=None` both files are
+    exactly what they were before the dev listing existed."""
     directory = store.judge_dir(mode, version)
     directory.mkdir(parents=True, exist_ok=True)
 
-    store.write_json(
-        directory / "alignment.json",
-        _json_safe(
-            {
-                "mode": mode,
-                "version": version,
-                "dev": dev.to_dict(),
-                "test": test.to_dict() if test else None,
-                "quarantined_errors": n_errors,
-            }
-        ),
-    )
+    report: dict[str, Any] = {
+        "mode": mode,
+        "version": version,
+        "dev": dev.to_dict(),
+        "test": test.to_dict() if test else None,
+        "quarantined_errors": n_errors,
+    }
+    if disagreements is not None:
+        report["disagreements"] = {
+            "dev": [
+                {
+                    "trace_id": d.trace_id,
+                    "kind": d.kind,
+                    "critique": d.critique,
+                    "judge_reason": d.judge_reason,
+                }
+                for d in disagreements
+            ]
+        }
+    store.write_json(directory / "alignment.json", _json_safe(report))
 
     lines = [
         f"# Alignment — {mode} v{version}",
@@ -297,6 +471,8 @@ def write_alignment(
     if notes:
         lines += ["", "## Notes", ""]
         lines += [f"- {note}" for note in notes]
+    if disagreements is not None:
+        lines += [""] + _disagreement_section(mode, disagreements)
     lines += [""]
     path = directory / "alignment.md"
     path.write_text("\n".join(lines))
