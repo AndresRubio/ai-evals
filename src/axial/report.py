@@ -474,7 +474,6 @@ def write_alignment(
                 for d in disagreements
             ]
         }
-    store.write_json(directory / "alignment.json", _json_safe(report))
 
     lines = [
         f"# Alignment — {mode} v{version}",
@@ -511,8 +510,12 @@ def write_alignment(
     if disagreements is not None:
         lines += [""] + _disagreement_section(mode, disagreements)
     lines += [""]
+    # Both reports are rendered before either is written, so a rendering error leaves
+    # the pair as it was. UTF-8 whatever the locale; a lone surrogate, which JSON lets a
+    # label carry and UTF-8 cannot encode, is written as its escape.
+    store.write_json(directory / "alignment.json", _json_safe(report))
     path = directory / "alignment.md"
-    path.write_text("\n".join(lines))
+    path.write_text("\n".join(lines), encoding="utf-8", errors="backslashreplace")
     return path
 
 

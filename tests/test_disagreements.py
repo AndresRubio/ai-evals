@@ -4,15 +4,18 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 from measure_helpers import MEASURE_MODE, build_promoted_judge
 from typer.testing import CliRunner
 
-from axial import cli
+from axial import cli, report
 from axial.align import align
-from axial.dataset import Label
+from axial.dataset import Label, add_labels
 from axial.errors import InvariantViolation
 from axial.report import (
     disagreement_counts,
@@ -215,6 +218,63 @@ def test_without_disagreements_the_report_is_byte_identical_to_before(tmp_path: 
     )
 
 
+# Non-ASCII text goes in as escapes: under the C locale argv is not decoded as UTF-8.
+WRITE_UNDER_ANY_LOCALE = r"""
+import locale, sys
+from axial.align import align
+from axial.dataset import Label
+from axial.report import find_disagreements, write_alignment
+from axial.store import Store
+from axial.traces import Trace
+
+print(locale.getencoding(), flush=True)
+y = [True] * 30 + [False] * 30
+found = find_disagreements(
+    [{"trace_id": "d0", "split": "dev", "truth": True, "verdict": False, "raw": "r\u00e9ason"}],
+    [Label(trace_id="d0", label=True, critique="caf\u00e9 \u2014 critique", annotator="andres")],
+    [Trace(trace_id="d0", input="entr\u00e9e", output="out")],
+)
+write_alignment(
+    Store(sys.argv[1]), "merged", 1, align(y, list(y), n_boot=50), None, n_errors=0,
+    disagreements=found,
+)
+"""
+
+
+def test_alignment_md_is_utf8_whatever_the_locale(tmp_path: Path):
+    # With UTF-8 mode and locale coercion off, the C locale's default encoding is ASCII,
+    # which cannot even write the report's title dash.
+    env = {**os.environ, "LC_ALL": "C", "LANG": "C", "PYTHONCOERCECLOCALE": "0", "PYTHONUTF8": "0"}
+    result = subprocess.run(
+        [sys.executable, "-X", "utf8=0", "-c", WRITE_UNDER_ANY_LOCALE, str(tmp_path)],
+        env=env, capture_output=True, text=True, timeout=60, check=False,
+    )
+    encoding = result.stdout.split()[0] if result.stdout else ""
+    if encoding.lower().replace("-", "") == "utf8":
+        pytest.skip("this platform's C locale is UTF-8, so the default encoding is not tested")
+    assert result.returncode == 0, result.stderr
+    md = (tmp_path / ".axial" / "judges" / "merged" / "v1" / "alignment.md").read_bytes()
+    text = md.decode("utf-8")
+    assert text.startswith("# Alignment \u2014 merged v1\n")
+    assert "caf\u00e9 \u2014 critique" in text and "r\u00e9ason" in text and "entr\u00e9e" in text
+
+
+def test_a_report_that_fails_to_render_leaves_alignment_json_as_it_was(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    store = Store(tmp_path)
+    path = write_alignment(store, "merged", 1, perfect(), None, n_errors=0)
+    before = (path.parent / "alignment.json").read_bytes()
+
+    def broken(*_args: object) -> list[str]:
+        raise RuntimeError("rendering failed")
+
+    monkeypatch.setattr(report, "_disagreement_section", broken)
+    with pytest.raises(RuntimeError, match="rendering failed"):
+        write_alignment(store, "merged", 1, perfect(), None, n_errors=0, disagreements=[])
+    assert (path.parent / "alignment.json").read_bytes() == before
+
+
 # --- through the CLI -----------------------------------------------------------------
 
 
@@ -237,3 +297,29 @@ def test_axial_align_prints_the_counts_and_writes_the_listing(
     assert "dev: 1 missed failure, 1 false alarm (listed in alignment.md)" in result.output
     md = (store.judge_dir(MEASURE_MODE, 1) / "alignment.md").read_text()
     assert "missed failure — `dev-00`" in md and "false alarm — `dev-01`" in md
+
+
+def test_axial_align_writes_a_lone_surrogate_as_an_escape(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    # JSON lets a label carry half of a UTF-16 pair, as a tool that cut an emoji in two
+    # writes it; UTF-8 cannot encode one.
+    store = Store(tmp_path)
+    build_promoted_judge(store)
+    path = store.judge_dir(MEASURE_MODE, 1) / "verdicts.jsonl"
+    rows = store.read_jsonl(path)
+    dev = next(r for r in rows if r["split"] == "dev")
+    dev["verdict"] = not dev["verdict"]
+    store.write_jsonl(path, rows)
+    add_labels(
+        store, MEASURE_MODE,
+        [Label(trace_id=dev["trace_id"], label=dev["truth"], critique="cut \ud83d", annotator="andres")],
+    )
+    monkeypatch.chdir(tmp_path)
+
+    result = CliRunner().invoke(cli.app, ["align", MEASURE_MODE, "1"])
+
+    assert result.exception is None or isinstance(result.exception, SystemExit), result.exception
+    assert result.exit_code == 0, result.output
+    md = (store.judge_dir(MEASURE_MODE, 1) / "alignment.md").read_bytes().decode("utf-8")
+    assert "): cut \\ud83d\n" in md
