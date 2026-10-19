@@ -7,7 +7,10 @@ import json
 from pathlib import Path
 
 import pytest
+from measure_helpers import MEASURE_MODE, build_promoted_judge
+from typer.testing import CliRunner
 
+from axial import cli
 from axial.align import align
 from axial.dataset import Label
 from axial.errors import InvariantViolation
@@ -164,3 +167,27 @@ def test_without_disagreements_the_report_is_byte_identical_to_before(tmp_path: 
     assert hashlib.sha256((path.parent / "alignment.json").read_bytes()).hexdigest() == (
         "d256897b394a2afc023aa2c5d59ce7ff16a400a723d08849553df955bdb978be"
     )
+
+
+# --- through the CLI -----------------------------------------------------------------
+
+
+def test_axial_align_prints_the_counts_and_writes_the_listing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    store = Store(tmp_path)
+    build_promoted_judge(store)
+    path = store.judge_dir(MEASURE_MODE, 1) / "verdicts.jsonl"
+    rows = store.read_jsonl(path)
+    dev = [r for r in rows if r["split"] == "dev"]
+    dev[0]["verdict"] = not dev[0]["verdict"]  # dev-00 is a real failure: now missed
+    dev[1]["verdict"] = not dev[1]["verdict"]  # dev-01 is a real pass: now a false alarm
+    store.write_jsonl(path, rows)
+    monkeypatch.chdir(tmp_path)
+
+    result = CliRunner().invoke(cli.app, ["align", MEASURE_MODE, "1"])
+
+    assert result.exit_code == 0, result.output
+    assert "dev: 1 missed failure, 1 false alarm (listed in alignment.md)" in result.output
+    md = (store.judge_dir(MEASURE_MODE, 1) / "alignment.md").read_text()
+    assert "missed failure — `dev-00`" in md and "false alarm — `dev-01`" in md

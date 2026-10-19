@@ -26,7 +26,13 @@ from axial.measure import measure_batch, summary_lines
 from axial.model import LiteLLMModel, require_text_model
 from axial.perplexity import DEGENERATE_SPREAD, score_traces
 from axial.perplexity import spread as perplexity_spread
-from axial.report import alignment_from_verdicts, check_promotion, write_alignment
+from axial.report import (
+    alignment_from_verdicts,
+    check_promotion,
+    disagreement_counts,
+    find_disagreements,
+    write_alignment,
+)
 from axial.report import promote as do_promote
 from axial.sample import all_reviews, create_session, read_session, sample_batch
 from axial.store import Store
@@ -353,10 +359,15 @@ def align(mode: str, version: int, repo: str = RepoOption) -> None:
         # here so that a skipped check is recorded in alignment.md rather than
         # only surfacing later, at `promote` time.
         notes = check_promotion(dev, test, config.thresholds).notes
-    path = write_alignment(store, mode, version, dev, test, n_errors=len(errors), notes=notes)
+    disagreements = find_disagreements(verdicts, read_labels(store, mode), store.read_traces())
+    path = write_alignment(
+        store, mode, version, dev, test,
+        n_errors=len(errors), notes=notes, disagreements=disagreements,
+    )
     typer.echo(f"dev  {dev.summary()}")
     if test:
         typer.echo(f"test {test.summary()}")
+    typer.echo(disagreement_counts(disagreements))
     typer.echo(f"written to {path}")
 
 
