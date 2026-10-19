@@ -229,8 +229,6 @@ def test_a_json_line_that_is_not_an_object_is_rejected(tmp_path: Path):
         ingest_jsonl(tmp_path / "t.jsonl")
 
 
-@pytest.mark.xfail(strict=True, reason="traces.py:37 calls row.get() on whatever json.loads "
-                   "returned, so a non-object line escapes as AttributeError with no row number")
 def test_a_non_object_json_line_is_reported_as_a_row_error(tmp_path: Path):
     """A non-object line should fail like every other bad row: ValueError naming the row."""
     (tmp_path / "t.jsonl").write_text("[1, 2]\n")

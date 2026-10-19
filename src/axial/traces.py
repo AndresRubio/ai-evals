@@ -32,7 +32,13 @@ def compute_trace_id(input: str, output: str) -> str:
     return digest.hexdigest()[:16]
 
 
-def _trace_from_row(row: dict[str, Any], *, where: str) -> Trace:
+def _trace_from_row(row: object, *, where: str) -> Trace:
+    # json.loads returns whatever the line holds, so a bare array or number reaches here.
+    # ValueError, not TypeError: it is bad file content, and callers catch ValueError for that.
+    if not isinstance(row, dict):
+        raise ValueError(  # noqa: TRY004
+            f"{where}: expected a JSON object, got {type(row).__name__}"
+        )
     for key in ("input", "output"):
         if row.get(key) is None:
             raise ValueError(f"{where}: missing required field {key!r}")
@@ -53,7 +59,10 @@ def ingest_jsonl(path: Path) -> list[Trace]:
 
 def ingest_csv(path: Path) -> list[Trace]:
     with Path(path).open(newline="") as fh:
-        rows = list(csv.DictReader(fh))
+        try:
+            rows = list(csv.DictReader(fh))
+        except csv.Error as exc:  # not a ValueError, so callers catching ValueError would miss it
+            raise ValueError(f"{path}: {exc}") from exc
     return [_trace_from_row(dict(r), where=f"row {n}") for n, r in enumerate(rows, start=1)]
 
 

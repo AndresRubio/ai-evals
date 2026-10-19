@@ -68,6 +68,20 @@ def test_measure_reports_an_unreadable_batch_file(repo: Path):
     assert_clean(result, 1, "could not read nope.jsonl")
 
 
+def test_measure_reports_a_jsonl_line_that_is_not_an_object(repo: Path):
+    bad = repo / "bad.jsonl"
+    bad.write_text("[1, 2]\n")
+    result = axial("measure", MEASURE_MODE, "--version", "1", "--traces", str(bad), "--name", "x")
+    assert_clean(result, 1, "could not read", "row 1")
+
+
+def test_measure_reports_a_csv_field_over_the_parser_limit(repo: Path):
+    bad = repo / "huge.csv"
+    bad.write_text("input,output\n" + "x" * 131073 + ",y\n")
+    result = axial("measure", MEASURE_MODE, "--version", "1", "--traces", str(bad), "--name", "x")
+    assert_clean(result, 1, "could not read")
+
+
 def test_measure_exits_non_zero_after_writing_a_batch_nothing_could_grade(repo: Path):
     path = write_batch(repo / "garbled.jsonl", ["GARBLED"] * 3)
     result = axial("measure", MEASURE_MODE, "--version", "1", "--traces", str(path), "--name", "g")
