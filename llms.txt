@@ -14,9 +14,9 @@
 ## procedures
 
 - [data-contracts-at-ingest](knowledge/procedures/data-contracts-at-ingest.md): Expectation, checkpoint and data docs from Great Expectations mapped onto contract, gate and alignment report, with checks for axial ingest (2026-10-07)
-- [evals-in-ci](knowledge/procedures/evals-in-ci.md): Gate a pull request on a promoted judge and keep the gate honest with deterministic checks first, intervals not points, and a saturation watch (2026-10-07)
+- [evals-in-ci](knowledge/procedures/evals-in-ci.md): Gate a pull request on a promoted judge and keep the gate honest with deterministic checks first, intervals not points, and a saturation watch (2026-10-20)
 - [factory-lifecycle](knowledge/procedures/factory-lifecycle.md): Issue to merged PR with agents doing every stage and humans at three gates, as the Warp factory examples define it (2026-10-07)
-- [production-monitoring](knowledge/procedures/production-monitoring.md): Sample live traces, measure them with a promoted judge, alert on the interval's lower bound, and feed flagged traces back into review (2026-10-07)
+- [production-monitoring](knowledge/procedures/production-monitoring.md): Sample live traces, measure them with a promoted judge, alert on the interval's lower bound, and feed flagged traces back into review (2026-10-20)
 
 ## landscape
 

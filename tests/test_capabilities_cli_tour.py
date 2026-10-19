@@ -454,7 +454,7 @@ def test_every_readme_command_is_on_the_installed_console_script() -> None:
     README: "Every command below runs as `uv run axial ...` from that clone."
     """
     commands = re.findall(r"^\| `axial ([a-z-]+)`", README, re.MULTILINE)
-    assert len(commands) == 12
+    assert len(commands) == 13
     script = Path(sys.executable).parent / "axial"
     assert script.exists(), f"console script missing at {script}"
     env = {**os.environ, "COLUMNS": "200", "NO_COLOR": "1", "TERM": "dumb"}
@@ -796,8 +796,9 @@ def test_a_promoted_judge_can_grade_new_traces_for_the_gate(
 ) -> None:
     """A promoted judge scores fresh traces with `measure`, and `gate --batch` passes on them.
 
-    README: "`axial measure` | a promoted judge + a batch of new traces | a corrected
-    failure rate" / "`axial gate` | promoted judges, or measured batches | an exit code"
+    README: "`axial measure` | a promoted judge + a batch of new traces | the batch's
+    failure rate, corrected for the judge's errors, with a 95% interval" /
+    "`axial gate` | promoted judges, or measured batches | an exit code"
     """
     use_fake_judge(monkeypatch, perfect_judge)
     fresh = promoted_repo / "fresh.jsonl"

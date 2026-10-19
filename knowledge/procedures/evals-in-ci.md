@@ -2,7 +2,7 @@
 name: evals-in-ci
 description: Gate a pull request on a promoted judge and keep the gate honest with deterministic checks first, intervals not points, and a saturation watch
 shelf: procedures
-updated: 2026-10-07
+updated: 2026-10-20
 sources:
   - url: https://hamel.dev/blog/posts/evals-faq/
     read: 2026-09-17
@@ -43,10 +43,12 @@ every change; the gate blocks the merge. The numbers quoted are collected in
    Trigger: the verdicts exist.
    Artifact: a pass or fail exit code. Two runs of the same system differ by a few
    points routinely, so a gate set inside that noise fails builds at random until
-   someone disables it. axial's `gate` compares a paired bootstrap interval against a
-   baseline. A batch mode, `gate --batch`, comparing a corrected failure rate against a
-   maximum or against a baseline batch, is proposed in axial's corrected-rates design
-   and not yet implemented.
+   someone disables it. axial's `measure` grades the CI inputs with a promoted judge
+   and corrects the flag rate for the judge's test-split errors; `gate --batch` then
+   fails on a corrected rate whose interval reaches above a ceiling (`--max-rate`), or
+   on a rise against a baseline batch (`--baseline-batch`). Running the same inputs
+   through both versions lets the comparison pair them, which needs about half as many
+   inputs as comparing two unrelated batches.
    Gate: the exit code blocks the merge.
 5. **Watch for saturation.**
    Trigger: a suite stops failing anything.

@@ -32,7 +32,7 @@ Every command below runs as `uv run axial ...` from that clone.
 cp .env.example .env    # then fill in the keys you need
 ```
 
-`.env` is gitignored, read from the repo root by `axial taxonomy` and `axial judge`,
+`.env` is gitignored, read from the repo root by `axial taxonomy`, `axial judge` and `axial measure`,
 and never overrides a variable already exported in your shell. `.env.example` lists
 which key each model path needs and why. Most of the pipeline — `init`, `ingest`,
 `sample`, `annotate`, `label-from-reviews`, `split`, `align`, `promote`, `gate` —
@@ -58,7 +58,8 @@ example, not committed, so nothing here demonstrates that directly.)
 | `axial align` | verdicts vs labels | an alignment report |
 | `axial checks` | verdicts + traces | slice breakdown, verbosity bias, judged cost, noise floor |
 | `axial promote` | alignment on test | a judge cleared for CI |
-| `axial gate` | promoted judges | an exit code |
+| `axial measure` | a promoted judge + a batch of new traces | the batch's failure rate, corrected for the judge's errors, with a 95% interval |
+| `axial gate` | promoted judges, or measured batches | an exit code |
 
 ## What it refuses to do
 
@@ -82,11 +83,19 @@ The refusals are the product.
   nothing.
 - **No promotion below the bar.** Test TPR and TNR must clear your threshold and the
   dev→test gap must be within tolerance.
-- **Gates compare intervals, not point estimates — when a `--baseline` is given.**
-  Without one, `gate` only prints the failure rate and always passes; pass a
-  baseline version to get a paired confidence interval and an actual regression
-  check. Either way, it warns when a suite stops failing anything — a saturated
+- **Gates compare intervals, not point estimates.** `gate --batch` gates on batches
+  that `measure` graded: `--max-rate` fails when the upper end of a batch's corrected
+  failure rate interval is above the ceiling, and `--baseline-batch` fails when the
+  interval on the difference from a baseline batch excludes zero on the side of more
+  failures. The difference is paired by input when the two batches share at least
+  80% of their inputs. `gate --version` compares a judge's own verdicts across judge
+  versions with `--baseline`; without a baseline or a ceiling, either mode only
+  prints and passes. Both warn when a suite stops failing anything: a saturated
   eval has stopped carrying signal.
+- **A corrected rate comes only from a promoted judge's test-split error rates,
+  and every measurement states the assumption it rests on:** that the judge errs on
+  the new batch as it did on test. A measurement taken by a judge that has since
+  been re-judged or edited fails the gate until it is re-measured.
 - **Infra failures never score as model failures.** They are quarantined in
   `errors.jsonl` with a failure class.
 - **Perplexity is never a verdict.** It selects which traces a human reads and stops
@@ -141,6 +150,26 @@ uv run axial align merged_stories 1
 uv run axial promote merged_stories 1
 uv run axial gate merged_stories --version 1
 ```
+
+Once promoted, the judge grades new output. Put a batch of the system's traces in a
+JSONL or CSV file (it is never merged into the labelled corpus), measure it, and gate
+on the result:
+
+```bash
+uv run axial measure merged_stories --version 1 --traces release-1.jsonl --name release-1
+uv run axial gate merged_stories --batch release-1 --max-rate 0.10
+# after the next change, run the same inputs through it and compare:
+uv run axial measure merged_stories --version 1 --traces release-2.jsonl --name release-2
+uv run axial gate merged_stories --batch release-2 --baseline-batch release-1
+```
+
+`measure` reports the flag rate corrected for the judge's test-split TPR and TNR,
+with an interval that includes the judge's own uncertainty, and writes everything to
+`.axial/measurements/<mode>/<name>/`. Sizing a comparison: with a judge at TPR 0.93
+and TNR 0.94 on 30 real failures and 70 real passes, catching a rise from 10% to 14%
+failing reliably takes about 1,000 inputs run through both versions, or about 500 if
+most inputs whose behaviour did not change produce identical output. A weaker judge
+needs more. Unrelated batches, compared unpaired, need about twice as many.
 
 `label-from-reviews` is what turns the `annotate` app's output into ground truth —
 every completed review already carries a verdict, a critique and an annotator, so

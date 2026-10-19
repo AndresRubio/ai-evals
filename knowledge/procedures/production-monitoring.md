@@ -2,7 +2,7 @@
 name: production-monitoring
 description: Sample live traces, measure them with a promoted judge, alert on the interval's lower bound, and feed flagged traces back into review
 shelf: procedures
-updated: 2026-10-07
+updated: 2026-10-20
 sources:
   - url: https://hamel.dev/blog/posts/evals-faq/
     read: 2026-09-17
@@ -38,9 +38,10 @@ judge flags is read by a person and promoted into the CI set.
    Trigger: the batch exists.
    Artifact: a corrected failure rate with a confidence interval. A judge with known
    true-positive and true-negative rates on its test split gives a raw flag rate that is
-   neither the failure rate nor an interval; the correction and interval are what
-   axial's `measure` would add, which is proposed in axial's corrected-rates design and
-   not yet implemented. Evidently's scheduled evals and
+   neither the failure rate nor an interval. axial's `measure` adds both: it corrects
+   the batch's flag rate with the judge's test-split error rates and reports a 95%
+   interval that includes the judge's own uncertainty, plus the interval the batch
+   alone would give if the judge's rates were exact. Evidently's scheduled evals and
    batch monitoring jobs run the equivalent for its own descriptors.
    Gate: none.
 4. **Alert on the lower bound.**
