@@ -20,7 +20,9 @@ from axial.dataset import (
 )
 from axial.errors import AxialError
 from axial.gate import gate as run_gate
+from axial.gate import gate_batches
 from axial.judge import JudgeSpec, build_judge_model, run_judge
+from axial.measure import measure_batch, summary_lines
 from axial.model import LiteLLMModel, require_text_model
 from axial.perplexity import DEGENERATE_SPREAD, score_traces
 from axial.perplexity import spread as perplexity_spread
@@ -42,6 +44,10 @@ LabelPathOption = typer.Option(..., help="JSONL of {trace_id, label, critique, a
 # Same B008 false positive as LabelPathOption above, for `label-from-reviews`'s
 # variadic session-name argument.
 SessionsArgument = typer.Argument(..., help="Review session name(s) to convert (repeatable)")
+# Same B008 false positive, for `measure`'s batch file.
+BatchTracesOption = typer.Option(
+    ..., "--traces", help="JSONL or CSV of new traces to measure; never written to .axial/traces"
+)
 
 
 def _fail(message: str) -> NoReturn:
@@ -437,16 +443,87 @@ def promote(mode: str, version: int, repo: str = RepoOption) -> None:
 
 
 @app.command()
+def measure(
+    mode: str,
+    version: int = typer.Option(..., "--version", help="Promoted judge version to grade with"),
+    traces: Path = BatchTracesOption,
+    name: str = typer.Option(
+        ..., "--name", help="Batch name; the measurement goes to .axial/measurements/<mode>/<name>/"
+    ),
+    adapter: str | None = typer.Option(None, "--adapter", help="Name of a registered adapter"),
+    replace: bool = typer.Option(
+        False, "--replace", help="Replace an existing measurement with the same name"
+    ),
+    repo: str = RepoOption,
+) -> None:
+    """Grade new traces with a promoted judge and report a corrected failure rate."""
+    store = Store(repo)
+    load_env(repo)
+    try:
+        batch = do_ingest(traces, adapter=adapter)
+    except (OSError, ValueError) as exc:
+        _fail(f"could not read {traces}: {exc}")
+    try:
+        result = measure_batch(
+            store, mode, version, name, batch, build_judge_model, replace=replace
+        )
+    except AxialError as exc:
+        _fail(str(exc))
+    for line in summary_lines(result):
+        typer.echo(line)
+    for note in result.notes:
+        typer.echo(f"note: {note}")
+    if result.rate is None:
+        raise typer.Exit(code=1)
+
+
+@app.command()
 def gate(
     mode: str,
-    version: int = typer.Option(..., "--version"),
-    baseline: int = typer.Option(None, "--baseline"),
+    version: int | None = typer.Option(
+        None, "--version", help="Promoted judge version to gate on (compares judge versions)"
+    ),
+    baseline: int | None = typer.Option(
+        None, "--baseline", help="With --version: judge version to compare against"
+    ),
+    batch: str | None = typer.Option(
+        None, "--batch", help="Measured batch to gate on (see `axial measure`)"
+    ),
+    baseline_batch: str | None = typer.Option(
+        None, "--baseline-batch", help="With --batch: measured batch to compare against"
+    ),
+    max_rate: float | None = typer.Option(
+        None,
+        "--max-rate",
+        help="With --batch: fail if the upper end of the corrected rate's 95% interval "
+        "is above this",
+    ),
     repo: str = RepoOption,
 ) -> None:
     """Fail the build on a regression outside the noise floor."""
+    if (version is None) == (batch is None):
+        raise typer.BadParameter(
+            "give exactly one of --version (compare judge versions) or --batch (gate "
+            "measured batches)"
+        )
+    if version is not None and (baseline_batch is not None or max_rate is not None):
+        raise typer.BadParameter("--baseline-batch and --max-rate need --batch")
+    if batch is not None and baseline is not None:
+        raise typer.BadParameter(
+            "--baseline compares judge versions and needs --version; to compare measured "
+            "batches use --baseline-batch"
+        )
+    if max_rate is not None and not 0 < max_rate < 1:
+        raise typer.BadParameter("--max-rate must lie strictly between 0 and 1")
     store = Store(repo)
     try:
-        result = run_gate(store, mode, version, baseline_version=baseline)
+        if version is not None:
+            result = run_gate(store, mode, version, baseline_version=baseline)
+        else:
+            assert batch is not None  # exactly one of the two was checked above
+            result = gate_batches(
+                store, mode, batch, baseline_batch=baseline_batch, max_rate=max_rate
+            )
     except AxialError as exc:
         _fail(str(exc))
     for message in result.messages:

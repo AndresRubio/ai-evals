@@ -86,11 +86,12 @@ def test_non_integer_flag_is_rejected_with_usage() -> None:
     assert_clean_failure(result, "'abc' is not a valid int")
 
 
-def test_gate_without_version_is_a_usage_error() -> None:
-    """`gate` requires `--version`; omitting it is a usage error that names the option."""
+def test_gate_without_version_or_batch_is_a_usage_error() -> None:
+    """`gate` needs exactly one of `--version` and `--batch`; giving neither is a usage
+    error that names both."""
     result = run("gate", "m")
     assert result.exit_code == 2
-    assert_clean_failure(result, "Missing option '--version'")
+    assert_clean_failure(result, "--version", "--batch")
 
 
 def test_label_import_without_path_is_a_usage_error() -> None:

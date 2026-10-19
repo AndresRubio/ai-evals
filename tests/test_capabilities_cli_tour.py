@@ -791,39 +791,34 @@ def test_gate_exit_codes_across_promoted_versions(
     assert "has not been promoted" in unpromoted.output
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="no path grades new, unlabelled traces with a promoted judge: run_judge "
-    "quarantines every unlabelled trace as an error and deletes PROMOTED, and `judge "
-    "--split` only accepts train/dev/test. `gate` can therefore only ever re-read the "
-    "judge's own alignment verdicts, so it never gates new system output and its "
-    "saturation warning is unreachable for a judge that cleared the TPR bar.",
-)
-def test_a_promoted_judge_can_grade_new_traces_for_the_gate(promoted_repo: Path) -> None:
-    """A promoted judge can score fresh production traces and `gate` can pass on them.
+def test_a_promoted_judge_can_grade_new_traces_for_the_gate(
+    promoted_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A promoted judge scores fresh traces with `measure`, and `gate --batch` passes on them.
 
-    README: "`axial promote` | alignment on test | a judge cleared for CI" /
-    "`axial gate` | promoted judges | an exit code"
+    README: "`axial measure` | a promoted judge + a batch of new traces | a corrected
+    failure rate" / "`axial gate` | promoted judges, or measured batches | an exit code"
     """
-    from axial.dataset import Splits, read_labels
-    from axial.judge import JudgeSpec, run_judge
-    from axial.store import Store
-    from axial.traces import Trace
-
-    store = Store(promoted_repo)
-    fresh = [
-        Trace(trace_id=f"new-{i}", input=f"THE WIRE — issue {1000 + i}\n\nA story.",
-              output='{"stories": [{"headline": "a"}, {"headline": "b"}]}')
-        for i in range(40)
-    ]
-    result = run_judge(
-        store, JudgeSpec.load(store, MODE, 1), fresh, read_labels(store, MODE),
-        Splits.load(store, MODE), FakeModel(perfect_judge), split="gate",
-        corpus=store.read_traces() + fresh,
+    use_fake_judge(monkeypatch, perfect_judge)
+    fresh = promoted_repo / "fresh.jsonl"
+    fresh.write_text(
+        "".join(
+            json.dumps({
+                "trace_id": f"new-{i}",
+                "input": f"THE WIRE — issue {1000 + i}\n\nA story.",
+                "output": '{"stories": [{"headline": "a"}, {"headline": "b"}]}',
+            }) + "\n"
+            for i in range(40)
+        )
     )
-    assert len(result.verdicts) == 40
-    assert (judge_dir(promoted_repo) / "PROMOTED").exists()
-    gate = axial_raw("gate", MODE, "--version", "1")
+    promoted_before = (judge_dir(promoted_repo) / "PROMOTED").read_bytes()
+
+    measured = axial_raw("measure", MODE, "--version", "1", "--traces", str(fresh), "--name", "fresh")
+    assert measured.exit_code == 0, measured.output
+    assert "n=40 graded, 0 set aside" in measured.output
+    assert (judge_dir(promoted_repo) / "PROMOTED").read_bytes() == promoted_before
+
+    gate = axial_raw("gate", MODE, "--batch", "fresh")
     assert gate.exit_code == 0 and "saturation warning" in gate.output
 
 
