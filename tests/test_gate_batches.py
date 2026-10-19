@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import math
 from pathlib import Path
 
 import pytest
@@ -15,7 +17,7 @@ from measure_helpers import (
 
 from axial.config import Thresholds
 from axial.dataset import Splits, read_labels
-from axial.errors import InvariantViolation
+from axial.errors import AxialError, InvariantViolation
 from axial.gate import gate_batches
 from axial.judge import JudgeSpec, run_judge
 from axial.measure import measure_batch
@@ -185,3 +187,58 @@ def test_a_stale_baseline_fails_too(store: Store):
     measure(store, "cand", flags(40))
     with pytest.raises(InvariantViolation, match="batch 'base'"):
         run(store, "cand", baseline_batch="base")
+
+
+# --- numbers that do not follow from the verdicts ----------------------------------
+
+
+def edit(store: Store, batch: str, **changes: object) -> None:
+    path = store.measurement_dir(MEASURE_MODE, batch) / "measurement.json"
+    data = json.loads(path.read_text())
+    data.update(changes)
+    path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"interval": [0.0, 0.05]},
+        {"interval": [0.0, math.nan]},  # `nan > max_rate` is False, so it read as within
+        {"interval_if_judge_exact": [0.0, 0.05]},
+        {"corrected_rate": 0.01},
+        {"observed_rate": 0.05},
+        {"clipped": "low"},
+        {"test_matrix": {"tp": 30, "fn": 0, "tn": 70, "fp": 0}},
+        {"test_matrix": {"tp": 0, "fn": 0, "tn": 5, "fp": 0}},  # was a ValueError in align
+        {"seed": 1},
+        {"draws": 2000},
+    ],
+    ids=lambda changes: next(iter(changes)),
+)
+def test_a_measurement_whose_numbers_its_verdicts_do_not_give_is_refused(
+    store: Store, changes: dict[str, object]
+):
+    measure(store, "rel-1", flags(60))  # interval about [0.000, 0.128]
+    edit(store, "rel-1", **changes)
+    with pytest.raises(AxialError, match="does not match its own verdicts") as caught:
+        run(store, "rel-1", max_rate=0.10)
+    assert "--name rel-1 --replace" in str(caught.value)
+    assert "\n" not in str(caught.value)
+
+
+def test_a_baseline_whose_numbers_its_verdicts_do_not_give_is_refused(store: Store):
+    measure(store, "base", flags(40))
+    measure(store, "cand", flags(60))
+    edit(store, "base", test_matrix={"tp": 30, "fn": 0, "tn": 70, "fp": 0})
+    with pytest.raises(AxialError, match="'base' for merged does not match its own verdicts"):
+        run(store, "cand", baseline_batch="base")
+
+
+def test_an_untouched_measurement_gates_on_the_numbers_it_stored(store: Store):
+    measure(store, "rel-1", flags(60))
+    stored = json.loads(
+        (store.measurement_dir(MEASURE_MODE, "rel-1") / "measurement.json").read_text()
+    )
+    result = run(store, "rel-1", max_rate=0.20)
+    assert result.passed
+    assert f"upper end, {stored['interval'][1]:.3f}," in result.messages[-1]

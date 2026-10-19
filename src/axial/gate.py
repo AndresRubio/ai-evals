@@ -12,16 +12,24 @@ corrected difference between two batches, paired by input where they share input
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass, field
 from typing import Any
 
 from axial.align import (
     corrected_difference_paired,
     corrected_difference_unpaired,
+    corrected_rate,
     paired_bootstrap_ci,
 )
-from axial.errors import InvariantViolation
-from axial.measure import Measurement, load_measurement, pair_batches, summary_lines
+from axial.errors import AxialError, InvariantViolation
+from axial.measure import (
+    Measurement,
+    judge_test_matrix,
+    load_measurement,
+    pair_batches,
+    summary_lines,
+)
 from axial.report import SATURATION_WARNING, require_promoted
 from axial.store import Store
 
@@ -101,8 +109,15 @@ def gate(
 def _load_fresh(
     store: Store, mode: str, batch: str
 ) -> tuple[Measurement, list[dict[str, Any]]]:
-    """A measurement, refused unless the judge that took it is still promoted unchanged
-    and it graded at least one trace."""
+    """A measurement, refused unless the judge that took it is still promoted unchanged,
+    it graded at least one trace, and its numbers are the ones its verdicts give.
+
+    `measurement.json` is a plain file anyone can edit, and its interval decides
+    `--max-rate`. So the test matrix is rebuilt from the judge's hash-checked verdicts,
+    the rate is recomputed from the batch's own verdict rows with the recorded draws
+    and seed, and any difference is refused. The gate then uses the recomputed values,
+    which are equal to the stored ones once the check passes.
+    """
     measurement, rows = load_measurement(store, mode, batch)
     version = measurement.judge_version
     remeasure = (
@@ -129,7 +144,24 @@ def _load_fresh(
             f"batch {batch!r} graded no traces (all {measurement.n_traces} were set aside). "
             "A gate cannot pass on no evidence; see the batch's errors.jsonl."
         )
-    return measurement, rows
+    test = judge_test_matrix(store, mode, version)
+    flagged = sum(1 for r in rows if r["verdict"])
+    mismatch = (
+        f"measurement {batch!r} for {mode} does not match its own verdicts: its rate, "
+        f"interval or test matrix is not what they give. Re-measure the batch with {remeasure}."
+    )
+    try:
+        rate = corrected_rate(
+            test, flagged, len(rows), draws=measurement.draws, seed=measurement.seed
+        )
+    except ValueError as exc:  # a negative draws or seed
+        raise AxialError(mismatch) from exc
+    recomputed = dataclasses.replace(measurement, test_matrix=test, rate=rate)
+    # Compared as written to disk: a nan point is null there, and a NaN read back into
+    # an interval never equals a recomputed bound.
+    if recomputed.to_json() != measurement.to_json():
+        raise AxialError(mismatch)
+    return recomputed, rows
 
 
 def gate_batches(

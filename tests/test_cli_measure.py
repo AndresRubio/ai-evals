@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -176,6 +177,17 @@ def test_gate_batch_exit_codes(repo: Path):
     )
     assert_clean(axial("gate", MEASURE_MODE, "--batch", "cand", "--max-rate", "0.1"), 1, "ABOVE CEILING")
     assert_clean(axial("gate", MEASURE_MODE, "--batch", "cand", "--max-rate", "0.2"), 0, "within the ceiling")
+
+
+def test_gate_batch_refuses_a_nan_interval_in_one_line(repo: Path):
+    assert measure(repo, "cand", 60).exit_code == 0
+    path = repo / ".axial" / "measurements" / MEASURE_MODE / "cand" / "measurement.json"
+    data = json.loads(path.read_text())
+    data["interval"] = [0.0, float("nan")]
+    path.write_text(json.dumps(data))
+    result = axial("gate", MEASURE_MODE, "--batch", "cand", "--max-rate", "0.1")
+    assert_clean(result, 1, "does not match its own verdicts")
+    assert len(result.output.strip().splitlines()) == 1
 
 
 def test_gate_batch_names_a_missing_measurement(repo: Path):

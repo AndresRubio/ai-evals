@@ -180,7 +180,8 @@ def _check_batch(batch: list[Trace]) -> None:
         )
 
 
-def _test_matrix(store: Store, mode: str, version: int) -> ConfusionMatrix:
+def judge_test_matrix(store: Store, mode: str, version: int) -> ConfusionMatrix:
+    """The judge's test-split confusion matrix, which every corrected rate it gives uses."""
     rows = [
         r for r in store.read_jsonl(store.judge_dir(mode, version) / "verdicts.jsonl")
         if r.get("split") == "test"
@@ -258,7 +259,7 @@ def measure_batch(
             "to, or choose another --name."
         )
     _check_batch(batch)
-    test = _test_matrix(store, mode, version)
+    test = judge_test_matrix(store, mode, version)
     spec = JudgeSpec.load(store, mode, version)
     few_shot = resolve_few_shot(spec, store.read_traces(), read_labels(store, mode))
     splits = Splits.load(store, mode) if few_shot else None
