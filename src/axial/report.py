@@ -194,7 +194,16 @@ def require_promoted(store: Store, mode: str, version: int) -> PromotedHashes:
             f"judge {mode} v{version} has not been promoted. Run `axial promote` — a judge "
             "whose agreement with human labels was never measured on test cannot gate a build."
         )
-    recorded = parse_promoted_marker(marker_path.read_text())
+    try:
+        text = marker_path.read_text()
+    except (OSError, UnicodeDecodeError) as exc:
+        raise InvariantViolation(
+            f"judge {mode} v{version}'s PROMOTED marker is not readable text "
+            f"({type(exc).__name__}), so its hashes cannot be checked. Re-run `axial "
+            "promote` on the current judge, or `axial judge --new` to score it as a fresh "
+            "version."
+        ) from exc
+    recorded = parse_promoted_marker(text)
     recorded_judge_hash = _require_bound_hash(recorded, JUDGE_YAML_HASH_KEY, mode, version)
     if store.hash_file(directory / "judge.yaml") != recorded_judge_hash:
         raise InvariantViolation(

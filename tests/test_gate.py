@@ -254,6 +254,20 @@ def test_a_marker_with_a_malformed_hash_value_is_refused(tmp_path: Path):
         gate(store, "m", 1, seed=1)
 
 
+@pytest.mark.parametrize("damage", ["bytes", "directory"])
+def test_a_marker_that_is_not_readable_text_is_refused(tmp_path: Path, damage: str):
+    store = Store(tmp_path)
+    _promote_with_real_hashes(store, "m", 1, [False] * 50)
+    marker = store.judge_dir("m", 1) / "PROMOTED"
+    if damage == "bytes":
+        marker.write_bytes(marker.read_bytes() + b"\xff\xfe\n")
+    else:
+        marker.unlink()
+        marker.mkdir()
+    with pytest.raises(InvariantViolation, match="PROMOTED marker is not readable text"):
+        gate(store, "m", 1, seed=1)
+
+
 def test_a_properly_promoted_judge_still_gates_with_exit_0(tmp_path: Path):
     """A real `axial promote` marker, complete and well-formed, must keep
     gating -- the refusal above is for hash-less/malformed markers only."""

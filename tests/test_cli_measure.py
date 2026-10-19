@@ -116,6 +116,14 @@ def test_measure_refuses_an_unpromoted_judge(repo: Path):
     assert_clean(measure(repo, "rel-1", 60), 1, "has not been promoted")
 
 
+def test_measure_and_gate_refuse_a_promoted_marker_with_bytes_that_are_not_utf8(repo: Path):
+    marker = repo / ".axial" / "judges" / MEASURE_MODE / "v1" / "PROMOTED"
+    marker.write_bytes(marker.read_bytes() + b"\xff\xfe\n")
+    for result in (measure(repo, "rel-1", 5, 20), axial("gate", MEASURE_MODE, "--version", "1")):
+        assert_clean(result, 1, "PROMOTED marker is not readable text")
+        assert len(result.output.strip().splitlines()) == 1
+
+
 def test_measure_reports_an_unreadable_batch_file(repo: Path):
     result = axial("measure", MEASURE_MODE, "--version", "1", "--traces", "nope.jsonl", "--name", "x")
     assert_clean(result, 1, "could not read nope.jsonl")
