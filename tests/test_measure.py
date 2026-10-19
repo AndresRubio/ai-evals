@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import json
 import math
 from pathlib import Path
@@ -256,6 +257,109 @@ def test_a_hand_edited_measurement_is_refused(store: Store):
     rows = store.read_jsonl(path)
     rows[1]["verdict"] = True
     store.write_jsonl(path, rows)
+    with pytest.raises(AxialError, match="edited by hand"):
+        load_measurement(store, MEASURE_MODE, "rel-1")
+
+
+def directory(store: Store, name: str = "rel-1") -> Path:
+    return store.measurement_dir(MEASURE_MODE, name)
+
+
+def rewrite_jsonl(path: Path, change) -> None:
+    rows = [json.loads(line) for line in path.read_text().splitlines()]
+    path.write_text("".join(json.dumps(change(r)) + "\n" for r in rows))
+
+
+def test_a_measurement_with_set_aside_traces_reads_back(store: Store):
+    written = measure(store, batch_traces(["GARBLED"] * 2 + ["BAD"] * 3 + ["GOOD"] * 5))
+    read, rows = load_measurement(store, MEASURE_MODE, "rel-1")
+    assert read == written and len(rows) == 8
+
+
+def test_a_measurement_that_set_everything_aside_reads_back(store: Store):
+    written = measure(store, batch_traces(["GARBLED"] * 4))
+    assert load_measurement(store, MEASURE_MODE, "rel-1") == (written, [])
+
+
+def test_rewritten_input_hashes_are_refused(store: Store):
+    """`pair_batches` trusts these keys: rewriting them once unpaired a regression."""
+    measure(store, batch_traces(["BAD"] * 3 + ["GOOD"] * 7))
+    rewrite_jsonl(
+        directory(store) / "verdicts.jsonl",
+        lambda r: r | {"input_sha256": hashlib.sha256(r["input_sha256"].encode()).hexdigest()},
+    )
+    with pytest.raises(AxialError, match="input_sha256 for trace 'new-0' that is not the hash"):
+        load_measurement(store, MEASURE_MODE, "rel-1")
+
+
+@pytest.mark.parametrize("name", ["traces.jsonl", "errors.jsonl", "verdicts.jsonl"])
+def test_a_measurement_missing_one_of_its_files_is_refused(store: Store, name: str):
+    measure(store, batch_traces(["GARBLED", "BAD", "GOOD"]))
+    (directory(store) / name).unlink()
+    with pytest.raises(AxialError, match=f"has no readable {name}"):
+        load_measurement(store, MEASURE_MODE, "rel-1")
+
+
+@pytest.mark.parametrize(
+    "name", ["traces.jsonl", "errors.jsonl", "verdicts.jsonl", "measurement.json"]
+)
+def test_a_directory_where_a_measurement_file_should_be_is_refused(store: Store, name: str):
+    measure(store, batch_traces(["GARBLED", "BAD", "GOOD"]))
+    (directory(store) / name).unlink()
+    (directory(store) / name).mkdir()
+    with pytest.raises(AxialError, match=f"has no readable {name}"):
+        load_measurement(store, MEASURE_MODE, "rel-1")
+
+
+def test_a_verdict_row_without_its_input_hash_is_refused(store: Store):
+    measure(store, batch_traces(["BAD", "GOOD"]))
+    rewrite_jsonl(
+        directory(store) / "verdicts.jsonl",
+        lambda r: {k: v for k, v in r.items() if k != "input_sha256"},
+    )
+    with pytest.raises(AxialError, match="not a readable measurement .*KeyError"):
+        load_measurement(store, MEASURE_MODE, "rel-1")
+
+
+def test_unreadable_trace_rows_are_one_line(store: Store):
+    measure(store, batch_traces(["BAD", "GOOD"]))
+    path = directory(store) / "traces.jsonl"
+    path.write_text(path.read_text().replace('"output": "BAD"', '"output": 5'))
+    with pytest.raises(AxialError, match="not a readable measurement") as caught:
+        load_measurement(store, MEASURE_MODE, "rel-1")
+    assert "\n" not in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    "edit",
+    [
+        # a graded row moved to another trace's id
+        lambda d: rewrite_jsonl(
+            d / "verdicts.jsonl", lambda r: r | {"trace_id": "elsewhere"} if r["trace_id"] == "new-1" else r
+        ),
+        # the set-aside row now claims a trace that was graded
+        lambda d: rewrite_jsonl(d / "errors.jsonl", lambda r: r | {"trace_id": "new-1"}),
+        # a trace graded twice and another not at all
+        lambda d: rewrite_jsonl(
+            d / "verdicts.jsonl", lambda r: r | {"trace_id": "new-1"} if r["trace_id"] == "new-2" else r
+        ),
+    ],
+    ids=["unknown-trace", "graded-and-set-aside", "graded-twice"],
+)
+def test_verdicts_and_errors_that_do_not_partition_the_traces_are_refused(store: Store, edit):
+    measure(store, batch_traces(["GARBLED", "BAD", "GOOD"]))
+    edit(directory(store))
+    with pytest.raises(AxialError, match="each trace in its traces.jsonl exactly once"):
+        load_measurement(store, MEASURE_MODE, "rel-1")
+
+
+@pytest.mark.parametrize("field", ["n_traces", "n_set_aside", "n_graded"])
+def test_counts_that_do_not_match_the_files_are_refused(store: Store, field: str):
+    measure(store, batch_traces(["GARBLED", "BAD", "GOOD"]))
+    path = directory(store) / "measurement.json"
+    data = json.loads(path.read_text())
+    data[field] += 1
+    path.write_text(json.dumps(data))
     with pytest.raises(AxialError, match="edited by hand"):
         load_measurement(store, MEASURE_MODE, "rel-1")
 

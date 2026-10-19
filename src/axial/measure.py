@@ -338,6 +338,43 @@ def measure_batch(
     return measurement
 
 
+MEASUREMENT_FILES = ("traces.jsonl", "verdicts.jsonl", "errors.jsonl", "measurement.json")
+
+
+def _inconsistency(
+    measurement: Measurement,
+    mode: str,
+    batch: str,
+    traces: list[Trace],
+    rows: list[dict[str, Any]],
+    errors: list[dict[str, Any]],
+) -> str | None:
+    """What makes a measurement's four files disagree with each other, if anything.
+
+    `pair_batches` trusts each verdict row's `input_sha256`, and the gate trusts the
+    counts, so both are checked against `traces.jsonl`, the batch as it was read.
+    """
+    if (measurement.mode, measurement.batch) != (mode, batch):
+        return "names another mode or batch than its directory"
+    if (len(traces), len(rows), len(errors), sum(1 for r in rows if r["verdict"])) != (
+        measurement.n_traces, measurement.n_graded, measurement.n_set_aside, measurement.flagged
+    ):
+        return "does not match its own traces.jsonl, verdicts.jsonl or errors.jsonl in its counts"
+    by_id = {t.trace_id: t for t in traces}
+    accounted = Counter(r["trace_id"] for r in rows) + Counter(e["trace_id"] for e in errors)
+    if len(by_id) != len(traces) or accounted != Counter(by_id.keys()):
+        return "does not grade or set aside each trace in its traces.jsonl exactly once"
+    for row in rows:
+        if not isinstance(row["verdict"], bool):
+            return f"has a verdict for trace {row['trace_id']!r} that is not true or false"
+        if row["input_sha256"] != input_sha256(by_id[row["trace_id"]].input):
+            return (
+                f"records an input_sha256 for trace {row['trace_id']!r} that is not the hash "
+                "of its input"
+            )
+    return None
+
+
 def load_measurement(
     store: Store, mode: str, batch: str
 ) -> tuple[Measurement, list[dict[str, Any]]]:
@@ -349,21 +386,29 @@ def load_measurement(
             f"no measurement named {batch!r} for {mode}: run `axial measure {mode} "
             f"--version N --traces <file> --name {batch}` first"
         )
+    redo = "Re-run `axial measure` with --replace"
+    for name in MEASUREMENT_FILES:
+        if not (directory / name).is_file():
+            raise AxialError(
+                f"measurement {batch!r} for {mode} has no readable {name}; it was deleted "
+                f"or edited by hand. {redo}"
+            )
     try:
         measurement = Measurement.from_json(store.read_json(path))
+        traces = [Trace.model_validate(r) for r in store.read_jsonl(directory / "traces.jsonl")]
         rows = store.read_jsonl(directory / "verdicts.jsonl")
-        flagged = sum(1 for r in rows if r["verdict"])
-    except (KeyError, TypeError, ValueError) as exc:
+        errors = store.read_jsonl(directory / "errors.jsonl")
+        problem = _inconsistency(measurement, mode, batch, traces, rows, errors)
+    except (KeyError, TypeError, ValueError, OSError) as exc:
+        # The first line only: a pydantic error runs to several.
+        detail = (str(exc).splitlines() or [""])[0]
         raise AxialError(
-            f"{path} is not a readable measurement ({type(exc).__name__}: {exc}); re-run "
-            "`axial measure` with --replace"
+            f"{directory} is not a readable measurement ({type(exc).__name__}: {detail}). "
+            f"{redo}"
         ) from exc
-    if (measurement.mode, measurement.batch) != (mode, batch) or (
-        len(rows), flagged
-    ) != (measurement.n_graded, measurement.flagged):
+    if problem:
         raise AxialError(
-            f"measurement {batch!r} for {mode} does not match its own verdicts.jsonl or its "
-            "directory; it was edited by hand. Re-run `axial measure` with --replace"
+            f"measurement {batch!r} for {mode} {problem}; it was edited by hand. {redo}"
         )
     return measurement, rows
 

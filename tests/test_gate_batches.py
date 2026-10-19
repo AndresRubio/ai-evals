@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 from pathlib import Path
@@ -242,3 +243,27 @@ def test_an_untouched_measurement_gates_on_the_numbers_it_stored(store: Store):
     result = run(store, "rel-1", max_rate=0.20)
     assert result.passed
     assert f"upper end, {stored['interval'][1]:.3f}," in result.messages[-1]
+
+
+def test_rewritten_input_hashes_do_not_turn_a_paired_regression_into_a_pass(store: Store):
+    """Only the keys were edited, so counts and flags still agreed with measurement.json;
+    the batches fell back to the wider unpaired comparison, which passed."""
+    measure(store, "base", flags(60))
+    measure(store, "cand", flags(80))
+    assert not run(store, "cand", baseline_batch="base").passed
+    path = store.measurement_dir(MEASURE_MODE, "cand") / "verdicts.jsonl"
+    rows = store.read_jsonl(path)
+    store.write_jsonl(
+        path,
+        [r | {"input_sha256": hashlib.sha256(r["input_sha256"].encode()).hexdigest()} for r in rows],
+    )
+    with pytest.raises(AxialError, match="edited by hand"):
+        run(store, "cand", baseline_batch="base")
+
+
+def test_a_measurement_whose_traces_and_errors_are_gone_is_refused(store: Store):
+    measure(store, "rel-1", flags(60))
+    (store.measurement_dir(MEASURE_MODE, "rel-1") / "traces.jsonl").unlink()
+    (store.measurement_dir(MEASURE_MODE, "rel-1") / "errors.jsonl").unlink()
+    with pytest.raises(AxialError, match="has no readable"):
+        run(store, "rel-1", max_rate=0.2)
