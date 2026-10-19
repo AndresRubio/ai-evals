@@ -15,6 +15,8 @@ from axial.align import ConfusionMatrix, corrected_rate
 JUDGE = ConfusionMatrix(tp=28, fn=2, tn=66, fp=4)
 PERFECT = ConfusionMatrix(tp=30, fn=0, tn=70, fp=0)
 CHANCE = ConfusionMatrix(tp=15, fn=15, tn=35, fp=35)
+# Youden's J exactly at the 0.05 cut-off: TPR 10/20 = 0.50, TNR 11/20 = 0.55.
+AT_CUT_OFF = ConfusionMatrix(tp=10, fn=10, tn=11, fp=9)
 # Monte Carlo percentiles over 20,000 draws move in the third decimal with draw order.
 MC = 0.002
 
@@ -97,6 +99,33 @@ def test_a_judge_near_chance_gets_no_interval_and_no_point():
     assert result.interval is None
     assert result.interval_if_judge_exact is None
     assert math.isnan(result.point)
+
+
+def test_a_judge_exactly_at_the_chance_cut_off_gets_no_point():
+    # TPR 10/20 + TNR 11/20 - 1 = 0.05 exactly, which is "at most 0.05". In floats the sum
+    # is 0.050000000000000044, which used to let a clipped point of 0.0 through.
+    result = corrected_rate(AT_CUT_OFF, 30, 100)
+    assert math.isnan(result.point)
+    assert result.clipped is None
+    assert result.interval_if_judge_exact is None
+
+
+@pytest.mark.parametrize(
+    ("tn", "fp", "expected"),
+    [
+        (109, 91, None),  # J = 100/200 + 109/200 - 1 = 0.045
+        (110, 90, None),  # J = 0.050 exactly
+        (111, 89, 0.025 / 0.055),  # J = 0.055: (0.47 + 0.555 - 1) / 0.055 = 0.4545
+    ],
+)
+def test_the_chance_cut_off_is_decided_on_the_counts(tn: int, fp: int, expected: float | None):
+    result = corrected_rate(ConfusionMatrix(tp=100, fn=100, tn=tn, fp=fp), 47, 100)
+    if expected is None:
+        assert math.isnan(result.point)
+        assert result.interval_if_judge_exact is None
+    else:
+        assert result.point == pytest.approx(expected)
+        assert result.interval_if_judge_exact is not None
 
 
 @pytest.mark.parametrize(

@@ -31,6 +31,7 @@ from __future__ import annotations
 import math
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from fractions import Fraction
 from typing import Literal
 
 import numpy as np
@@ -302,6 +303,14 @@ def _judge_rates(test: ConfusionMatrix) -> tuple[float, float]:
     return test.tp / positives, test.tn / negatives
 
 
+def _better_than_chance(test: ConfusionMatrix) -> bool:
+    """Whether the test split's J = TPR + TNR - 1 is above `_MIN_YOUDEN_J`, decided on the
+    counts: in floats 10/20 + 11/20 - 1 is 0.050000000000000044, which would give a judge
+    exactly at the cut-off the point estimate the rule denies it."""
+    youden = Fraction(test.tp, test.tp + test.fn) + Fraction(test.tn, test.tn + test.fp) - 1
+    return youden > Fraction(str(_MIN_YOUDEN_J))
+
+
 def _check_count(flagged: int, n: int, what: str) -> None:
     if n <= 0:
         raise ValueError(f"{what}: cannot correct a rate over {n} graded traces")
@@ -353,10 +362,11 @@ def corrected_rate(
     _check_count(flagged, n, "batch")
     observed = flagged / n
     youden = tpr + tnr - 1.0
+    usable = _better_than_chance(test)
 
     point = math.nan
     clipped: Literal["low", "high"] | None = None
-    if youden > _MIN_YOUDEN_J:
+    if usable:
         raw = (observed + tnr - 1.0) / youden
         if raw < 0.0:
             clipped = "low"
@@ -372,7 +382,7 @@ def corrected_rate(
     interval = _percentile_interval(theta_s, draws)
 
     exact = None
-    if youden > _MIN_YOUDEN_J:
+    if usable:
         exact = _percentile_interval(np.clip((p_s + tnr - 1.0) / youden, 0.0, 1.0), draws)
 
     return CorrectedRate(
@@ -421,7 +431,7 @@ def _corrected_difference(
     """
     tpr, tnr = _judge_rates(test)
     youden = tpr + tnr - 1.0
-    point = observed_difference / youden if youden > _MIN_YOUDEN_J else math.nan
+    point = observed_difference / youden if _better_than_chance(test) else math.nan
 
     rng = np.random.default_rng(seed)
     _, youden_s = _youden_draws(rng, test, draws)

@@ -276,6 +276,38 @@ def test_a_rate_below_the_false_alarm_rate_is_noted_as_clipped(store: Store):
     assert any("clipped to 0" in n and "1 - TNR = 0.057" in n for n in result.notes)
 
 
+def test_a_judge_exactly_at_the_chance_cut_off_measures_no_rate(store: Store):
+    # Test split tp 10, fn 10, tn 11, fp 9: J = 10/20 + 11/20 - 1 = 0.05 exactly, which the
+    # rule calls no better than chance, though the float sum is 0.050000000000000044.
+    path = store.judge_dir(MEASURE_MODE, 1) / "verdicts.jsonl"
+    rows = store.read_jsonl(path)
+    test_rows = [r for r in rows if r["split"] == "test"][:40]
+    cells = [(True, True)] * 10 + [(True, False)] * 10 + [(False, False)] * 11 + [(False, True)] * 9
+    for r, (truth, verdict) in zip(test_rows, cells, strict=True):
+        r["truth"], r["verdict"] = truth, verdict
+    store.write_jsonl(path, [r for r in rows if r["split"] != "test"] + test_rows)
+    marker = store.judge_dir(MEASURE_MODE, 1) / "PROMOTED"
+    marker.write_text(
+        "".join(
+            f"verdicts_sha256={store.hash_file(path)}\n" if line.startswith("verdicts_sha256=")
+            else line
+            for line in marker.read_text().splitlines(keepends=True)
+        )
+    )
+
+    result = measure(store, batch_traces(["BAD"] * 30 + ["GOOD"] * 70))
+
+    assert result.test_matrix == ConfusionMatrix(tp=10, fn=10, tn=11, fp=9)
+    data = json.loads(
+        (store.measurement_dir(MEASURE_MODE, "rel-1") / "measurement.json").read_text()
+    )
+    assert (data["corrected_rate"], data["clipped"], data["interval_if_judge_exact"]) == (
+        None, None, None,
+    )
+    assert any("no better than chance" in n for n in result.notes)
+    assert not any("clipped" in n for n in result.notes)
+
+
 def test_a_batch_with_nothing_flagged_gets_the_saturation_warning(store: Store):
     result = measure(store, batch_traces(["GOOD"] * 10))
     assert any(n.startswith("saturation warning") for n in result.notes)

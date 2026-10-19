@@ -105,6 +105,27 @@ def test_a_judge_near_chance_gets_no_difference_interval():
     assert corrected_difference_paired(CHANCE, (60, 0, 20, 420)).interval is None
 
 
+@pytest.mark.parametrize(
+    ("tn", "fp", "expected"),
+    [
+        (109, 91, None),  # J = 100/200 + 109/200 - 1 = 0.045
+        (110, 90, None),  # J = 0.050 exactly, 0.050000000000000044 in floats
+        (111, 89, 0.1 / 0.055),  # J = 0.055: a flag-rate rise of 0.1 / 0.055 = 1.8182
+    ],
+)
+def test_the_chance_cut_off_for_a_difference_is_decided_on_the_counts(
+    tn: int, fp: int, expected: float | None
+):
+    test = ConfusionMatrix(tp=100, fn=100, tn=tn, fp=fp)
+    unpaired = corrected_difference_unpaired(test, (30, 100), (40, 100))
+    paired = corrected_difference_paired(test, (20, 5, 15, 60))  # (15 - 5) / 100 = 0.1
+    for result in (unpaired, paired):
+        if expected is None:
+            assert np.isnan(result.point)
+        else:
+            assert result.point == pytest.approx(expected)
+
+
 def test_the_differences_refuse_empty_or_negative_input():
     with pytest.raises(ValueError, match="zero pairs"):
         corrected_difference_paired(JUDGE, (0, 0, 0, 0))
