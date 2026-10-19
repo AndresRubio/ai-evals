@@ -292,3 +292,37 @@ def test_write_dir_atomically_succeeds_when_removing_the_old_directory_fails(
     assert len(leftover) == 1
     assert leftover[0].startswith(".out.") and leftover[0].endswith(".old")
     assert {p.name: p.read_text() for p in (tmp_path / leftover[0]).iterdir()} == {"a.txt": "old"}
+
+
+@pytest.mark.parametrize("kind", ["file", "symlink-to-file", "dangling-symlink"])
+def test_write_dir_atomically_refuses_a_target_that_is_not_a_directory(tmp_path: Path, kind: str):
+    """Moving such a target aside worked, but `rmtree` cannot remove it, which left a
+    hidden `.old` sibling behind; it is refused before anything is staged."""
+    store = Store(tmp_path)
+    target = tmp_path / "out"
+    if kind == "file":
+        target.write_text("a file, not a directory")
+    elif kind == "symlink-to-file":
+        (tmp_path / "real.txt").write_text("real")
+        target.symlink_to(tmp_path / "real.txt")
+    else:
+        target.symlink_to(tmp_path / "nowhere")
+    before = sorted(p.name for p in tmp_path.iterdir())
+    with pytest.raises(AxialError, match="is not a directory"):
+        store.write_dir_atomically(target, {"a.txt": "x"})
+    assert sorted(p.name for p in tmp_path.iterdir()) == before
+    assert target.is_symlink() or target.read_text() == "a file, not a directory"
+
+
+def test_write_dir_atomically_replaces_a_symlinked_directory_without_following_it(tmp_path: Path):
+    store = Store(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "keep.txt").write_text("keep")
+    target = tmp_path / "out"
+    target.symlink_to(outside)
+    store.write_dir_atomically(target, {"a.txt": "x"})
+    assert not target.is_symlink()
+    assert {p.name: p.read_text() for p in target.iterdir()} == {"a.txt": "x"}
+    assert (outside / "keep.txt").read_text() == "keep"
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["out", "outside"]

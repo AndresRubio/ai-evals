@@ -25,7 +25,7 @@ from axial.errors import AxialError
 from axial.judge import Graded, JudgeSpec, grade_trace, resolve_few_shot
 from axial.model import Model
 from axial.report import SATURATION_WARNING, require_promoted
-from axial.store import Store, json_text, jsonl_text
+from axial.store import Store, json_text, jsonl_text, refuse_non_directory
 from axial.traces import Trace
 
 # Above this share of set-aside traces, a measurement says the rate may be biased.
@@ -286,6 +286,8 @@ def measure_batch(
     hashes = require_promoted(store, mode, version)
     directory = store.measurement_dir(mode, batch_name)
     _refuse_case_variant(directory, mode, batch_name)
+    # `write_dir_atomically` refuses this too, but only after every trace was graded.
+    refuse_non_directory(directory)
     if directory.exists() and not replace:
         raise AxialError(
             f"a measurement named {batch_name!r} already exists for {mode} at {directory}. "

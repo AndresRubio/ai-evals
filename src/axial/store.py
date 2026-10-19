@@ -53,6 +53,19 @@ def validate_name(name: str, kind: str) -> str:
     return name
 
 
+def refuse_non_directory(path: Path) -> None:
+    """Refuse when something other than a directory is at `path`.
+
+    `write_dir_atomically` can move a file or a symlink to one aside, but `rmtree`
+    cannot remove it afterwards, which left a hidden `.old` sibling behind.
+    """
+    if os.path.lexists(path) and not path.is_dir():
+        raise AxialError(
+            f"{path} exists and is not a directory, so it was left alone; move it aside "
+            "and run again"
+        )
+
+
 def _current_umask() -> int:
     """Read the process umask without permanently changing it.
 
@@ -225,7 +238,12 @@ class Store:
 
         `mkdtemp` creates its directory mode 0700, so the mode is fixed up to what
         a plain `mkdir` would give.
+
+        Anything at `path` other than a directory is refused before staging (see
+        `refuse_non_directory`). A symlink to a directory is replaced, never followed,
+        and the link itself is what gets removed.
         """
+        refuse_non_directory(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         retired = path.with_name(f".{path.name}.{uuid.uuid4().hex}.old")
         staging = Path(tempfile.mkdtemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp"))
@@ -250,7 +268,10 @@ class Store:
             # left and has to stay.
             if retired.exists() and path.exists():
                 try:
-                    shutil.rmtree(retired)
+                    if retired.is_symlink():
+                        retired.unlink()
+                    else:
+                        shutil.rmtree(retired)
                 except OSError:
                     pass
 

@@ -152,6 +152,21 @@ def test_reading_a_name_differing_only_in_case_from_an_existing_batch_is_refused
         load_measurement(store, MEASURE_MODE, "REL-1")
 
 
+def test_a_file_where_the_measurement_goes_is_refused_before_grading(store: Store):
+    target = store.measurement_dir(MEASURE_MODE, "rel-1")
+    target.parent.mkdir(parents=True)
+    target.write_text("not a directory")
+    prompts: list[str] = []
+    with pytest.raises(AxialError, match="is not a directory"):
+        measure_batch(
+            store, MEASURE_MODE, 1, "rel-1", batch_traces(["GOOD"] * 3),
+            fake_judge_builder(prompts=prompts), replace=True, draws=2000,
+        )
+    assert prompts == []
+    assert sorted(p.name for p in target.parent.iterdir()) == ["rel-1"]
+    assert target.read_text() == "not a directory"
+
+
 def test_a_test_split_missing_a_class_is_refused(store: Store):
     path = store.judge_dir(MEASURE_MODE, 1) / "verdicts.jsonl"
     rows = [r for r in store.read_jsonl(path) if not (r["split"] == "test" and r["truth"])]
