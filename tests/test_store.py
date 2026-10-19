@@ -1,4 +1,5 @@
 import os
+import shutil
 import stat
 from pathlib import Path
 
@@ -165,7 +166,77 @@ def test_write_dir_atomically_leaves_the_old_directory_when_a_write_fails(tmp_pa
 def test_write_dir_atomically_gives_the_directory_a_normal_mode(tmp_path: Path):
     store = Store(tmp_path)
     target = tmp_path / "out"
-    store.write_dir_atomically(target, {"a.txt": "x"})
-    mask = os.umask(0)
-    os.umask(mask)
-    assert stat.S_IMODE(target.stat().st_mode) == 0o777 & ~mask
+    # A fixed umask makes the expected mode differ from mkdtemp's 0700, so the
+    # test fails if the mode fix-up is dropped.
+    previous = os.umask(0o022)
+    try:
+        store.write_dir_atomically(target, {"a.txt": "x"})
+    finally:
+        os.umask(previous)
+    assert stat.S_IMODE(target.stat().st_mode) == 0o755
+
+
+def test_write_dir_atomically_restores_the_old_directory_when_interrupted_between_renames(
+    tmp_path: Path, monkeypatch
+):
+    """Ctrl-C can land just after the old directory has been moved aside and
+    before the new one is in place. The old directory must go back to `path`."""
+    store = Store(tmp_path)
+    target = tmp_path / "out"
+    store.write_dir_atomically(target, {"a.txt": "old"})
+    real_replace = os.replace
+
+    def replace_then_interrupt(src: object, dst: object) -> None:
+        real_replace(src, dst)
+        if Path(str(src)) == target:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(os, "replace", replace_then_interrupt)
+    with pytest.raises(KeyboardInterrupt):
+        store.write_dir_atomically(target, {"a.txt": "new"})
+    assert {p.name: p.read_text() for p in target.iterdir()} == {"a.txt": "old"}
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["out"]
+
+
+def test_write_dir_atomically_restores_the_old_directory_when_installing_the_new_one_fails(
+    tmp_path: Path, monkeypatch
+):
+    store = Store(tmp_path)
+    target = tmp_path / "out"
+    store.write_dir_atomically(target, {"a.txt": "old"})
+    real_replace = os.replace
+
+    def refuse_staging(src: object, dst: object) -> None:
+        if Path(str(src)).suffix == ".tmp":
+            raise OSError("rename refused")
+        real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", refuse_staging)
+    with pytest.raises(OSError, match="rename refused"):
+        store.write_dir_atomically(target, {"a.txt": "new"})
+    assert {p.name: p.read_text() for p in target.iterdir()} == {"a.txt": "old"}
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["out"]
+
+
+def test_write_dir_atomically_succeeds_when_removing_the_old_directory_fails(
+    tmp_path: Path, monkeypatch
+):
+    """The new directory is already in place by then, so the write must not be
+    reported as failed. The old copy is left in a hidden `.old` sibling."""
+    store = Store(tmp_path)
+    target = tmp_path / "out"
+    store.write_dir_atomically(target, {"a.txt": "old"})
+    real_rmtree = shutil.rmtree
+
+    def refuse_retired(path: object, *args: object, **kwargs: object) -> None:
+        if Path(str(path)).suffix == ".old":
+            raise PermissionError("cannot remove")
+        real_rmtree(path, *args, **kwargs)
+
+    monkeypatch.setattr(shutil, "rmtree", refuse_retired)
+    store.write_dir_atomically(target, {"a.txt": "new"})
+    assert {p.name: p.read_text() for p in target.iterdir()} == {"a.txt": "new"}
+    leftover = sorted(p.name for p in tmp_path.iterdir() if p.name != "out")
+    assert len(leftover) == 1
+    assert leftover[0].startswith(".out.") and leftover[0].endswith(".old")
+    assert {p.name: p.read_text() for p in (tmp_path / leftover[0]).iterdir()} == {"a.txt": "old"}

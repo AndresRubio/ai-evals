@@ -165,34 +165,56 @@ class Store:
     def write_dir_atomically(self, path: Path, files: dict[str, str]) -> None:
         """Make `path` a directory holding exactly `files` (name -> text), all or nothing.
 
-        The files go into a hidden sibling directory that is then renamed onto
-        `path`; an existing `path` is renamed aside first and removed only once the
-        new one is in place, and put back if that rename fails. A run interrupted
-        part-way leaves `path` as it was, never half-written -- the same guarantee
-        `_atomic_write` gives a single file, for a set of files that only mean
-        something together. `mkdtemp` creates its directory mode 0700, so the mode
-        is fixed up to what a plain `mkdir` would give.
+        The files only mean something together, so a reader must never find some
+        of them new and some old. They are written into a hidden sibling directory,
+        an existing `path` is renamed aside, and the sibling is renamed onto `path`.
+        If anything raises along the way, `KeyboardInterrupt` included, the old
+        directory is renamed back. After an exception `path` is therefore either
+        exactly as it was before the call or holds all of the new files.
+
+        One window stays open. The standard library cannot swap two directories in
+        a single step (that needs `RENAME_EXCHANGE` on Linux or `renamex_np` on
+        macOS), so a hard kill such as SIGKILL or power loss between the two
+        renames leaves nothing at `path` and the previous contents in a hidden
+        `.<name>.<hex>.old` sibling. The same happens if putting the old directory
+        back itself fails or is interrupted. Nothing restores that sibling
+        automatically.
+
+        Deleting the old copy comes last and only tidies up. The new directory is
+        in place by then, so a failure to delete the old one is ignored. That
+        failure, or an interrupt during the deletion, can leave the hidden `.old`
+        sibling behind.
+
+        `mkdtemp` creates its directory mode 0700, so the mode is fixed up to what
+        a plain `mkdir` would give.
         """
         path.parent.mkdir(parents=True, exist_ok=True)
+        retired = path.with_name(f".{path.name}.{uuid.uuid4().hex}.old")
         staging = Path(tempfile.mkdtemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp"))
         try:
             os.chmod(staging, 0o777 & ~_current_umask())
             for name, data in files.items():
                 (staging / name).write_text(data)
-            if not path.exists():
-                os.replace(staging, path)
-                return
-            retired = path.with_name(f".{path.name}.{uuid.uuid4().hex}.old")
-            os.replace(path, retired)
-            try:
-                os.replace(staging, path)
-            except BaseException:
-                os.replace(retired, path)
-                raise
-            shutil.rmtree(retired)
+            if path.exists():
+                os.replace(path, retired)
+            os.replace(staging, path)
         except BaseException:
-            shutil.rmtree(staging, ignore_errors=True)
+            # An interrupt can arrive just after a rename has returned, before any
+            # variable could record it, so the disk decides whether to put the old
+            # directory back.
+            if retired.exists() and not path.exists():
+                os.replace(retired, path)
             raise
+        finally:
+            shutil.rmtree(staging, ignore_errors=True)
+            # Both existing means the new directory went in, which leaves the old
+            # copy as clutter. When `path` is missing the old copy is the only one
+            # left and has to stay.
+            if retired.exists() and path.exists():
+                try:
+                    shutil.rmtree(retired)
+                except OSError:
+                    pass
 
     def read_json(self, path: Path) -> Any:
         return json.loads(path.read_text())
