@@ -328,11 +328,16 @@ def find_disagreements(
         trace_id = str(row["trace_id"])
         label = label_by_id.get(trace_id)
         trace = trace_by_id.get(trace_id)
+        critique = (label.critique.strip() if label else "") or "(no critique recorded)"
+        if label is not None and label.label != truth:
+            # The kind, like the alignment table, follows the truth this run was scored
+            # on; a critique written for the new label would argue against its heading.
+            critique = "(label changed since this run; re-run `axial judge`)"
         found.append(
             Disagreement(
                 trace_id=trace_id,
                 kind="missed_failure" if truth else "false_alarm",
-                critique=(label.critique.strip() if label else "") or "(no critique recorded)",
+                critique=critique,
                 annotator=label.annotator if label else "(unknown)",
                 judge_reason=parse_reason(str(row.get("raw", ""))),
                 input_excerpt=trace.input[:EXCERPT_CHARS] if trace else None,

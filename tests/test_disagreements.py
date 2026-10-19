@@ -75,6 +75,17 @@ def test_a_missing_critique_shows_a_placeholder():
     assert found[0].critique == "(no critique recorded)"
 
 
+def test_a_label_changed_since_the_run_does_not_lend_its_critique_to_the_old_kind():
+    # The kind comes from the truth the run was scored on, which the alignment table counts
+    # too. The relabelled critique argues the opposite, so it would contradict its heading.
+    found = find_disagreements(
+        [row("d0", True, False)], [label("d0", False, "on reflection it is fine")], [trace("d0")]
+    )
+    assert [(d.kind, d.critique, d.annotator) for d in found] == [
+        ("missed_failure", "(label changed since this run; re-run `axial judge`)", "andres")
+    ]
+
+
 def test_the_judge_reason_comes_from_reason_then_critique_then_the_raw_text():
     assert parse_reason('{"verdict": "fail", "reason": "two headlines"}') == "two headlines"
     assert parse_reason('Sure: {"verdict": "pass", "critique": "one story"}') == "one story"
