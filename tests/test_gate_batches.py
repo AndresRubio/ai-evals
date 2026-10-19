@@ -25,6 +25,7 @@ from axial.measure import measure_batch
 from axial.model import FakeModel
 from axial.report import alignment_from_verdicts, promote
 from axial.store import Store
+from axial.traces import Trace
 
 
 @pytest.fixture
@@ -72,6 +73,18 @@ def test_max_rate_fails_above_the_ceiling_and_passes_below_it(store: Store):
 def test_a_batch_that_flagged_nothing_gets_the_saturation_warning(store: Store):
     measure(store, "rel-1", flags(0, 50))
     assert any(m.startswith("saturation warning") for m in run(store, "rel-1").messages)
+
+
+def test_a_batch_with_set_aside_traces_and_a_few_shot_example_still_gates(tmp_path: Path):
+    """The load-time checks count set-aside rows as accounting for their traces."""
+    store = Store(tmp_path)
+    build_promoted_judge(store, few_shot_ids=["train-0"])
+    example = Trace(trace_id="train-0", input="question train-0", output="BAD")
+    batch = [example] + batch_traces(["GARBLED"] * 2 + flags(20, 98))
+    measure_batch(store, MEASURE_MODE, 1, "rel-1", batch, fake_judge_builder(), draws=4000)
+    result = run(store, "rel-1", max_rate=0.5)
+    assert result.passed
+    assert result.messages[1].endswith("n=98 graded, 3 set aside")
 
 
 def test_a_batch_with_nothing_graded_fails_the_gate(store: Store):
