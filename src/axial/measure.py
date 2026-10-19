@@ -297,7 +297,11 @@ def measure_batch(
     _check_batch(batch)
     test = judge_test_matrix(store, mode, version)
     spec = JudgeSpec.load(store, mode, version)
-    few_shot = resolve_few_shot(spec, store.read_traces(), read_labels(store, mode))
+    few_shot = (
+        resolve_few_shot(spec, store.read_traces(), read_labels(store, mode))
+        if spec.few_shot_ids
+        else []
+    )
     splits = Splits.load(store, mode) if few_shot else None
     model = build_model(spec)
 

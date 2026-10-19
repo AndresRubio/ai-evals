@@ -180,6 +180,12 @@ def test_measure_exits_non_zero_after_writing_a_batch_nothing_could_grade(repo: 
     assert (repo / ".axial" / "measurements" / MEASURE_MODE / "g" / "errors.jsonl").exists()
 
 
+def test_measure_without_few_shot_examples_never_reads_the_labelled_corpus(repo: Path):
+    corpus = repo / ".axial" / "traces" / "traces.jsonl"
+    corpus.write_text(corpus.read_text() + "not json\n")
+    assert_clean(measure(repo, "rel-1", 5, 20), 0, "observed 0.250")
+
+
 # --- gate --batch -------------------------------------------------------------------
 
 
