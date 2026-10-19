@@ -254,10 +254,18 @@ def gate_batches(
                 )
             else:
                 messages.append("no change detectable above the noise floor")
-        if candidate.rate.clipped or baseline.rate.clipped:
+        clipped = {candidate.rate.clipped, baseline.rate.clipped} - {None}
+        if clipped == {"low", "high"}:
             messages.append(
-                "note: a rate above is clipped to [0, 1] for display; the difference was "
-                "computed before clipping, so it can be non-zero while both rates show 0.000"
+                "note: one rate above is clipped to 0 and the other to 1 for display; the "
+                "difference was computed before clipping, so it can differ from the gap "
+                "between the rates shown"
+            )
+        elif clipped:
+            bound = 0 if clipped == {"low"} else 1
+            messages.append(
+                f"note: a rate above is clipped to {bound} for display; the difference was "
+                f"computed before clipping, so it can be non-zero while both rates show {bound:.3f}"
             )
 
     return GateResult(passed=passed, messages=messages)

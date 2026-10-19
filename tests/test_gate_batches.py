@@ -149,6 +149,27 @@ def test_a_rise_both_rates_clip_away_is_still_called_and_explained(store: Store)
     assert any("computed before clipping" in m for m in result.messages)
 
 
+@pytest.mark.parametrize(
+    ("base", "cand", "shown", "wording"),
+    [
+        (20, 26, ("0.000", "0.000"), "while both rates show 0.000"),  # below 1 - TNR = 0.057
+        (490, 495, ("1.000", "1.000"), "while both rates show 1.000"),  # above TPR = 0.933
+        (20, 490, ("0.000", "1.000"), "one rate above is clipped to 0 and the other to 1"),
+    ],
+)
+def test_the_clipping_note_names_the_side_the_rates_were_clipped_to(
+    store: Store, base: int, cand: int, shown: tuple[str, str], wording: str
+):
+    measure(store, "base", flags(base))
+    measure(store, "cand", flags(cand))
+    result = run(store, "cand", baseline_batch="base")
+    baseline_line = next(m for m in result.messages if m.startswith("baseline "))
+    assert f"corrected {shown[0]}" in baseline_line
+    assert f"corrected {shown[1]}" in result.messages[0]
+    notes = [m for m in result.messages if "computed before clipping" in m]
+    assert len(notes) == 1 and wording in notes[0]
+
+
 # --- stale measurements ------------------------------------------------------------
 
 
