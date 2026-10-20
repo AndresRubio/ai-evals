@@ -317,8 +317,6 @@ def test_label_from_reviews_keeps_open_codes_out_of_the_labels(tmp_path: Path):
     }
 
 
-@pytest.mark.xfail(strict=True, reason="cli.py:211 reads sessions via Store.read_jsonl, which returns "
-                   "[] for a missing file, so an unknown session name exits 0 with '0 labels'")
 def test_label_from_reviews_fails_for_a_session_that_does_not_exist(tmp_path: Path):
     """A typo'd session name should be an error, not a silent zero-label success."""
     assert run_cli(tmp_path, "label-from-reviews", "m", "no-such-session").exit_code != 0
@@ -496,9 +494,6 @@ def test_split_cli_uses_the_fractions_from_the_project_config(tmp_path: Path):
     assert (len(splits.train), len(splits.dev), len(splits.test)) == (40, 20, 20)
 
 
-@pytest.mark.xfail(strict=True, reason="cli.py:225-228 splits and saves whatever labels exist, so "
-                   "`axial split` before labelling freezes an EMPTY test manifest and every later "
-                   "split is refused as a redraw")
 @pytest.mark.filterwarnings("ignore:.*usable floor:UserWarning")
 def test_splitting_before_any_labels_exist_does_not_freeze_an_empty_test_split(tmp_path: Path):
     """An early `split` on an unlabelled mode should not block the real split later."""

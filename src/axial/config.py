@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import os
 import tomllib
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from axial.errors import AxialError
 from axial.store import Store
@@ -90,21 +92,62 @@ def write_default_config(store: Store) -> None:
     store.config_path.write_text(DEFAULT_CONFIG)
 
 
+def _number[T](table: dict[str, Any], key: str, default: T, cast: Callable[[Any], T]) -> T:
+    value = table.get(key, default)
+    try:
+        return cast(value)
+    except (TypeError, ValueError):
+        raise AxialError(f"{key} must be a number, got {value!r}") from None
+
+
+def _text[D: (str, None)](raw: dict[str, Any], key: str, default: D) -> str | D:
+    if key not in raw:
+        return default
+    value = raw[key]
+    if not isinstance(value, str):
+        raise AxialError(f"{key} must be a string, got {value!r}")
+    return value
+
+
 def load_config(store: Store) -> Config:
-    if not store.config_path.exists():
+    """The config in `.axial/config.toml`, or the defaults when there is none.
+
+    Anything wrong with the file is an AxialError naming it, so a command refuses in
+    one line before it does any work.
+    """
+    path = store.config_path
+    if not path.exists():
         return Config()
-    raw = tomllib.loads(store.config_path.read_text())
+    try:
+        raw = tomllib.loads(path.read_text())
+    except tomllib.TOMLDecodeError as exc:
+        raise AxialError(f"{path} is not valid TOML: {exc}") from exc
+    except (OSError, UnicodeDecodeError) as exc:
+        raise AxialError(f"could not read {path}: {exc}") from exc
+    try:
+        return _config_from(raw)
+    except AxialError as exc:
+        raise AxialError(f"{path}: {exc}") from exc
+
+
+def _config_from(raw: dict[str, Any]) -> Config:
     thresholds_raw = raw.get("thresholds", {})
+    if not isinstance(thresholds_raw, dict):
+        raise AxialError(f"thresholds must be a [thresholds] table, got {thresholds_raw!r}")
     thresholds = Thresholds(
-        min_tpr=float(thresholds_raw.get("min_tpr", 0.85)),
-        min_tnr=float(thresholds_raw.get("min_tnr", 0.85)),
-        max_gap=float(thresholds_raw.get("max_gap", 0.10)),
-        min_test_positives=int(thresholds_raw.get("min_test_positives", 30)),
-        min_test_negatives=int(thresholds_raw.get("min_test_negatives", 30)),
+        min_tpr=_number(thresholds_raw, "min_tpr", 0.85, float),
+        min_tnr=_number(thresholds_raw, "min_tnr", 0.85, float),
+        max_gap=_number(thresholds_raw, "max_gap", 0.10, float),
+        min_test_positives=_number(thresholds_raw, "min_test_positives", 30, int),
+        min_test_negatives=_number(thresholds_raw, "min_test_negatives", 30, int),
     )
     fractions = raw.get("split_fractions", [0.15, 0.42, 0.43])
 
     # Validate split_fractions
+    if not isinstance(fractions, list):
+        raise AxialError(
+            f"split_fractions must be a list of 3 numbers (train, dev, test), got {fractions!r}"
+        )
     if len(fractions) != 3:
         raise AxialError(
             f"split_fractions must have exactly 3 entries (train, dev, test), "
@@ -117,7 +160,7 @@ def load_config(store: Store) -> Config:
             frac_val = float(frac)
         except (TypeError, ValueError):
             raise AxialError(f"split_fractions[{i}] must be a number, got {frac!r}")
-        if frac_val <= 0:
+        if not frac_val > 0:  # written this way round so that nan is refused too
             raise AxialError(
                 f"split_fractions[{i}] must be positive, got {frac_val}"
             )
@@ -130,9 +173,9 @@ def load_config(store: Store) -> Config:
         )
 
     return Config(
-        judge_model=raw.get("judge_model", "claude-opus-5"),
-        annotator=raw.get("annotator"),
-        min_open_codes=int(raw.get("min_open_codes", 30)),
+        judge_model=_text(raw, "judge_model", "claude-opus-5"),
+        annotator=_text(raw, "annotator", None),
+        min_open_codes=_number(raw, "min_open_codes", 30, int),
         split_fractions=(fractions_float[0], fractions_float[1], fractions_float[2]),
         thresholds=thresholds,
     )

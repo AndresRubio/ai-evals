@@ -124,46 +124,50 @@ def test_align_with_non_integer_version_is_a_usage_error() -> None:
     assert_clean_failure(result, "'one'")
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="an unknown --strategy reaches sample_batch and escapes as a ValueError "
-    "traceback (cli.py:123) instead of a clean exit",
-)
 def test_sample_with_an_unknown_strategy_fails_cleanly(tmp_path: Path) -> None:
     """`sample --strategy bogus` names the valid strategies without a traceback."""
     run("ingest", str(write_traces(tmp_path)))
-    assert_clean_failure(
+    assert_one_line_refusal(
         run("sample", "--n", "3", "--name", "s", "--strategy", "bogus"), "bogus", "random"
     )
+    assert not Path(".axial/reviews/s.jsonl").exists()
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="an out-of-range --random-fraction escapes as a ValueError traceback "
-    "(cli.py:123 -> sample.py:70)",
-)
 def test_sample_with_an_out_of_range_random_fraction_fails_cleanly(tmp_path: Path) -> None:
     """`--random-fraction 1.5` is refused with a message, not a traceback."""
     run("ingest", str(write_traces(tmp_path)))
     result = run(
         "sample", "--n", "3", "--name", "s", "--strategy", "longest", "--random-fraction", "1.5"
     )
-    assert_clean_failure(result, "random_fraction")
+    assert_one_line_refusal(result, "random_fraction must be between 0 and 1, got 1.5")
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="an unknown --perplexity-field escapes as a ValueError traceback "
-    "(cli.py:112 -> perplexity.py:211); tests/test_cli.py only checks the exit code",
-)
 def test_sample_with_an_unknown_perplexity_field_fails_cleanly(tmp_path: Path) -> None:
-    """`--perplexity-field nonsense` names the valid fields without a traceback."""
+    """`--perplexity-field nonsense` names the valid fields without a traceback, and
+    before the perplexity spread is printed."""
     run("ingest", str(write_traces(tmp_path)))
     result = run(
         "sample", "--n", "3", "--name", "s", "--strategy", "perplexity",
         "--perplexity-field", "nonsense",
     )
-    assert_clean_failure(result, "nonsense")
+    assert_one_line_refusal(result, "nonsense")
+
+
+def test_sample_with_a_negative_n_fails_cleanly(tmp_path: Path) -> None:
+    """`--n -3` is refused instead of reaching numpy's sampler."""
+    run("ingest", str(write_traces(tmp_path)))
+    assert_one_line_refusal(run("sample", "--n", "-3", "--name", "s"), "n must be 0 or more")
+
+
+def test_sample_over_a_corrupt_corpus_fails_cleanly() -> None:
+    """A damaged traces.jsonl is named with its line, and no session is written."""
+    traces = Path(".axial/traces/traces.jsonl")
+    traces.parent.mkdir(parents=True)
+    traces.write_text('{"trace_id": "t0", "input": "i", "output": "o"}\n{oops\n')
+    assert_one_line_refusal(
+        run("sample", "--n", "1", "--name", "s"), "could not read the traces", "on line 2"
+    )
+    assert not Path(".axial/reviews").exists()
 
 
 # --- missing or malformed inputs -----------------------------------------------
@@ -240,14 +244,23 @@ def test_label_import_of_a_machine_annotator_fails_cleanly(tmp_path: Path) -> No
     assert_clean_failure(run("label-import", "m", "--path", str(path)), "looks like a model")
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="label-from-reviews with a session name that does not exist reads it as "
-    "empty and reports '0 labels recorded' with exit 0 (cli.py:211)",
-)
 def test_label_from_reviews_of_an_unknown_session_fails() -> None:
     """Converting a review session that does not exist is an error naming the session."""
-    assert_clean_failure(run("label-from-reviews", "m", "no-such-session"), "no-such-session")
+    assert_one_line_refusal(
+        run("label-from-reviews", "m", "no-such-session"),
+        "no review session named 'no-such-session'",
+    )
+    assert not Path(".axial/datasets").exists()
+
+
+def test_label_from_reviews_of_a_corrupt_session_fails_cleanly() -> None:
+    """A review row that does not validate names its session file and line."""
+    session = Path(".axial/reviews/s.jsonl")
+    session.parent.mkdir(parents=True)
+    session.write_text('{"trace_id": "t0", "status": "finished"}\n')
+    assert_one_line_refusal(
+        run("label-from-reviews", "m", "s"), "could not record labels for m", "s.jsonl: line 1: "
+    )
 
 
 def test_annotate_without_an_annotator_fails_cleanly(tmp_path: Path) -> None:
@@ -258,28 +271,39 @@ def test_annotate_without_an_annotator_fails_cleanly(tmp_path: Path) -> None:
     assert_clean_failure(run("annotate", "--name", "s"), "annotator", "config.toml")
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="an invalid split_fractions raises AxialError from load_config, which "
-    "`split` calls outside its try block (cli.py:224), so it escapes as a traceback",
-)
 def test_invalid_split_fractions_in_config_fail_cleanly(tmp_path: Path) -> None:
     """A bad `split_fractions` in config.toml is reported as a config error."""
     run("label-import", "m", "--path", str(write_labels(tmp_path, human_labels())))
     (tmp_path / ".axial" / "config.toml").write_text("split_fractions = [0.5, 0.5]\n")
-    assert_clean_failure(run("split", "m"), "split_fractions")
+    assert_one_line_refusal(run("split", "m"), "config.toml: split_fractions")
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="a config.toml that is not valid TOML escapes as tomllib.TOMLDecodeError "
-    "(config.py:96) from every command that loads config",
-)
 def test_malformed_config_toml_fails_cleanly(tmp_path: Path) -> None:
     """An unparseable config.toml is reported as such, naming the file."""
     run("init")
     (tmp_path / ".axial" / "config.toml").write_text("judge_model = = nope\n")
-    assert_clean_failure(run("split", "m"), "config.toml")
+    assert_one_line_refusal(run("split", "m"), "config.toml is not valid TOML")
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        ("annotate", "--name", "s"),
+        ("taxonomy",),
+        ("split", "m"),
+        ("judge", "m"),
+        ("align", "m", "1"),
+        ("promote", "m", "1"),
+    ],
+    ids=lambda command: command[0],
+)
+def test_every_command_that_reads_the_config_refuses_a_bad_one_in_one_line(
+    command: tuple[str, ...],
+) -> None:
+    """A broken config.toml stops each command before it does anything else."""
+    run("init")
+    Path(".axial/config.toml").write_text("[thresholds]\nmin_tpr = \"high\"\n")
+    assert_one_line_refusal(run(*command), "config.toml: min_tpr must be a number, got 'high'")
 
 
 # --- stages run out of order ---------------------------------------------------
@@ -296,39 +320,36 @@ def test_sample_before_ingest_fails() -> None:
     assert not Path(".axial/reviews/s.jsonl").exists()
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="re-using a session name escapes as FileExistsError from create_session "
-    "(cli.py:131), a traceback rather than a message",
-)
 def test_sample_into_an_existing_session_fails_cleanly(tmp_path: Path) -> None:
-    """Re-using a review session name is refused with a message, not a traceback."""
+    """Re-using a review session name is refused with a message, not a traceback, and
+    the first session's reviews are kept."""
     run("ingest", str(write_traces(tmp_path)))
     assert run("sample", "--n", "3", "--name", "s").exit_code == 0
-    assert_clean_failure(run("sample", "--n", "3", "--name", "s"), "already exists")
+    before = Path(".axial/reviews/s.jsonl").read_bytes()
+    assert_one_line_refusal(
+        run("sample", "--n", "3", "--name", "s", "--strategy", "perplexity"),
+        "already exists",
+        "choose another --name",
+    )
+    assert Path(".axial/reviews/s.jsonl").read_bytes() == before
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="split with no labels exits 0 and saves an empty splits.json; because the "
-    "test split is write-once, the next `split` after labelling is then refused",
-)
 def test_split_before_any_labels_fails_and_does_not_freeze_an_empty_test_split(
     tmp_path: Path,
 ) -> None:
     """Splitting a mode with no labels is an error, and it leaves nothing frozen behind."""
     result = run("split", "m")
     assert not Path(".axial/datasets/m/splits.json").exists()
-    assert_clean_failure(result, "label")
+    assert_one_line_refusal(result, "m has no labels yet", "axial label-import")
 
 
-def test_split_run_too_early_locks_out_the_real_split(tmp_path: Path) -> None:
-    """Documents the consequence: after an empty split, the real one is refused as a redraw."""
-    run("split", "m")
-    run("label-import", "m", "--path", str(write_labels(tmp_path, human_labels())))
-    result = run("split", "m")
-    assert result.exit_code == 1
-    assert "write-once" in result.output
+def test_split_over_a_corrupt_labels_file_fails_cleanly() -> None:
+    """A damaged labels.jsonl is named with its line, and no split is saved."""
+    labels = Path(".axial/datasets/m/labels.jsonl")
+    labels.parent.mkdir(parents=True)
+    labels.write_text("{oops\n")
+    assert_one_line_refusal(run("split", "m"), "could not split m", "labels.jsonl")
+    assert not Path(".axial/datasets/m/splits.json").exists()
 
 
 def test_judge_before_split_fails_cleanly(tmp_path: Path) -> None:
@@ -346,15 +367,36 @@ def test_align_before_judge_fails_cleanly() -> None:
     assert_one_line_refusal(run("align", "m", "1"), "no dev verdicts", "axial judge m")
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="promote with no verdicts escapes as ValueError('cannot align on an empty "
-    "set') (cli.py:423), a traceback",
-)
 def test_promote_before_judge_fails_cleanly() -> None:
     """Promoting a judge that has produced no verdicts is refused with a message."""
     run("init")
-    assert_clean_failure(run("promote", "m", "1"), "verdict")
+    assert_one_line_refusal(run("promote", "m", "1"), "no dev verdicts", "axial judge m")
+
+
+def write_verdicts(rows: list[dict[str, object]]) -> None:
+    store = Store(".")
+    store.write_jsonl(store.judge_dir("m", 1) / "verdicts.jsonl", rows)
+
+
+def test_promote_before_judging_test_fails_cleanly() -> None:
+    """Dev verdicts alone are not enough to promote; the refusal names the test split."""
+    write_verdicts([{"trace_id": "t0", "split": "dev", "verdict": True, "truth": True}])
+    assert_one_line_refusal(
+        run("promote", "m", "1"), "no test verdicts for m v1", "--split test --version 1"
+    )
+    assert not Path(".axial/judges/m/v1/PROMOTED").exists()
+
+
+@pytest.mark.parametrize("command", ["align", "promote"])
+def test_align_and_promote_refuse_a_verdict_with_no_human_label_in_one_line(command: str) -> None:
+    """A verdict row without `truth` cannot be aligned; the refusal says why."""
+    write_verdicts(
+        [
+            {"trace_id": "t0", "split": "dev", "verdict": True},
+            {"trace_id": "t1", "split": "test", "verdict": True, "truth": True},
+        ]
+    )
+    assert_one_line_refusal(run(command, "m", "1"), f"could not {command} m v1", "no human label")
 
 
 def test_checks_before_judge_fails_cleanly() -> None:
@@ -469,4 +511,31 @@ def test_judge_and_align_over_a_corrupt_store_fail_cleanly_and_write_nothing(
     expected = corrupt(store, kind)
     before = snapshot(store.root)
     assert_one_line_refusal(run(*command), f"could not {command[0]} {MEASURE_MODE}", expected)
+    assert snapshot(store.root) == before
+
+
+@pytest.mark.parametrize(
+    ("file", "text", "expected"),
+    [
+        ("judge", "mode: merged\nmodel: [fake\n", "judge.yaml: invalid YAML on line 3, column 1"),
+        ("judge", "mode: [1]\n", "judge.yaml: mode: Input should be a valid string, got list"),
+        ("taxonomy", "modes: [\n", "taxonomy.yaml: invalid YAML on line 2, column 1"),
+        ("taxonomy", "modes:\n  - id: x\n", "taxonomy.yaml: modes.0.name: Field required"),
+    ],
+    ids=["judge-syntax", "judge-shape", "taxonomy-syntax", "taxonomy-shape"],
+)
+def test_judge_over_a_corrupt_yaml_file_fails_cleanly_and_writes_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, file: str, text: str, expected: str
+) -> None:
+    """A hand edit that breaks judge.yaml or taxonomy.yaml is refused in one line naming
+    the file and the line, and judge.yaml is not rewritten."""
+    store = Store(tmp_path)
+    build_promoted_judge(store)
+    monkeypatch.setattr("axial.cli.build_judge_model", fake_judge_builder())
+    path = store.judge_dir(MEASURE_MODE, 1) / "judge.yaml" if file == "judge" else store.taxonomy_path
+    path.write_text(text)
+    before = snapshot(store.root)
+    assert_one_line_refusal(
+        run("judge", MEASURE_MODE, "--split", "dev"), f"could not judge {MEASURE_MODE}", expected
+    )
     assert snapshot(store.root) == before

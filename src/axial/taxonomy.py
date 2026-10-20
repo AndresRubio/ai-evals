@@ -60,7 +60,7 @@ class Taxonomy(BaseModel):
     def load(cls, store: Store) -> Taxonomy:
         if not store.taxonomy_path.exists():
             return cls()
-        return cls.model_validate(yaml.safe_load(store.taxonomy_path.read_text()) or {})
+        return store.read_yaml_model(store.taxonomy_path, cls, empty={})
 
     def recount(self, reviews: list[Review]) -> None:
         """Set each mode's prevalence from how many open codes mention its name."""

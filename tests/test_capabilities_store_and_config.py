@@ -281,8 +281,9 @@ def test_malformed_toml_is_a_hard_error_never_silently_defaulted(tmp_path: Path)
     store = Store(tmp_path)
     store.config_path.parent.mkdir(parents=True)
     store.config_path.write_text("[thresholds\nmin_tpr = 0.9\n")
-    with pytest.raises(tomllib.TOMLDecodeError):
+    with pytest.raises(AxialError, match=r"config\.toml is not valid TOML") as caught:
         load_config(store)
+    assert isinstance(caught.value.__cause__, tomllib.TOMLDecodeError)
 
 
 def test_a_non_numeric_split_fraction_is_refused_by_position(tmp_path: Path):
@@ -329,14 +330,34 @@ def test_integer_toml_thresholds_are_read_as_floats(tmp_path: Path):
     assert load_config(store).thresholds.min_tpr == 1.0
 
 
-@pytest.mark.xfail(strict=True, reason="config.py:108 calls len() on split_fractions before checking "
-                   "its type, so `split_fractions = 0.5` escapes as a bare TypeError")
 def test_a_scalar_split_fractions_is_refused_with_an_axial_error(tmp_path: Path):
     """A wrong-shaped value should get the same friendly AxialError as a wrong-length list."""
     store = Store(tmp_path)
     store.config_path.parent.mkdir(parents=True)
     store.config_path.write_text("split_fractions = 0.5\n")
     with pytest.raises(AxialError):
+        load_config(store)
+
+
+@pytest.mark.parametrize(
+    ("text", "message"),
+    [
+        ("split_fractions = [0.5, nan, 0.5]\n", r"split_fractions\[1\] must be positive"),
+        ('min_open_codes = "thirty"\n', "min_open_codes must be a number, got 'thirty'"),
+        ('[thresholds]\nmin_tpr = "high"\n', "min_tpr must be a number, got 'high'"),
+        ("thresholds = 0.9\n", r"thresholds must be a \[thresholds\] table"),
+        ("judge_model = 5\n", "judge_model must be a string, got 5"),
+        ("annotator = [1]\n", r"annotator must be a string, got \[1\]"),
+    ],
+)
+def test_a_wrongly_typed_config_value_is_refused_naming_the_file_and_key(
+    tmp_path: Path, text: str, message: str
+):
+    """Every bad value is one AxialError naming config.toml, never a TypeError or ValueError."""
+    store = Store(tmp_path)
+    store.config_path.parent.mkdir(parents=True)
+    store.config_path.write_text(text)
+    with pytest.raises(AxialError, match=rf"config\.toml: {message}"):
         load_config(store)
 
 

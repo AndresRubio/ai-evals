@@ -14,6 +14,7 @@ from typing import Literal
 import numpy as np
 from pydantic import BaseModel
 
+from axial.errors import AxialError
 from axial.perplexity import DEFAULT_ORDER, FIELDS, score_traces
 from axial.store import Store
 from axial.traces import Trace
@@ -55,6 +56,20 @@ def _rank(traces: list[Trace], strategy: str, *, perplexity_field: str) -> list[
     return sorted(traces, key=lambda t: float(t.metadata.get(key, 0)), reverse=True)
 
 
+def check_sample_options(
+    n: int, strategy: str, random_fraction: float, perplexity_field: str
+) -> None:
+    """Refuse options `sample_batch` cannot use, before any trace is read or scored."""
+    if n < 0:
+        raise ValueError(f"n must be 0 or more, got {n}")
+    if strategy not in STRATEGIES:
+        raise ValueError(f"unknown strategy {strategy!r}; expected one of {STRATEGIES}")
+    if not 0.0 <= random_fraction <= 1.0:
+        raise ValueError(f"random_fraction must be between 0 and 1, got {random_fraction}")
+    if perplexity_field not in FIELDS:
+        raise ValueError(f"unknown field {perplexity_field!r}; expected one of {FIELDS}")
+
+
 def sample_batch(
     traces: list[Trace],
     n: int,
@@ -64,12 +79,7 @@ def sample_batch(
     perplexity_field: str = "input",
     seed: int = 0,
 ) -> list[Trace]:
-    if strategy not in STRATEGIES:
-        raise ValueError(f"unknown strategy {strategy!r}; expected one of {STRATEGIES}")
-    if not 0.0 <= random_fraction <= 1.0:
-        raise ValueError("random_fraction must be between 0 and 1")
-    if perplexity_field not in FIELDS:
-        raise ValueError(f"unknown field {perplexity_field!r}; expected one of {FIELDS}")
+    check_sample_options(n, strategy, random_fraction, perplexity_field)
     if n >= len(traces):
         return list(traces)
 
@@ -93,16 +103,29 @@ def _session_path(store: Store, name: str) -> Path:
     return store.reviews_dir / f"{name}.jsonl"
 
 
-def create_session(store: Store, traces: list[Trace], *, name: str) -> Path:
-    path = _session_path(store, name)
-    if path.exists():
+def refuse_existing_session(store: Store, name: str) -> None:
+    """Refuse a session name already in use: its reviews would be overwritten."""
+    if _session_path(store, name).exists():
         raise FileExistsError(f"review session {name!r} already exists")
+
+
+def create_session(store: Store, traces: list[Trace], *, name: str) -> Path:
+    refuse_existing_session(store, name)
+    path = _session_path(store, name)
     store.write_jsonl(path, [Review(trace_id=t.trace_id).model_dump() for t in traces])
     return path
 
 
-def read_session(store: Store, name: str) -> list[Review]:
-    return store.read_models(_session_path(store, name), Review)
+def read_session(store: Store, name: str, *, missing_ok: bool = True) -> list[Review]:
+    """The reviews in session `name`. A session that does not exist has none, unless
+    `missing_ok` is False, for a name the user typed."""
+    path = _session_path(store, name)
+    if not missing_ok and not path.exists():
+        raise AxialError(
+            f"no review session named {name!r} in {store.reviews_dir}; "
+            f"`axial sample --name {name}` creates one"
+        )
+    return store.read_models(path, Review)
 
 
 def write_session(store: Store, name: str, reviews: list[Review]) -> None:

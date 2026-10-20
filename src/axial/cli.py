@@ -5,12 +5,12 @@ from __future__ import annotations
 import json
 import math
 from pathlib import Path
-from typing import NoReturn
+from typing import Any, NoReturn
 
 import typer
 from pydantic import ValidationError
 
-from axial.config import load_config, load_env, write_default_config
+from axial.config import Config, load_config, load_env, write_default_config
 from axial.dataset import (
     Label,
     add_labels,
@@ -35,7 +35,14 @@ from axial.report import (
     write_alignment,
 )
 from axial.report import promote as do_promote
-from axial.sample import all_reviews, create_session, read_session, sample_batch
+from axial.sample import (
+    all_reviews,
+    check_sample_options,
+    create_session,
+    read_session,
+    refuse_existing_session,
+    sample_batch,
+)
 from axial.store import Store, validate_name
 from axial.taxonomy import Taxonomy, count_open_codes, propose_taxonomy, saturation_curve
 from axial.traces import ingest as do_ingest
@@ -67,6 +74,21 @@ def _one_line(exc: Exception) -> str:
     if isinstance(exc, ValidationError):
         return validation_message(exc)
     return (str(exc).splitlines() or [""])[0]
+
+
+def _config(store: Store) -> Config:
+    try:
+        return load_config(store)
+    except AxialError as exc:
+        _fail(str(exc))
+
+
+def _require_verdicts(verdicts: list[dict[str, Any]], split: str, mode: str, version: int) -> None:
+    if not any(v.get("split") == split for v in verdicts):
+        _fail(
+            f"no {split} verdicts for {mode} v{version}; run `axial judge {mode} --split {split} "
+            f"--version {version}` first"
+        )
 
 
 def _plain_mode(mode: str) -> str:
@@ -140,7 +162,18 @@ def sample(
 ) -> None:
     """Draw a review batch. Targeted strategies mix in a random slice."""
     store = Store(repo)
-    traces = store.read_traces()
+    try:
+        check_sample_options(n, strategy, random_fraction, perplexity_field)
+    except ValueError as exc:
+        _fail(str(exc))
+    try:
+        refuse_existing_session(store, name)
+    except FileExistsError as exc:
+        _fail(f"{exc}; choose another --name")
+    try:
+        traces = store.read_traces()
+    except (OSError, ValueError) as exc:
+        _fail(f"could not read the traces: {_one_line(exc)}")
     if strategy != "random" and random_fraction == 0:
         typer.echo(
             "warning: --random-fraction 0 with a targeted strategy disables invariant 10 "
@@ -167,7 +200,10 @@ def sample(
         perplexity_field=perplexity_field,
         seed=seed,
     )
-    create_session(store, batch, name=name)
+    try:
+        create_session(store, batch, name=name)
+    except OSError as exc:
+        _fail(f"could not write review session {name!r}: {exc}")
     typer.echo(f"session {name}: {len(batch)} traces ready to annotate")
 
 
@@ -183,7 +219,7 @@ def annotate(
     from axial.annotate.app import create_app
 
     store = Store(repo)
-    config = load_config(store)
+    config = _config(store)
     if not config.annotator:
         _fail("set `annotator` in .axial/config.toml first — every label records who made it")
     typer.echo(f"annotating {name} at http://127.0.0.1:{port}")
@@ -195,7 +231,7 @@ def taxonomy(repo: str = RepoOption) -> None:
     """Propose a failure taxonomy from your open codes."""
     store = Store(repo)
     load_env(repo)
-    config = load_config(store)
+    config = _config(store)
     try:
         require_text_model(config.judge_model)
     except AxialError as exc:
@@ -254,12 +290,14 @@ def label_from_reviews(
     and a `pending` review is skipped rather than silently counted.
     """
     store = Store(repo)
-    reviews = [r for name in sessions for r in read_session(store, name)]
-    labels, skipped = labels_from_reviews(reviews)
     try:
+        reviews = [r for name in sessions for r in read_session(store, name, missing_ok=False)]
+        labels, skipped = labels_from_reviews(reviews)
         add_labels(store, mode, labels)
     except AxialError as exc:
         _fail(str(exc))
+    except (OSError, ValueError) as exc:
+        _fail(f"could not record labels for {mode}: {_one_line(exc)}")
     typer.echo(f"{len(labels)} labels recorded for {mode}; {skipped} pending review(s) skipped")
 
 
@@ -267,13 +305,25 @@ def label_from_reviews(
 def split(mode: str = ModeArgument, seed: int = typer.Option(0), repo: str = RepoOption) -> None:
     """Draw a stratified train/dev/test split and freeze the test manifest."""
     store = Store(repo)
-    config = load_config(store)
-    labels = read_labels(store, mode)
+    config = _config(store)
+    try:
+        labels = read_labels(store, mode)
+    except (OSError, ValueError) as exc:
+        _fail(f"could not split {mode}: {_one_line(exc)}")
+    if not labels:
+        # Saving an empty split would freeze an empty test manifest, and the test split
+        # is write-once, so every split after labelling would then be refused.
+        _fail(
+            f"{mode} has no labels yet; record some with `axial label-import` or "
+            f"`axial label-from-reviews` before `axial split {mode}`"
+        )
     splits = make_splits(store, labels, seed=seed, fractions=config.split_fractions)
     try:
         splits.save(store, mode)
     except AxialError as exc:
         _fail(str(exc))
+    except (OSError, ValueError) as exc:
+        _fail(f"could not split {mode}: {_one_line(exc)}")
     typer.echo(json.dumps(class_balance_report(labels, splits), indent=2))
 
 
@@ -323,7 +373,7 @@ def judge(
 
     store = Store(repo)
     load_env(repo)
-    config = load_config(store)
+    config = _config(store)
     if not (store.dataset_dir(mode) / "splits.json").exists():
         _fail(f"{mode} has no split yet; run `axial split {mode}` first")
     if not version:
@@ -391,7 +441,7 @@ def align(
 ) -> None:
     """Report agreement between a judge and your labels."""
     store = Store(repo)
-    config = load_config(store)
+    config = _config(store)
     directory = store.judge_dir(mode, version)
     try:
         verdicts = store.read_jsonl(directory / "verdicts.jsonl")
@@ -400,16 +450,15 @@ def align(
         traces = store.read_traces()
     except (OSError, ValueError) as exc:
         _fail(f"could not align {mode} v{version}: {_one_line(exc)}")
-    if not any(v.get("split") == "dev" for v in verdicts):
-        _fail(
-            f"no dev verdicts for {mode} v{version}; run `axial judge {mode} --split dev "
-            f"--version {version}` first"
-        )
-    dev = alignment_from_verdicts(verdicts, "dev")
-    test = None
+    _require_verdicts(verdicts, "dev", mode, version)
+    try:
+        dev = alignment_from_verdicts(verdicts, "dev")
+        has_test = any(v.get("split") == "test" for v in verdicts)
+        test = alignment_from_verdicts(verdicts, "test") if has_test else None
+    except ValueError as exc:  # a verdict row that carries no human label
+        _fail(f"could not align {mode} v{version}: {_one_line(exc)}")
     notes: list[str] = []
-    if any(v["split"] == "test" for v in verdicts):
-        test = alignment_from_verdicts(verdicts, "test")
+    if test is not None:
         # `check_promotion` is the only place that decides a gap check was
         # skipped (e.g. because a rate is nan on dev or test); reuse its notes
         # here so that a skipped check is recorded in alignment.md rather than
@@ -490,8 +539,13 @@ def promote(
 ) -> None:
     """Promote a judge to CI, if its test alignment clears the bar."""
     store = Store(repo)
-    config = load_config(store)
-    verdicts = store.read_jsonl(store.judge_dir(mode, version) / "verdicts.jsonl")
+    config = _config(store)
+    try:
+        verdicts = store.read_jsonl(store.judge_dir(mode, version) / "verdicts.jsonl")
+    except (OSError, ValueError) as exc:
+        _fail(f"could not promote {mode} v{version}: {_one_line(exc)}")
+    _require_verdicts(verdicts, "dev", mode, version)
+    _require_verdicts(verdicts, "test", mode, version)
     try:
         do_promote(
             store, mode, version,
@@ -508,6 +562,8 @@ def promote(
         for line in str(exc).splitlines():
             typer.echo(line)
         raise typer.Exit(code=1) from None
+    except ValueError as exc:  # a verdict row that carries no human label
+        _fail(f"could not promote {mode} v{version}: {_one_line(exc)}")
     typer.echo(f"{mode} v{version} promoted")
 
 

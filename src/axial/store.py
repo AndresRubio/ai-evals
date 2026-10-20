@@ -18,6 +18,7 @@ from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import Any
 
+import yaml
 from pydantic import BaseModel, ValidationError
 
 from axial.errors import AxialError, validation_message
@@ -299,6 +300,27 @@ class Store:
 
     def read_json(self, path: Path) -> Any:
         return json.loads(path.read_text())
+
+    def read_yaml(self, path: Path) -> Any:
+        """The YAML document at `path`. A syntax error is a one-line ValueError naming the
+        file, line and column; PyYAML's own message runs to several lines."""
+        try:
+            return yaml.safe_load(path.read_text())
+        except yaml.MarkedYAMLError as exc:
+            mark = exc.problem_mark
+            where = f" on line {mark.line + 1}, column {mark.column + 1}" if mark else ""
+            raise ValueError(f"{path}: invalid YAML{where}: {exc.problem}") from exc
+        except yaml.YAMLError as exc:
+            raise ValueError(f"{path}: invalid YAML: {(str(exc).splitlines() or [''])[0]}") from exc
+
+    def read_yaml_model[M: BaseModel](self, path: Path, model: type[M], empty: Any = None) -> M:
+        """`read_yaml` validated as `model`, reading an empty document as `empty`. A
+        document that does not validate is a one-line ValueError naming the file."""
+        data = self.read_yaml(path)
+        try:
+            return model.model_validate(empty if data is None else data)
+        except ValidationError as exc:
+            raise ValueError(f"{path}: {validation_message(exc)}") from exc
 
     def hash_file(self, path: Path) -> str:
         """SHA-256 of a file's raw bytes, or of empty bytes if it doesn't exist.

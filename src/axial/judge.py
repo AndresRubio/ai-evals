@@ -81,8 +81,7 @@ class JudgeSpec(BaseModel):
 
     @classmethod
     def load(cls, store: Store, mode: str, version: int) -> JudgeSpec:
-        path = store.judge_dir(mode, version) / "judge.yaml"
-        return cls.model_validate(yaml.safe_load(path.read_text()))
+        return store.read_yaml_model(store.judge_dir(mode, version) / "judge.yaml", cls)
 
 
 def build_judge_model(spec: JudgeSpec) -> Model:
