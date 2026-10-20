@@ -24,7 +24,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import numpy as np
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from axial.errors import InvariantViolation
 from axial.sample import Review
@@ -194,6 +194,16 @@ class Label(BaseModel):
     annotator: str
     ts: str = Field(default_factory=_now)
 
+    @field_validator("trace_id", mode="before")
+    @classmethod
+    def _integer_id_as_text(cls, value: object) -> object:
+        # `ingest` stores an integer trace id as its decimal string, so a labels file
+        # exported alongside the traces must name trace 123 the same way to match it.
+        # A float or a bool has no one spelling and is refused, as it is for traces.
+        if isinstance(value, int) and not isinstance(value, bool):
+            return str(value)
+        return value
+
 
 def _check_human(label: Label) -> None:
     annotator = (label.annotator or "").strip()
@@ -236,7 +246,7 @@ def add_labels(store: Store, mode: str, labels: list[Label]) -> None:
 
 
 def read_labels(store: Store, mode: str) -> list[Label]:
-    return [Label.model_validate(r) for r in store.read_jsonl(_labels_path(store, mode))]
+    return store.read_models(_labels_path(store, mode), Label)
 
 
 def labels_from_reviews(reviews: list[Review]) -> tuple[list[Label], int]:

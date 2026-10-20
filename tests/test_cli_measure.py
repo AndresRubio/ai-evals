@@ -149,6 +149,15 @@ def test_measure_reports_a_jsonl_line_that_is_not_an_object(repo: Path):
     assert_clean(result, 1, "could not read", "row 1")
 
 
+def test_measure_names_the_row_of_a_line_that_is_not_json(repo: Path):
+    bad = repo / "bad.jsonl"
+    bad.write_text('{"input": "i", "output": "GOOD"}\n{oops\n')
+    result = axial("measure", MEASURE_MODE, "--version", "1", "--traces", str(bad), "--name", "x")
+    assert_clean(result, 1, f"could not read {bad}: row 2: invalid JSON at column 2")
+    assert len(result.output.strip().splitlines()) == 1
+    assert not (repo / ".axial" / "measurements" / MEASURE_MODE / "x").exists()
+
+
 def write_rows(path: Path, rows: list[dict[str, object]]) -> Path:
     path.write_text("".join(json.dumps(row) + "\n" for row in rows))
     return path

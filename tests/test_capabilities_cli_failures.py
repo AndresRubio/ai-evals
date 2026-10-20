@@ -10,13 +10,18 @@ traceback). Where the CLI falls short, the test is a strict xfail naming the gap
 from __future__ import annotations
 
 import json
+import os
 import socket
 from pathlib import Path
 
 import pytest
+from measure_helpers import MEASURE_MODE, build_promoted_judge, fake_judge_builder
 from typer.testing import CliRunner, Result
 
 from axial.cli import app
+from axial.model import FakeModel
+from axial.sample import Review, write_session
+from axial.store import Store
 
 runner = CliRunner()
 
@@ -45,6 +50,17 @@ def assert_clean_failure(result: Result, *fragments: str) -> None:
     )
     for fragment in fragments:
         assert fragment.lower() in result.output.lower(), (fragment, result.output)
+
+
+def assert_one_line_refusal(result: Result, *fragments: str, after: int = 0) -> None:
+    """A clean exit 1 whose refusal is one line holding every fragment, printed after
+    `after` lines of ordinary output."""
+    assert_clean_failure(result)
+    assert result.exit_code == 1, result.output
+    lines = result.output.strip().splitlines()
+    assert len(lines) == after + 1, result.output
+    for fragment in fragments:
+        assert fragment in lines[-1], (fragment, result.output)
 
 
 def write_traces(tmp_path: Path, n: int = 6) -> Path:
@@ -153,61 +169,68 @@ def test_sample_with_an_unknown_perplexity_field_fails_cleanly(tmp_path: Path) -
 # --- missing or malformed inputs -----------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="ingest of a missing file escapes as FileNotFoundError (cli.py:68); the "
-    "`path` argument is not declared exists=True",
-)
 def test_ingest_of_a_missing_file_fails_cleanly(tmp_path: Path) -> None:
     """Ingesting a path that does not exist says so, without a traceback."""
-    assert_clean_failure(run("ingest", str(tmp_path / "nope.jsonl")), "nope.jsonl")
+    assert_one_line_refusal(run("ingest", str(tmp_path / "nope.jsonl")), "nope.jsonl")
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="a row missing `output` raises ValueError('row 1: missing required field') "
-    "which cli.py:68 does not catch, so the useful message arrives as a traceback",
-)
 def test_ingest_of_a_row_missing_a_field_fails_cleanly(tmp_path: Path) -> None:
     """A JSONL row without `output` is refused with the row number and the field."""
     bad = tmp_path / "bad.jsonl"
     bad.write_text('{"input": "x"}\n')
-    assert_clean_failure(run("ingest", str(bad)), "row 1", "output")
+    assert_one_line_refusal(run("ingest", str(bad)), "row 1", "output")
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="a line that is not JSON escapes as json.JSONDecodeError (traces.py:50) "
-    "with no file or line context",
-)
 def test_ingest_of_invalid_json_fails_cleanly(tmp_path: Path) -> None:
-    """A line that is not JSON is refused with the line it is on."""
+    """A line that is not JSON is refused with the line it is on, which ingest calls a row."""
     bad = tmp_path / "bad.jsonl"
-    bad.write_text("not json\n")
-    assert_clean_failure(run("ingest", str(bad)), "line 1")
+    bad.write_text('{"input": "i", "output": "o"}\nnot json\n')
+    assert_one_line_refusal(run("ingest", str(bad)), "row 2: invalid JSON")
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="label-import of a path that does not exist reads it as empty "
-    "(Store.read_jsonl returns []) and reports '0 labels recorded' with exit 0",
-)
+def test_ingest_of_a_wrongly_typed_field_fails_cleanly(tmp_path: Path) -> None:
+    """A chat-message list where `input` should be text is refused naming the row and field."""
+    bad = tmp_path / "bad.jsonl"
+    bad.write_text(json.dumps({"input": [{"role": "user", "content": "x"}], "output": "y"}) + "\n")
+    result = run("ingest", str(bad))
+    assert_one_line_refusal(result, "row 1: input: ", "got list")
+    assert "pydantic" not in result.output
+
+
+def test_ingest_of_a_csv_field_over_the_parser_limit_fails_cleanly(tmp_path: Path) -> None:
+    """A CSV cell longer than the csv module accepts is refused, not a traceback."""
+    bad = tmp_path / "huge.csv"
+    bad.write_text("input,output\n" + "x" * 131073 + ",y\n")
+    assert_one_line_refusal(run("ingest", str(bad)), "huge.csv", "field larger than field limit")
+
+
+def test_ingest_that_cannot_write_the_corpus_fails_cleanly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A full disk or a read-only `.axial/` is reported in one line naming the file."""
+
+    def disk_full(self: Store, traces: object) -> None:
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(Store, "write_traces", disk_full)
+    assert_one_line_refusal(
+        run("ingest", str(write_traces(tmp_path))), "could not write", "traces.jsonl", "No space"
+    )
+
+
 def test_label_import_of_a_missing_file_fails(tmp_path: Path) -> None:
     """Importing labels from a path that does not exist is an error, not zero labels."""
-    assert_clean_failure(
+    assert_one_line_refusal(
         run("label-import", "m", "--path", str(tmp_path / "nope.jsonl")), "nope.jsonl"
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="a label row missing `critique`/`annotator` escapes as a pydantic "
-    "ValidationError traceback (cli.py:190 only catches AxialError)",
-)
 def test_label_import_of_an_incomplete_row_fails_cleanly(tmp_path: Path) -> None:
     """A label row missing required fields names the missing field, without a traceback."""
     path = write_labels(tmp_path, [{"trace_id": "t0", "label": True}])
-    assert_clean_failure(run("label-import", "m", "--path", str(path)), "critique")
+    assert_one_line_refusal(
+        run("label-import", "m", "--path", str(path)), "line 1: critique: Field required"
+    )
 
 
 def test_label_import_of_a_machine_annotator_fails_cleanly(tmp_path: Path) -> None:
@@ -308,27 +331,19 @@ def test_split_run_too_early_locks_out_the_real_split(tmp_path: Path) -> None:
     assert "write-once" in result.output
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="judge before split escapes as FileNotFoundError on splits.json "
-    "(cli.py:313 Splits.load), after already writing judge.yaml",
-)
 def test_judge_before_split_fails_cleanly(tmp_path: Path) -> None:
-    """Judging a mode that has no split yet points the user at `axial split`."""
+    """Judging a mode that has no split yet points the user at `axial split`, and leaves
+    no judge.yaml behind."""
     run("init")
     run("ingest", str(write_traces(tmp_path)))
-    assert_clean_failure(run("judge", "m", "--split", "dev"), "split")
+    assert_one_line_refusal(run("judge", "m", "--split", "dev"), "axial split m")
+    assert not Path(".axial/judges").exists()
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="align with no verdicts escapes as ValueError('cannot align on an empty set') "
-    "from align.align (cli.py:340), a traceback",
-)
 def test_align_before_judge_fails_cleanly() -> None:
     """Aligning a judge that has produced no verdicts says so and points at `judge`."""
     run("init")
-    assert_clean_failure(run("align", "m", "1"), "verdict")
+    assert_one_line_refusal(run("align", "m", "1"), "no dev verdicts", "axial judge m")
 
 
 @pytest.mark.xfail(
@@ -356,3 +371,102 @@ def test_taxonomy_before_enough_open_codes_fails_cleanly(tmp_path: Path) -> None
     """`taxonomy` with no annotations refuses before any model call, with the floor named."""
     run("init")
     assert_clean_failure(run("taxonomy"), "0 traces carry an open code", "30")
+
+
+# --- an unusable model reply ---------------------------------------------------
+
+
+def open_coded_session(n: int = 30) -> None:
+    reviews = [Review(trace_id=f"t{i}", open_code=f"code {i}", status="done") for i in range(n)]
+    write_session(Store("."), "s", reviews)
+
+
+@pytest.mark.parametrize(
+    ("reply", "fragments"),
+    [
+        ("I could not group these codes.", ("could not parse a taxonomy",)),
+        (
+            '{"modes": [{"id": "x", "name": "X"}]}',
+            ("expected shape", "modes.0.definition: Field required"),
+        ),
+    ],
+    ids=["no-json", "wrong-shape"],
+)
+def test_taxonomy_with_an_unusable_model_reply_fails_cleanly(
+    monkeypatch: pytest.MonkeyPatch, reply: str, fragments: tuple[str, ...]
+) -> None:
+    """A reply with no JSON, or JSON of the wrong shape, is refused in one line after the
+    open-code count, and no taxonomy is saved."""
+    run("init")
+    open_coded_session()
+    monkeypatch.setattr("axial.cli.LiteLLMModel", lambda _model: FakeModel(lambda _prompt: reply))
+    assert_one_line_refusal(run("taxonomy"), *fragments, after=1)
+    assert not Path(".axial/taxonomy.yaml").exists()
+
+
+def test_taxonomy_over_a_corrupt_review_session_fails_cleanly() -> None:
+    """A review row that does not validate names its session file and line."""
+    run("init")
+    session = Path(".axial/reviews/s.jsonl")
+    session.parent.mkdir(parents=True)
+    session.write_text('{"trace_id": "t0"}\n{"trace_id": 7.5}\n')
+    assert_one_line_refusal(
+        run("taxonomy"), "could not read the review sessions", "s.jsonl: line 2: trace_id: "
+    )
+
+
+# --- corrupt files under .axial/ -------------------------------------------------
+
+
+def snapshot(root: Path) -> dict[str, tuple[int, int, int]]:
+    """Inode, size and mtime of every file under `root`; unlike the bytes, these can be
+    read for a file the test made unreadable."""
+    return {
+        str(p.relative_to(root)): (p.stat().st_ino, p.stat().st_size, p.stat().st_mtime_ns)
+        for p in sorted(root.rglob("*"))
+        if p.is_file()
+    }
+
+
+def corrupt(store: Store, kind: str) -> str:
+    """Damage one file the way a hand edit or a bad copy would; return what the refusal
+    must name."""
+    labels = store.dataset_dir(MEASURE_MODE) / "labels.jsonl"
+    if kind == "traces-json":
+        with store.traces_path.open("a") as fh:
+            fh.write("{oops\n")
+        return "traces.jsonl: invalid JSON on line"
+    if kind == "labels-type":
+        with labels.open("a") as fh:
+            fh.write(json.dumps({"trace_id": 1.5, "label": True, "critique": "c", "annotator": "a"}))
+        return "labels.jsonl: line 131: trace_id: Input should be a valid string, got float"
+    if kind == "labels-missing-field":
+        with labels.open("a") as fh:
+            fh.write(json.dumps({"trace_id": "x", "label": True, "annotator": "a"}))
+        return "labels.jsonl: line 131: critique: Field required"
+    assert kind == "labels-unreadable"
+    if os.geteuid() == 0:
+        pytest.skip("root reads a file whatever its mode")
+    labels.chmod(0)
+    return "Permission denied"
+
+
+@pytest.mark.parametrize(
+    "kind", ["traces-json", "labels-type", "labels-missing-field", "labels-unreadable"]
+)
+@pytest.mark.parametrize(
+    "command", [("judge", MEASURE_MODE, "--split", "dev"), ("align", MEASURE_MODE, "1")],
+    ids=["judge", "align"],
+)
+def test_judge_and_align_over_a_corrupt_store_fail_cleanly_and_write_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str, command: tuple[str, ...]
+) -> None:
+    """A damaged traces or labels file is refused in one line naming it, before
+    judge.yaml, a verdict or alignment.md is written."""
+    store = Store(tmp_path)
+    build_promoted_judge(store)
+    monkeypatch.setattr("axial.cli.build_judge_model", fake_judge_builder())
+    expected = corrupt(store, kind)
+    before = snapshot(store.root)
+    assert_one_line_refusal(run(*command), f"could not {command[0]} {MEASURE_MODE}", expected)
+    assert snapshot(store.root) == before

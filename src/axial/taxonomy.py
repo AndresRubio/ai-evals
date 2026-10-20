@@ -14,9 +14,9 @@ from collections.abc import Callable
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
-from axial.errors import InvariantViolation
+from axial.errors import InvariantViolation, validation_message
 from axial.sample import Review
 from axial.store import MAX_NAME_LENGTH, Store
 
@@ -160,7 +160,12 @@ def propose_taxonomy(
         if r.open_code and r.open_code.strip()
     )
     payload = _extract_json(complete(PROMPT.format(codes=codes)))
-    taxonomy = Taxonomy.model_validate(payload)
+    try:
+        taxonomy = Taxonomy.model_validate(payload)
+    except ValidationError as exc:
+        raise ValueError(
+            f"the model's taxonomy does not have the expected shape: {validation_message(exc)}"
+        ) from exc
     _mode_ids(taxonomy.modes)
     taxonomy.recount(reviews)
     return taxonomy

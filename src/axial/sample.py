@@ -102,7 +102,7 @@ def create_session(store: Store, traces: list[Trace], *, name: str) -> Path:
 
 
 def read_session(store: Store, name: str) -> list[Review]:
-    return [Review.model_validate(r) for r in store.read_jsonl(_session_path(store, name))]
+    return store.read_models(_session_path(store, name), Review)
 
 
 def write_session(store: Store, name: str, reviews: list[Review]) -> None:
@@ -114,5 +114,5 @@ def all_reviews(store: Store) -> list[Review]:
         return []
     out: list[Review] = []
     for path in sorted(store.reviews_dir.glob("*.jsonl")):
-        out.extend(Review.model_validate(r) for r in store.read_jsonl(path))
+        out.extend(store.read_models(path, Review))
     return out

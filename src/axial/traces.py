@@ -16,6 +16,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field, ValidationError
 
+from axial.errors import validation_message
+
 RESERVED_KEYS = {"trace_id", "input", "output"}
 
 
@@ -55,12 +57,7 @@ def _trace_from_row(row: object, *, where: str) -> Trace:
     try:
         return Trace(trace_id=trace_id, input=row["input"], output=row["output"], metadata=metadata)
     except ValidationError as exc:
-        # One line naming the row and the field: pydantic's own message runs to four
-        # lines, names no row and ends in a URL.
-        error = exc.errors()[0]
-        field = ".".join(str(part) for part in error["loc"])
-        got = type(error["input"]).__name__
-        raise ValueError(f"{where}: {field}: {error['msg']}, got {got}") from exc
+        raise ValueError(f"{where}: {validation_message(exc)}") from exc
 
 
 def ingest_jsonl(path: Path) -> list[Trace]:
@@ -69,7 +66,13 @@ def ingest_jsonl(path: Path) -> list[Trace]:
         for n, line in enumerate(fh, start=1):
             if not line.strip():
                 continue
-            traces.append(_trace_from_row(json.loads(line), where=f"row {n}"))
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError as exc:
+                # json's own "line 1 column 5" counts within this one line, so only the
+                # column is kept and the row says which line of the file it is.
+                raise ValueError(f"row {n}: invalid JSON at column {exc.colno}: {exc.msg}") from exc
+            traces.append(_trace_from_row(row, where=f"row {n}"))
     return traces
 
 

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import NoReturn
 
 import typer
+from pydantic import ValidationError
 
 from axial.config import load_config, load_env, write_default_config
 from axial.dataset import (
@@ -18,7 +19,7 @@ from axial.dataset import (
     make_splits,
     read_labels,
 )
-from axial.errors import AxialError
+from axial.errors import AxialError, validation_message
 from axial.gate import gate as run_gate
 from axial.gate import gate_batches
 from axial.judge import JudgeSpec, build_judge_model, run_judge
@@ -61,6 +62,13 @@ def _fail(message: str) -> NoReturn:
     raise typer.Exit(code=1)
 
 
+def _one_line(exc: Exception) -> str:
+    """`exc`'s message cut to one line, for a refusal that has to stay one line."""
+    if isinstance(exc, ValidationError):
+        return validation_message(exc)
+    return (str(exc).splitlines() or [""])[0]
+
+
 def _plain_mode(mode: str) -> str:
     try:
         return validate_name(mode, "mode")
@@ -90,8 +98,14 @@ def ingest(
 ) -> None:
     """Load traces from a JSONL or CSV file, or through a registered adapter."""
     store = Store(repo)
-    traces = do_ingest(path, adapter=adapter)
-    store.write_traces(traces)
+    try:
+        traces = do_ingest(path, adapter=adapter)
+    except (OSError, ValueError) as exc:
+        _fail(f"could not read {path}: {_one_line(exc)}")
+    try:
+        store.write_traces(traces)
+    except OSError as exc:
+        _fail(f"could not write {store.traces_path}: {exc}")
     typer.echo(f"ingested {len(traces)} traces into {store.traces_path}")
 
 
@@ -186,7 +200,10 @@ def taxonomy(repo: str = RepoOption) -> None:
         require_text_model(config.judge_model)
     except AxialError as exc:
         _fail(str(exc))
-    reviews = all_reviews(store)
+    try:
+        reviews = all_reviews(store)
+    except (OSError, ValueError) as exc:
+        _fail(f"could not read the review sessions: {_one_line(exc)}")
     typer.echo(f"{count_open_codes(reviews)} open codes; saturation {saturation_curve(reviews)[-20:]}")
     model = LiteLLMModel(config.judge_model)
     try:
@@ -197,6 +214,8 @@ def taxonomy(repo: str = RepoOption) -> None:
         )
     except AxialError as exc:
         _fail(str(exc))
+    except ValueError as exc:  # the reply held no JSON, or JSON of the wrong shape
+        _fail(_one_line(exc))
     result.save(store)
     for mode in result.modes:
         typer.echo(f"  {mode.id}: {mode.name} (prevalence {mode.prevalence})")
@@ -210,12 +229,14 @@ def label_import(
 ) -> None:
     """Import human labels you made elsewhere."""
     store = Store(repo)
-    rows = store.read_jsonl(path)
     try:
-        add_labels(store, mode, [Label.model_validate(r) for r in rows])
+        labels = store.read_models(path, Label, missing_ok=False)
+        add_labels(store, mode, labels)
     except AxialError as exc:
         _fail(str(exc))
-    typer.echo(f"{len(rows)} labels recorded for {mode}")
+    except (OSError, ValueError) as exc:
+        _fail(f"could not import labels: {_one_line(exc)}")
+    typer.echo(f"{len(labels)} labels recorded for {mode}")
 
 
 @app.command("label-from-reviews")
@@ -303,12 +324,30 @@ def judge(
     store = Store(repo)
     load_env(repo)
     config = load_config(store)
+    if not (store.dataset_dir(mode) / "splits.json").exists():
+        _fail(f"{mode} has no split yet; run `axial split {mode}` first")
     if not version:
         if new:
             version = store.next_judge_version(mode)
         else:
             version = store.latest_judge_version(mode) or 1
-    taxonomy_modes = {m.id: m for m in Taxonomy.load(store).modes}
+
+    # Everything the run reads is read before judge.yaml is written, so an input that
+    # is missing or corrupt leaves no half-made judge behind.
+    judge_yaml = store.judge_dir(mode, version) / "judge.yaml"
+    try:
+        taxonomy_modes = {m.id: m for m in Taxonomy.load(store).modes}
+        existing = JudgeSpec.load(store, mode, version) if judge_yaml.exists() else None
+        splits = Splits.load(store, mode)
+        # `corpus` is read once, in full, and passed separately from `traces`: the
+        # split under judgment is almost never where its own few-shot examples live
+        # (those come from train), so `run_judge` needs the whole trace set to
+        # resolve `few_shot_ids` against — passing only the split's traces here
+        # would silently starve few-shot resolution.
+        corpus = store.read_traces()
+        labels = read_labels(store, mode)
+    except (OSError, ValueError) as exc:
+        _fail(f"could not judge {mode}: {_one_line(exc)}")
     entry = taxonomy_modes.get(mode)
 
     # Load an existing spec rather than overwriting it: a fresh `JudgeSpec` on
@@ -316,9 +355,8 @@ def judge(
     # `prompt_template`. Only build a new spec when this mode/version has none
     # yet; a spec that already exists is the source of truth for everything it
     # already carries.
-    judge_yaml = store.judge_dir(mode, version) / "judge.yaml"
-    if judge_yaml.exists():
-        spec = JudgeSpec.load(store, mode, version)
+    if existing is not None:
+        spec = existing
         if not spec.mode_name and entry:
             spec.mode_name = entry.name
         if not spec.mode_definition and entry:
@@ -335,18 +373,11 @@ def judge(
         spec.few_shot_ids = few_shot
     spec.save(store)
 
-    splits = Splits.load(store, mode)
     wanted = set(getattr(splits, split_name))
-    # `corpus` is read once, in full, and passed separately from `traces`: the
-    # split under judgment is almost never where its own few-shot examples live
-    # (those come from train), so `run_judge` needs the whole trace set to
-    # resolve `few_shot_ids` against — passing only the split's traces here
-    # would silently starve few-shot resolution.
-    corpus = store.read_traces()
     traces = [t for t in corpus if t.trace_id in wanted]
     try:
         result = run_judge(
-            store, spec, traces, read_labels(store, mode), splits,
+            store, spec, traces, labels, splits,
             build_judge_model(spec), split=split_name, corpus=corpus,
         )
     except AxialError as exc:
@@ -362,8 +393,18 @@ def align(
     store = Store(repo)
     config = load_config(store)
     directory = store.judge_dir(mode, version)
-    verdicts = store.read_jsonl(directory / "verdicts.jsonl")
-    errors = store.read_jsonl(directory / "errors.jsonl")
+    try:
+        verdicts = store.read_jsonl(directory / "verdicts.jsonl")
+        errors = store.read_jsonl(directory / "errors.jsonl")
+        labels = read_labels(store, mode)
+        traces = store.read_traces()
+    except (OSError, ValueError) as exc:
+        _fail(f"could not align {mode} v{version}: {_one_line(exc)}")
+    if not any(v.get("split") == "dev" for v in verdicts):
+        _fail(
+            f"no dev verdicts for {mode} v{version}; run `axial judge {mode} --split dev "
+            f"--version {version}` first"
+        )
     dev = alignment_from_verdicts(verdicts, "dev")
     test = None
     notes: list[str] = []
@@ -374,7 +415,7 @@ def align(
         # here so that a skipped check is recorded in alignment.md rather than
         # only surfacing later, at `promote` time.
         notes = check_promotion(dev, test, config.thresholds).notes
-    disagreements = find_disagreements(verdicts, read_labels(store, mode), store.read_traces())
+    disagreements = find_disagreements(verdicts, labels, traces)
     path = write_alignment(
         store, mode, version, dev, test,
         n_errors=len(errors), notes=notes, disagreements=disagreements,

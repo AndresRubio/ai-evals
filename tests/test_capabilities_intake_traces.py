@@ -243,13 +243,23 @@ def test_a_non_object_json_line_is_reported_as_a_row_error(tmp_path: Path):
         ingest_jsonl(tmp_path / "t.jsonl")
 
 
-@pytest.mark.xfail(strict=True, reason="traces.py:50 lets json.loads' bare JSONDecodeError escape, "
-                   "unlike Store.read_jsonl, so a corrupt export names neither file nor row")
 def test_a_corrupt_jsonl_line_is_reported_with_its_row_number(tmp_path: Path):
     """A syntax error in line 2 should say 'row 2', as missing-field errors do."""
     (tmp_path / "t.jsonl").write_text('{"input": "i", "output": "o"}\n{oops\n')
     with pytest.raises(ValueError, match="row 2"):
         ingest_jsonl(tmp_path / "t.jsonl")
+
+
+def test_a_corrupt_jsonl_line_is_reported_in_one_line_without_jsons_own_line_count(
+    tmp_path: Path,
+):
+    """json counts lines within the one line it was given, which would read as 'line 1'."""
+    (tmp_path / "t.jsonl").write_text('{"input": "i", "output": "o"}\n{oops\n')
+    with pytest.raises(ValueError) as caught:
+        ingest_jsonl(tmp_path / "t.jsonl")
+    assert str(caught.value) == (
+        "row 2: invalid JSON at column 2: Expecting property name enclosed in double quotes"
+    )
 
 
 # --- unicode, size, metadata -------------------------------------------------------

@@ -14,11 +14,13 @@ import shutil
 import stat
 import tempfile
 import uuid
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import Any
 
-from axial.errors import AxialError
+from pydantic import BaseModel, ValidationError
+
+from axial.errors import AxialError, validation_message
 from axial.traces import Trace
 
 # A mode or a batch name becomes one directory name under `.axial/`. Starting with a
@@ -151,23 +153,43 @@ class Store:
         with path.open("a") as fh:
             fh.write(json.dumps(row, sort_keys=True) + "\n")
 
-    def read_jsonl(self, path: Path) -> list[dict[str, Any]]:
-        if not path.exists():
-            return []
-        rows: list[dict[str, Any]] = []
+    def _numbered_rows(self, path: Path) -> Iterator[tuple[int, Any]]:
         with path.open() as fh:
             for lineno, line in enumerate(fh, start=1):
                 if not line.strip():
                     continue
                 try:
-                    rows.append(json.loads(line))
+                    yield lineno, json.loads(line)
                 except json.JSONDecodeError as exc:
                     # Name the file and the line so a corrupt session or
                     # labels file produces a diagnosis, not an anonymous
                     # JSONDecodeError that aborts every session that happens
                     # to load it.
                     raise ValueError(f"{path}: invalid JSON on line {lineno}: {exc}") from exc
-        return rows
+
+    def read_jsonl(self, path: Path) -> list[dict[str, Any]]:
+        if not path.exists():
+            return []
+        return [row for _, row in self._numbered_rows(path)]
+
+    def read_models[M: BaseModel](
+        self, path: Path, model: type[M], *, missing_ok: bool = True
+    ) -> list[M]:
+        """`read_jsonl` with each row validated as `model`.
+
+        A row that does not validate is a one-line ValueError naming the file and the
+        line, as corrupt JSON already is. A missing file reads as no rows unless
+        `missing_ok` is False, for a file the user named rather than one of the store's.
+        """
+        if missing_ok and not path.exists():
+            return []
+        models: list[M] = []
+        for lineno, row in self._numbered_rows(path):
+            try:
+                models.append(model.model_validate(row))
+            except ValidationError as exc:
+                raise ValueError(f"{path}: line {lineno}: {validation_message(exc)}") from exc
+        return models
 
     def _atomic_write(self, path: Path, data: str) -> None:
         """Write `data` to `path` via a same-directory temp file plus `os.replace`.
@@ -294,7 +316,7 @@ class Store:
         self.write_jsonl(self.traces_path, [t.model_dump() for t in traces])
 
     def read_traces(self) -> list[Trace]:
-        return [Trace.model_validate(row) for row in self.read_jsonl(self.traces_path)]
+        return self.read_models(self.traces_path, Trace)
 
     # --- hashing -------------------------------------------------------
     def hash_ids(self, ids: Iterable[str]) -> str:

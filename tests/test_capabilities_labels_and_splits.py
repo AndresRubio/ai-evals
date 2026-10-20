@@ -214,8 +214,36 @@ def test_label_import_names_the_line_of_a_corrupt_labels_file(tmp_path: Path):
     src = tmp_path / "l.jsonl"
     src.write_text(json.dumps(label_row("a")) + "\n{oops\n")
     result = run_cli(tmp_path, "label-import", "m", "--path", str(src))
-    assert result.exit_code != 0
-    assert "line 2" in str(result.exception)
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert "l.jsonl: invalid JSON on line 2" in result.output
+
+
+def test_label_import_keeps_an_integer_trace_id_as_its_decimal_string(tmp_path: Path):
+    """`"trace_id": 123` names the trace `ingest` stored as "123", so the two still match."""
+    traces = tmp_path / "t.jsonl"
+    traces.write_text(json.dumps({"trace_id": 123, "input": "i", "output": "o"}) + "\n")
+    assert run_cli(tmp_path, "ingest", str(traces)).exit_code == 0
+    src = write_labels_file(tmp_path / "l.jsonl", [{**label_row(), "trace_id": 123}])
+    assert run_cli(tmp_path, "label-import", "m", "--path", str(src)).exit_code == 0
+    store = Store(tmp_path)
+    assert [lbl.trace_id for lbl in read_labels(store, "m")] == ["123"]
+    assert [t.trace_id for t in store.read_traces()] == ["123"]
+
+
+@pytest.mark.parametrize("bad", [123.0, True])
+def test_label_import_refuses_a_float_or_boolean_trace_id_in_one_line(tmp_path: Path, bad: object):
+    """Limit: as for traces, a float or a bool id has no one spelling to keep."""
+    src = write_labels_file(tmp_path / "l.jsonl", [label_row("a"), {**label_row(), "trace_id": bad}])
+    result = run_cli(tmp_path, "label-import", "m", "--path", str(src))
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    expected = (
+        f"could not import labels: {src}: line 2: trace_id: Input should be a valid string, "
+        f"got {type(bad).__name__}"
+    )
+    assert result.output.strip().splitlines() == [expected]
+    assert read_labels(Store(tmp_path), "m") == []
 
 
 def test_label_import_of_a_repeated_id_keeps_the_last_row(tmp_path: Path):
@@ -228,8 +256,6 @@ def test_label_import_of_a_repeated_id_keeps_the_last_row(tmp_path: Path):
     assert [(lbl.trace_id, lbl.label) for lbl in stored] == [("a", False)]
 
 
-@pytest.mark.xfail(strict=True, reason="cli.py:188 reads via Store.read_jsonl, which returns [] for "
-                   "a missing file, so a typo'd --path reports '0 labels recorded' and exits 0")
 def test_label_import_fails_when_the_labels_file_does_not_exist(tmp_path: Path):
     """A wrong path should be an error, not a silent zero-label success."""
     result = run_cli(tmp_path, "label-import", "m", "--path", str(tmp_path / "typo.jsonl"))
