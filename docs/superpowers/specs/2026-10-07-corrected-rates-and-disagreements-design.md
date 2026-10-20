@@ -233,7 +233,7 @@ In batch mode, `gate`:
      paired and uses only the pairs. Otherwise it is unpaired over both full batches.
    - Either way the gate prints which, with the counts, for example
      `paired on 987 shared inputs (13 baseline and 9 candidate traces unmatched)` or
-     `unpaired: only 41% of inputs shared`.
+     `unpaired: only 41.0% of inputs shared`.
 5. Prints the candidate's corrected rate and interval, and with a baseline the corrected
    difference and its interval.
 6. Fails (exit 1) when:

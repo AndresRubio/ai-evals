@@ -25,6 +25,7 @@ from axial.measure import (
     input_sha256,
     load_measurement,
     measure_batch,
+    set_aside_note,
 )
 from axial.store import Store
 from axial.traces import Trace
@@ -278,7 +279,21 @@ def test_set_aside_traces_stay_out_of_the_rate_and_are_noted_above_five_percent(
     errors = store.read_jsonl(store.measurement_dir(MEASURE_MODE, "rel-1") / "errors.jsonl")
     assert {e["failure_class"] for e in errors} == {"unparseable"}
     assert all("input_sha256" in e for e in errors)
-    assert any("2 of 20 traces (10%) were set aside" in n for n in result.notes)
+    assert any("2 of 20 traces (10.0%) were set aside" in n for n in result.notes)
+
+
+@pytest.mark.parametrize(
+    ("n_set_aside", "n_traces", "shown"),
+    [(26, 500, "5.2%"), (1_001, 20_000, "5.1%"), (1, 3, "33.4%"), (100, 500, "20.0%")],
+)
+def test_the_set_aside_share_is_rounded_up_so_it_never_shows_as_5_percent(
+    n_set_aside: int, n_traces: int, shown: str
+):
+    """The note appears only above 5%. 26 of 500 printed as 5%, and 1,001 of 20,000
+    (5.005%) rounded to one decimal still would."""
+    note = set_aside_note(n_set_aside, n_traces)
+    assert note is not None
+    assert note.startswith(f"{n_set_aside} of {n_traces} traces ({shown}) were set aside")
 
 
 def test_five_percent_set_aside_is_not_noted(store: Store):

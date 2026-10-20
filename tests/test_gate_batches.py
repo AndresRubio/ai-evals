@@ -104,7 +104,7 @@ def test_a_candidate_with_a_fifth_set_aside_gets_the_note_and_the_same_decision(
     """Owner's ruling: the gate warns about set-aside traces and decides as it did."""
     measure(store, "rel-1", with_set_aside(60, 100))
     note = set_aside_note(store, "rel-1")
-    assert note.startswith("100 of 500 traces (20%) were set aside")
+    assert note.startswith("100 of 500 traces (20.0%) were set aside")
     passing = run(store, "rel-1", max_rate=0.20)
     assert passing.passed
     assert f"note: {note}" in passing.messages
@@ -183,7 +183,7 @@ def test_batches_without_shared_inputs_are_compared_unpaired(store: Store):
     measure(store, "base", flags(60))
     measure(store, "cand", flags(80), start=10_000)
     result = run(store, "cand", baseline_batch="base")
-    assert "unpaired: only 0% of inputs shared" in result.messages
+    assert "unpaired: only 0.0% of inputs shared" in result.messages
     assert result.passed  # the unpaired interval for 60 vs 80 of 500 straddles zero
 
 

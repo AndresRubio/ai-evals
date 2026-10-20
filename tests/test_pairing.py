@@ -49,7 +49,29 @@ def test_below_eighty_percent_shared_the_comparison_is_unpaired():
     candidate = rows([False] * 5) + rows([False] * 5, start=100)
     pairing = pair_batches(baseline, candidate)
     assert not pairing.paired
-    assert pairing.describe() == "unpaired: only 50% of inputs shared"
+    assert pairing.describe() == "unpaired: only 50.0% of inputs shared"
+
+
+@pytest.mark.parametrize(
+    ("pairs", "n", "shown"),
+    [(41, 100, "41.0%"), (159, 200, "79.5%"), (15_999, 20_000, "79.9%"), (0, 7, "0.0%")],
+)
+def test_an_unpaired_share_is_rounded_down_so_it_never_shows_as_80_percent(
+    pairs: int, n: int, shown: str
+):
+    """Pairing needs at least 80%. 159 of 200 printed as 80%, and 15,999 of 20,000
+    (79.995%) rounded to one decimal still would."""
+    baseline = rows([False] * n)
+    candidate = rows([False] * pairs) + rows([False] * (n - pairs), start=100_000)
+    pairing = pair_batches(baseline, candidate)
+    assert not pairing.paired
+    assert pairing.describe() == f"unpaired: only {shown} of inputs shared"
+
+
+def test_the_unpaired_share_shown_is_that_of_the_larger_batch():
+    """8 pairs are 80% of a 10-trace baseline but 40% of a 20-trace candidate."""
+    pairing = pair_batches(rows([False] * 10), rows([False] * 8) + rows([False] * 12, start=100))
+    assert pairing.describe() == "unpaired: only 40.0% of inputs shared"
 
 
 def test_eighty_percent_of_each_batch_is_enough():

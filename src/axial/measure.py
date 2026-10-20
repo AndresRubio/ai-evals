@@ -229,6 +229,19 @@ def judge_test_matrix(store: Store, mode: str, version: int) -> ConfusionMatrix:
     return matrix
 
 
+def _percent(part: int, whole: int, *, round_up: bool) -> str:
+    """`part / whole` as a percentage to one decimal, rounded in the direction given.
+
+    A share is printed beside the threshold it was compared with, so it is rounded away
+    from that threshold: rounded to nearest, 1,001 of 20,000 (5.005%) would print as the
+    5.0% it exceeds. Integer arithmetic, so no float error moves it across a tenth.
+    """
+    tenths, rest = divmod(part * 1000, whole)
+    if round_up and rest:
+        tenths += 1
+    return f"{tenths // 10}.{tenths % 10}%"
+
+
 def set_aside_note(n_set_aside: int, n_traces: int) -> str | None:
     """The note for a batch with more than `SET_ASIDE_NOTE_SHARE` of its traces set aside.
 
@@ -237,8 +250,9 @@ def set_aside_note(n_set_aside: int, n_traces: int) -> str | None:
     """
     if n_set_aside <= SET_ASIDE_NOTE_SHARE * n_traces:
         return None
+    share = _percent(n_set_aside, n_traces, round_up=True)
     return (
-        f"{n_set_aside} of {n_traces} traces ({n_set_aside / n_traces:.0%}) were set "
+        f"{n_set_aside} of {n_traces} traces ({share}) were set "
         "aside (see errors.jsonl); if what set them aside correlates with failure, as "
         "truncation on long outputs can, the rate is biased"
     )
@@ -512,7 +526,10 @@ class Pairing:
                 f"paired on {self.pairs} shared inputs ({self.unmatched_baseline} baseline "
                 f"and {self.unmatched_candidate} candidate traces unmatched)"
             )
-        return f"unpaired: only {self.share:.0%} of inputs shared"
+        # `share` from the counts: the pairs over the larger batch, rounded down.
+        larger = self.pairs + max(self.unmatched_baseline, self.unmatched_candidate)
+        shown = _percent(self.pairs, larger, round_up=False) if larger else "0.0%"
+        return f"unpaired: only {shown} of inputs shared"
 
 
 def _graded_once(rows: list[dict[str, Any]]) -> dict[str, bool]:
