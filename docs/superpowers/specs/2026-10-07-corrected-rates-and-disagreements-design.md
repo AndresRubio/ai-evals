@@ -1,7 +1,7 @@
 # Corrected failure rates on new traces, and a dev disagreement listing
 
 **Date:** 2026-10-07, revised 2026-10-08 (pairing by input; difference before clipping)
-**Status:** approved design, not yet implemented
+**Status:** implemented on branch corrected-rates (plan: docs/superpowers/plans/2026-10-14-corrected-rates-and-disagreements.md)
 **Builds on:** [`2026-09-17-axial-evals-toolkit-design.md`](2026-09-17-axial-evals-toolkit-design.md)
 
 ## Why
