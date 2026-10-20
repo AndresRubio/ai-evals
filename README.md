@@ -100,8 +100,11 @@ The refusals are the product.
   been re-judged or edited fails the gate until it is re-measured. Known limitation,
   deferred to a follow-up: the promotion binds `judge.yaml` and the judge's verdicts,
   and the few-shot examples are read from the current corpus and labels each time the
-  judge grades, so after relabelling or re-ingesting a few-shot example, or after
-  editing `judge.yaml`, re-run the judge on test and promote again before measuring.
+  judge grades. `axial promote` itself does not check which `judge.yaml` or examples
+  produced the test rows, so editing `judge.yaml` and then promoting binds the edited
+  prompt to verdicts from the old one. After relabelling or re-ingesting a few-shot
+  example, or after editing `judge.yaml`, re-run the judge on test and promote again
+  before measuring.
 - **Infra failures never score as model failures.** They are quarantined in
   `errors.jsonl` with a failure class.
 - **Perplexity is never a verdict.** It selects which traces a human reads and stops
@@ -179,10 +182,10 @@ uv run axial gate merged_stories --batch release-2 --baseline-batch release-1
 with an interval that includes the judge's own uncertainty, and writes everything to
 `.axial/measurements/<mode>/<name>/`. Sizing a comparison: with a judge at TPR 0.93
 and TNR 0.94 on 30 real failures and 70 real passes, catching a rise from 10% to 14%
-failing reliably takes about 1,000 inputs run through both versions, or about 500 if
-most inputs whose behaviour did not change produce identical output. A weaker judge
-needs more. Compared unpaired, two unrelated batches of 1,000 inputs each catch the
-same rise only 58% of the time, against 81% when paired.
+failing about four times in five takes about 1,000 inputs run through both versions,
+or about 500 if most inputs whose behaviour did not change produce identical output.
+A weaker judge needs more. Compared unpaired, two unrelated batches of 1,000 inputs
+each catch the same rise only 58% of the time, against 81% when paired.
 
 ## Decision models
 

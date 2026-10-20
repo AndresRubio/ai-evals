@@ -127,9 +127,11 @@ section says otherwise, this section describes what the code does.
   decision is made as before.
 - Known limitation, deferred to a follow-up: the promotion binds `judge.yaml` and the
   judge's verdicts, and the few-shot examples are read from the current corpus and labels
-  each time the judge grades. After relabelling or re-ingesting a few-shot example, or after
-  editing `judge.yaml`, the judge has to be re-run on test and promoted again before
-  measuring. The README says so.
+  each time the judge grades. `axial promote` itself does not check which `judge.yaml` or
+  examples produced the test rows, so editing `judge.yaml` and then promoting binds the
+  edited prompt to verdicts from the old one. After relabelling or re-ingesting a few-shot
+  example, or after editing `judge.yaml`, the judge has to be re-run on test and promoted
+  again before measuring. The README says so.
 
 ## 1. Commands and data flow
 
@@ -375,9 +377,9 @@ With nothing changed, the paired gate called a regression in 2.7–2.8% of trial
 nominal 2.5%, and the difference interval covered the true difference in 94–96% of trials,
 for this judge and for a borderline one (TPR = TNR = 0.90 on 30/30). The borderline judge
 caught the 4-point rise at 1,000 inputs only about 0.55 of the time: a weaker judge needs
-more inputs. The README states the sizing: to catch a 4-point rise reliably with a judge
-like the first, run about 1,000 shared inputs through both versions, or about 500 if most
-unchanged inputs produce identical output.
+more inputs. The README states the sizing: to catch a 4-point rise about four times in five
+with a judge like the first, run about 1,000 shared inputs through both versions, or about
+500 if most unchanged inputs produce identical output.
 
 ### Code
 
