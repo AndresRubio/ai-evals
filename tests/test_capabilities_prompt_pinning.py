@@ -1,22 +1,21 @@
-"""Prompt pinning: what a promoted judge does not bind, recorded as known gaps.
+"""Prompt pinning: what a promoted judge binds, and the gap that remains.
 
 README, on the corrected rate: "Known limitation, deferred to a follow-up: the promotion
 binds `judge.yaml` and the judge's verdicts, and the few-shot examples are read from the
-current corpus and labels each time the judge grades." Two consequences follow, one test
-each, and both are `xfail(strict=True)`: each asserts what the follow-up should deliver
-and fails today.
+current corpus and labels each time the judge grades." Two consequences followed, one
+test each. The first now holds as a normal test; the second is still
+`xfail(strict=True)`: it asserts what the follow-up should deliver and fails today.
 
-1. `axial promote` does not check which `judge.yaml` produced the test rows. Edit
-   `judge.yaml`, re-run only dev, and promote: the test rows that supply the TPR and TNR
-   every measurement corrects with come from the old prompt, bound to the new one.
+1. `axial promote` checks which prompt produced the dev and test rows. Edit
+   `judge.yaml`, re-run only dev, and promote: it refuses, because the test rows that
+   supply the TPR and TNR every measurement corrects with came from the old prompt.
 2. Nothing records the few-shot examples a measurement used. Relabel or re-ingest an
    example after promotion and `measure` sends a different prompt, with no field in
    `measurement.json` to say so and no gate refusal.
 
-Everything runs offline against local data and `FakeModel`. When the follow-up lands
-(a hash of the prompt on each verdict row, or of the resolved few-shot block in the
-marker and in `measurement.json`), these tests start to pass and strict mode fails them
-until the markers are removed.
+Everything runs offline against local data and `FakeModel`. When the second gap is
+closed (the resolved few-shot block recorded in `measurement.json`), that test starts to
+pass and strict mode fails it until its marker is removed.
 """
 
 from __future__ import annotations
@@ -45,18 +44,12 @@ from axial.store import Store
 from axial.traces import Trace
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="promote binds test rows from whatever judge.yaml produced them, so a dev-only "
-    "re-run after a prompt edit is promoted; prompt pinning is deferred",
-)
 def test_repromoting_after_a_dev_only_rerun_binds_test_rows_from_another_prompt(
     tmp_path: Path,
 ) -> None:
-    """Limit: `judge.yaml` is edited in place (as `axial judge --few-shot X` does on the
-    latest version), only dev is re-run, and `promote` succeeds. The test rows, which
-    supply the TPR and TNR every measurement corrects with, were produced by the old
-    `judge.yaml`; `measure` and `gate` then accept the new judge."""
+    """`judge.yaml` is edited in place (as `axial judge --few-shot X` does on the latest
+    version) and only dev is re-run. The test rows, which supply the TPR and TNR every
+    measurement corrects with, were produced by the old prompt, so `promote` refuses."""
     store = Store(tmp_path)
     build_promoted_judge(store)
     vpath = store.judge_dir(MEASURE_MODE, 1) / "verdicts.jsonl"
@@ -74,8 +67,7 @@ def test_repromoting_after_a_dev_only_rerun_binds_test_rows_from_another_prompt(
     # The premise: the edited prompt re-graded dev only, and the test rows are untouched.
     assert [r for r in store.read_jsonl(vpath) if r["split"] == "test"] == test_rows_before
     verdicts = store.read_jsonl(vpath)
-    # The behaviour the follow-up should deliver: promote refuses test rows that do not
-    # come from the judge.yaml on disk.
+    # promote refuses test rows that do not come from the prompt on disk.
     with pytest.raises(AxialError):
         promote(
             store, MEASURE_MODE, 1,

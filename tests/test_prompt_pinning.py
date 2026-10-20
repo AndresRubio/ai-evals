@@ -9,9 +9,11 @@ from pathlib import Path
 
 import pytest
 import yaml
-from measure_helpers import MEASURE_MODE, build_promoted_judge
+from measure_helpers import MEASURE_MODE, build_promoted_judge, judge_reply
 
-from axial.dataset import Label, Splits
+from axial.config import Thresholds
+from axial.dataset import Label, Splits, add_labels, read_labels
+from axial.errors import InvariantViolation
 from axial.judge import (
     JudgeSpec,
     current_prompt_sha256,
@@ -20,6 +22,13 @@ from axial.judge import (
     run_judge,
 )
 from axial.model import FakeModel
+from axial.report import (
+    PROMPT_HASH_KEY,
+    alignment_from_verdicts,
+    parse_promoted_marker,
+    promote,
+    require_promoted,
+)
 from axial.store import Store
 from axial.traces import Trace
 
@@ -137,3 +146,160 @@ def test_run_judge_stamps_every_verdict_and_error_row(tmp_path: Path):
     errors = store.read_jsonl(directory / "errors.jsonl")
     assert len(verdicts) == 1 and len(errors) == 1
     assert {r["prompt_sha256"] for r in verdicts + errors} == {expected}
+
+
+# --- promote and require_promoted --------------------------------------------------
+
+
+def judge_dir(store: Store) -> Path:
+    return store.judge_dir(MEASURE_MODE, 1)
+
+
+def promote_again(store: Store) -> None:
+    verdicts = store.read_jsonl(judge_dir(store) / "verdicts.jsonl")
+    promote(
+        store, MEASURE_MODE, 1,
+        alignment_from_verdicts(verdicts, "dev"), alignment_from_verdicts(verdicts, "test"),
+        Thresholds(),
+    )
+
+
+def rerun(store: Store, split: str) -> None:
+    """Re-run one split with the judge.yaml on disk, as `axial judge --split` does."""
+    judge = JudgeSpec.load(store, MEASURE_MODE, 1)
+    splits = Splits.load(store, MEASURE_MODE)
+    corpus = store.read_traces()
+    wanted = set(getattr(splits, split))
+    run_judge(
+        store, judge, [t for t in corpus if t.trace_id in wanted],
+        read_labels(store, MEASURE_MODE), splits, FakeModel(judge_reply, model="fake-judge"),
+        split=split, corpus=corpus,
+    )
+
+
+def reword(store: Store) -> None:
+    judge = JudgeSpec.load(store, MEASURE_MODE, 1)
+    judge.prompt_template = "Reworded.\n" + judge.prompt_template
+    judge.save(store)
+
+
+def relabel_train_0(store: Store) -> None:
+    add_labels(
+        store, MEASURE_MODE,
+        [Label(trace_id="train-0", label=False, critique="actually fine", annotator="andres")],
+    )
+
+
+def test_promote_records_the_fingerprint_its_rows_carry(tmp_path: Path):
+    store = Store(tmp_path)
+    build_promoted_judge(store, few_shot_ids=["train-0"])
+    marker = parse_promoted_marker((judge_dir(store) / "PROMOTED").read_text())
+    expected = current_prompt_sha256(store, JudgeSpec.load(store, MEASURE_MODE, 1))
+    assert marker[PROMPT_HASH_KEY] == expected
+    rows = store.read_jsonl(judge_dir(store) / "verdicts.jsonl")
+    assert {r["prompt_sha256"] for r in rows} == {expected}
+    assert require_promoted(store, MEASURE_MODE, 1).prompt_sha256 == expected
+
+
+@pytest.mark.parametrize("stale", ["dev", "test"])
+def test_promote_refuses_a_split_run_by_another_prompt(tmp_path: Path, stale: str):
+    store = Store(tmp_path)
+    build_promoted_judge(store)
+    reword(store)
+    rerun(store, "test" if stale == "dev" else "dev")
+    with pytest.raises(InvariantViolation, match=f"--split {stale}`") as caught:
+        promote_again(store)
+    other = "test" if stale == "dev" else "dev"
+    assert f"--split {other}`" not in str(caught.value)
+    assert not (judge_dir(store) / "PROMOTED").exists()
+
+
+def test_promote_refuses_a_split_after_a_few_shot_example_was_relabelled(tmp_path: Path):
+    store = Store(tmp_path)
+    build_promoted_judge(store, few_shot_ids=["train-0"])
+    relabel_train_0(store)
+    rerun(store, "dev")
+    with pytest.raises(InvariantViolation, match="--split test`"):
+        promote_again(store)
+
+
+def test_promote_refuses_rows_with_no_fingerprint(tmp_path: Path):
+    """Rows written before prompt pinning carry no stamp; both splits must be re-run."""
+    store = Store(tmp_path)
+    build_promoted_judge(store)
+    for name in ("verdicts.jsonl", "errors.jsonl"):
+        path = judge_dir(store) / name
+        store.write_jsonl(
+            path, [{k: v for k, v in r.items() if k != "prompt_sha256"} for r in store.read_jsonl(path)]
+        )
+    with pytest.raises(InvariantViolation, match="dev and test"):
+        promote_again(store)
+
+
+def test_promote_refuses_a_stale_error_row(tmp_path: Path):
+    store = Store(tmp_path)
+    build_promoted_judge(store)
+    path = judge_dir(store) / "errors.jsonl"
+    store.write_jsonl(
+        path,
+        store.read_jsonl(path)
+        + [{"trace_id": "test-000", "split": "test", "failure_class": "harness",
+            "detail": "x", "prompt_sha256": "0" * 64}],
+    )
+    with pytest.raises(InvariantViolation, match="--split test`"):
+        promote_again(store)
+
+
+def test_promote_refuses_a_judge_with_no_judge_yaml(tmp_path: Path):
+    store = Store(tmp_path)
+    build_promoted_judge(store)
+    (judge_dir(store) / "judge.yaml").unlink()
+    with pytest.raises(InvariantViolation, match="has no judge.yaml"):
+        promote_again(store)
+
+
+def test_require_promoted_refuses_a_marker_without_a_fingerprint(tmp_path: Path):
+    """A marker written before prompt pinning."""
+    store = Store(tmp_path)
+    build_promoted_judge(store)
+    marker = judge_dir(store) / "PROMOTED"
+    marker.write_text(
+        "".join(line + "\n" for line in marker.read_text().splitlines()
+                if not line.startswith(PROMPT_HASH_KEY))
+    )
+    with pytest.raises(InvariantViolation, match="'prompt_sha256'"):
+        require_promoted(store, MEASURE_MODE, 1)
+
+
+def test_require_promoted_refuses_a_relabelled_few_shot_example(tmp_path: Path):
+    store = Store(tmp_path)
+    build_promoted_judge(store, few_shot_ids=["train-0"])
+    relabel_train_0(store)
+    with pytest.raises(InvariantViolation, match="not the prompt it was promoted with"):
+        require_promoted(store, MEASURE_MODE, 1)
+
+
+def test_require_promoted_refuses_a_reingested_few_shot_example(tmp_path: Path):
+    store = Store(tmp_path)
+    build_promoted_judge(store, few_shot_ids=["train-0"])
+    store.write_traces(
+        [t.model_copy(update={"output": "SOMETHING ELSE"}) if t.trace_id == "train-0" else t
+         for t in store.read_traces()]
+    )
+    with pytest.raises(InvariantViolation, match="not the prompt it was promoted with"):
+        require_promoted(store, MEASURE_MODE, 1)
+
+
+def test_require_promoted_reads_no_corpus_for_a_judge_without_examples(tmp_path: Path):
+    store = Store(tmp_path)
+    build_promoted_judge(store)
+    store.traces_path.write_text("not json\n")
+    require_promoted(store, MEASURE_MODE, 1)
+
+
+def test_require_promoted_refuses_a_judge_whose_judge_yaml_was_deleted(tmp_path: Path):
+    store = Store(tmp_path)
+    build_promoted_judge(store)
+    (judge_dir(store) / "judge.yaml").unlink()
+    with pytest.raises(InvariantViolation, match="judge.yaml"):
+        require_promoted(store, MEASURE_MODE, 1)

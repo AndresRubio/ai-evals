@@ -2,9 +2,11 @@ import json
 from pathlib import Path
 
 import pytest
+from promotion_helpers import stamp_run
 from typer.testing import CliRunner
 
 from axial.cli import app
+from axial.judge import JudgeSpec, current_prompt_sha256
 from axial.report import format_promoted_marker
 from axial.store import Store
 
@@ -233,14 +235,15 @@ def test_gate_exits_nonzero_on_a_regression(tmp_path: Path):
             [{"trace_id": f"t{i}", "split": "gate", "verdict": v, "truth": None}
              for i, v in enumerate(verdicts)],
         )
-        # Bound to real hashes (no judge.yaml is written for this fixture, so
-        # both versions consistently hash it as empty) -- a hash-less marker
-        # is refused by `gate` now, so this must look like a real promotion.
+        # Bound to real hashes, the prompt's included: a hash-less marker is
+        # refused by `gate`, so this must look like a real promotion.
+        JudgeSpec(mode="m", model="fake", version=version).save(store)
         (directory / "PROMOTED").write_text(
             format_promoted_marker(
                 "ok", "ok",
                 store.hash_file(directory / "judge.yaml"),
                 store.hash_file(directory / "verdicts.jsonl"),
+                current_prompt_sha256(store, JudgeSpec.load(store, "m", version)),
             )
         )
     result = runner.invoke(
@@ -346,6 +349,7 @@ def test_promote_prints_every_failure_reason_on_one_line_each(tmp_path: Path):
         {"trace_id": "t1", "split": "test", "verdict": True, "truth": False},
     ]
     store.write_jsonl(directory / "verdicts.jsonl", verdicts)
+    stamp_run(store, "m", 1)
 
     result = runner.invoke(app, ["promote", "m", "1", "--repo", str(tmp_path)])
     assert result.exit_code == 1

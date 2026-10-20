@@ -18,6 +18,7 @@ from axial.align import Alignment, align
 from axial.config import Thresholds
 from axial.dataset import Label
 from axial.errors import InvariantViolation
+from axial.judge import JudgeSpec, current_prompt_sha256
 from axial.store import Store
 from axial.traces import Trace
 
@@ -101,10 +102,15 @@ def check_promotion(dev: Alignment, test: Alignment, thresholds: Thresholds) -> 
 
 JUDGE_YAML_HASH_KEY = "judge_yaml_sha256"
 VERDICTS_HASH_KEY = "verdicts_sha256"
+PROMPT_HASH_KEY = "prompt_sha256"
 
 
 def format_promoted_marker(
-    dev_summary: str, test_summary: str, judge_yaml_hash: str, verdicts_hash: str
+    dev_summary: str,
+    test_summary: str,
+    judge_yaml_hash: str,
+    verdicts_hash: str,
+    prompt_hash: str,
 ) -> str:
     """Render the `PROMOTED` marker: a human-readable summary plus two
     machine-parseable `key=value` lines binding the marker to the exact
@@ -114,13 +120,15 @@ def format_promoted_marker(
     existed, not that the judge or its verdicts still matched what earned it
     -- which is exactly what let a promoted judge be silently replaced under
     its own marker. `require_promoted` recomputes both hashes with `store.hash_file`
-    and calls `parse_promoted_marker` to compare them against these.
+    and calls `parse_promoted_marker` to compare them against these. The third
+    line binds the full prompt, few-shot examples included.
     """
     return (
         f"test {test_summary}\n"
         f"dev {dev_summary}\n"
         f"{JUDGE_YAML_HASH_KEY}={judge_yaml_hash}\n"
         f"{VERDICTS_HASH_KEY}={verdicts_hash}\n"
+        f"{PROMPT_HASH_KEY}={prompt_hash}\n"
     )
 
 
@@ -149,6 +157,7 @@ SATURATION_WARNING = (
 class PromotedHashes(NamedTuple):
     judge_yaml_sha256: str
     verdicts_sha256: str
+    prompt_sha256: str
 
 
 def _require_bound_hash(
@@ -178,15 +187,38 @@ def _require_bound_hash(
     return value
 
 
+def _load_spec(store: Store, mode: str, version: int) -> JudgeSpec:
+    if not (store.judge_dir(mode, version) / "judge.yaml").exists():
+        raise InvariantViolation(
+            f"judge {mode} v{version} has no judge.yaml, so the prompt its verdicts came "
+            f"from cannot be checked. Run `axial judge {mode} --version {version} --split "
+            "dev` and `--split test` first."
+        )
+    return JudgeSpec.load(store, mode, version)
+
+
+def _splits_from_another_prompt(store: Store, directory: Path, fingerprint: str) -> list[str]:
+    """The dev and test splits holding a row not stamped with `fingerprint`."""
+    stale: set[str] = set()
+    for name in ("verdicts.jsonl", "errors.jsonl"):
+        for row in store.read_jsonl(directory / name):
+            split = row.get("split")
+            if split in ("dev", "test") and row.get(PROMPT_HASH_KEY) != fingerprint:
+                stale.add(str(split))
+    return sorted(stale)
+
+
 def require_promoted(store: Store, mode: str, version: int) -> PromotedHashes:
     """Refuse unless judge `mode` v`version` is promoted and unchanged since; return
-    the two hashes its `PROMOTED` marker recorded.
+    the hashes its `PROMOTED` marker recorded.
 
     `gate` and `measure` both call this, so they cannot disagree about what
     "promoted" means. The marker on its own only proves *some* run was promoted
     once: both hashes it recorded are recomputed, because a hand-edited
     judge.yaml or a verdicts.jsonl overwritten by a later `run_judge` means the
-    evidence behind PROMOTED no longer describes what is on disk.
+    evidence behind PROMOTED no longer describes what is on disk. The prompt is
+    recomputed too, from the current traces and labels, so a relabelled or re-ingested
+    few-shot example withdraws the promotion.
     """
     directory = store.judge_dir(mode, version)
     marker_path = directory / "PROMOTED"
@@ -221,7 +253,16 @@ def require_promoted(store: Store, mode: str, version: int) -> PromotedHashes:
             "promote` on the current run, or run `axial judge --new` to score it as a "
             "fresh version."
         )
-    return PromotedHashes(recorded_judge_hash, recorded_verdicts_hash)
+    recorded_prompt_hash = _require_bound_hash(recorded, PROMPT_HASH_KEY, mode, version)
+    if current_prompt_sha256(store, _load_spec(store, mode, version)) != recorded_prompt_hash:
+        raise InvariantViolation(
+            f"judge {mode} v{version} would send a prompt that is not the prompt it was "
+            "promoted with: its few-shot examples, resolved from the current traces and "
+            "labels, have changed (an example was relabelled or re-ingested). Re-run `axial "
+            f"judge {mode} --version {version} --split dev` and `--split test`, then `axial "
+            "promote` again."
+        )
+    return PromotedHashes(recorded_judge_hash, recorded_verdicts_hash, recorded_prompt_hash)
 
 
 def _fmt_rate(value: float) -> str:
@@ -531,12 +572,24 @@ def promote(
     test: Alignment,
     thresholds: Thresholds,
 ) -> None:
+    directory = store.judge_dir(mode, version)
+    fingerprint = current_prompt_sha256(store, _load_spec(store, mode, version))
+    stale = _splits_from_another_prompt(store, directory, fingerprint)
+    if stale:
+        rerun = " and ".join(
+            f"`axial judge {mode} --version {version} --split {split}`" for split in stale
+        )
+        raise InvariantViolation(
+            f"judge {mode} v{version} cannot be promoted: its {' and '.join(stale)} rows "
+            "were not produced by the prompt its judge.yaml, traces and labels give now. "
+            "judge.yaml was edited, or a few-shot example relabelled or re-ingested, after "
+            f"they ran. Run {rerun}, then promote."
+        )
     check = check_promotion(dev, test, thresholds)
     if not check.ok:
         raise InvariantViolation(
             f"judge {mode} v{version} cannot be promoted:\n  - " + "\n  - ".join(check.reasons)
         )
-    directory = store.judge_dir(mode, version)
     directory.mkdir(parents=True, exist_ok=True)
     # Bind the marker to the exact judge.yaml and verdicts.jsonl it was earned
     # on. Without this, `gate` could only check that the marker existed, and
@@ -545,5 +598,7 @@ def promote(
     judge_yaml_hash = store.hash_file(directory / "judge.yaml")
     verdicts_hash = store.hash_file(directory / "verdicts.jsonl")
     (directory / "PROMOTED").write_text(
-        format_promoted_marker(dev.summary(), test.summary(), judge_yaml_hash, verdicts_hash)
+        format_promoted_marker(
+            dev.summary(), test.summary(), judge_yaml_hash, verdicts_hash, fingerprint
+        )
     )

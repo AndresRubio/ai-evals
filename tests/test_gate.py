@@ -1,13 +1,14 @@
 from pathlib import Path
 
 import pytest
+from promotion_helpers import stamp_run
 
 from axial.align import align
 from axial.config import Thresholds
 from axial.dataset import Label, Splits
 from axial.errors import InvariantViolation
 from axial.gate import compare, gate
-from axial.judge import JudgeSpec, run_judge
+from axial.judge import JudgeSpec, current_prompt_sha256, run_judge
 from axial.model import FakeModel
 from axial.report import (
     JUDGE_YAML_HASH_KEY,
@@ -21,11 +22,9 @@ from axial.traces import Trace
 
 def write_verdicts(store: Store, mode: str, version: int, verdicts: list[bool]) -> None:
     """A hand-made PROMOTED marker for tests that exercise `gate`'s own
-    comparison logic rather than the promotion-binding invariant. No
-    judge.yaml is ever written for these fixtures, so `store.hash_file` on it
-    consistently hashes empty bytes both here and when `gate` recomputes it --
-    the marker still needs *a* value for both keys, since a real one always
-    carries both.
+    comparison logic rather than the promotion-binding invariant. A
+    default judge.yaml is saved for these fixtures, so the marker can carry the
+    hash of the prompt it gives, as a real one always does.
     """
     directory = store.judge_dir(mode, version)
     directory.mkdir(parents=True, exist_ok=True)
@@ -36,11 +35,13 @@ def write_verdicts(store: Store, mode: str, version: int, verdicts: list[bool]) 
             for i, v in enumerate(verdicts)
         ],
     )
+    JudgeSpec(mode=mode, model="fake", version=version).save(store)
     (directory / "PROMOTED").write_text(
         format_promoted_marker(
             "ok", "ok",
             store.hash_file(directory / "judge.yaml"),
             store.hash_file(directory / "verdicts.jsonl"),
+            current_prompt_sha256(store, JudgeSpec.load(store, mode, version)),
         )
     )
 
@@ -56,7 +57,6 @@ def _promote_with_real_hashes(store: Store, mode: str, version: int, verdicts: l
     every test of the hash-binding invariant below needs."""
     directory = store.judge_dir(mode, version)
     directory.mkdir(parents=True, exist_ok=True)
-    (directory / "judge.yaml").write_text("mode: m\nprompt_template: original\n")
     store.write_jsonl(
         directory / "verdicts.jsonl",
         [
@@ -64,6 +64,7 @@ def _promote_with_real_hashes(store: Store, mode: str, version: int, verdicts: l
             for i, v in enumerate(verdicts)
         ],
     )
+    stamp_run(store, mode, version)
     perfect = _perfect_alignment()
     promote(store, mode, version, perfect, perfect, Thresholds())
 

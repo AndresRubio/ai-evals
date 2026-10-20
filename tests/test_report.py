@@ -3,6 +3,7 @@ import math
 from pathlib import Path
 
 import pytest
+from promotion_helpers import stamp_run
 
 from axial.align import align
 from axial.config import Thresholds
@@ -90,12 +91,14 @@ def test_write_alignment_reports_quarantined_errors(tmp_path: Path):
 
 def test_promote_writes_a_marker_for_a_good_judge(tmp_path: Path):
     store = Store(tmp_path)
+    stamp_run(store, "merged", 1)
     promote(store, "merged", 1, perfect(), perfect(), Thresholds())
     assert (store.judge_dir("merged", 1) / "PROMOTED").exists()
 
 
 def test_promote_refuses_a_judge_below_the_bar(tmp_path: Path):
     store = Store(tmp_path)
+    stamp_run(store, "merged", 1)
     with pytest.raises(InvariantViolation, match="TPR"):
         promote(store, "merged", 1, useless(), useless(), Thresholds())
     assert not (store.judge_dir("merged", 1) / "PROMOTED").exists()
@@ -109,8 +112,8 @@ def test_promote_binds_the_marker_to_judge_yaml_and_verdicts_hashes(tmp_path: Pa
     store = Store(tmp_path)
     directory = store.judge_dir("merged", 1)
     directory.mkdir(parents=True, exist_ok=True)
-    (directory / "judge.yaml").write_text("mode: merged\nprompt_template: original\n")
     store.write_jsonl(directory / "verdicts.jsonl", [{"trace_id": "t0", "verdict": True}])
+    stamp_run(store, "merged", 1)
 
     promote(store, "merged", 1, perfect(), perfect(), Thresholds())
 
@@ -254,8 +257,8 @@ def test_require_promoted_returns_the_hashes_the_marker_recorded(tmp_path: Path)
     store = Store(tmp_path)
     directory = store.judge_dir("merged", 1)
     directory.mkdir(parents=True)
-    (directory / "judge.yaml").write_text("mode: merged\n")
-    (directory / "verdicts.jsonl").write_text('{"trace_id": "t1"}\n')
+    (directory / "verdicts.jsonl").write_text('{"trace_id": "t1", "split": "dev"}\n')
+    stamp_run(store, "merged", 1)
     promote(store, "merged", 1, perfect(), perfect(), Thresholds())
 
     hashes = require_promoted(store, "merged", 1)
@@ -272,10 +275,10 @@ def test_require_promoted_refuses_an_unpromoted_or_edited_judge(tmp_path: Path):
     store = Store(tmp_path)
     directory = store.judge_dir("merged", 1)
     directory.mkdir(parents=True)
-    (directory / "judge.yaml").write_text("mode: merged\n")
     with pytest.raises(InvariantViolation, match="has not been promoted"):
         require_promoted(store, "merged", 1)
 
+    stamp_run(store, "merged", 1)
     promote(store, "merged", 1, perfect(), perfect(), Thresholds())
     (directory / "judge.yaml").write_text("mode: merged\nprompt_template: edited\n")
     with pytest.raises(InvariantViolation, match="judge.yaml has changed"):

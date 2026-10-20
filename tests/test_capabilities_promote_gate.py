@@ -13,6 +13,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from promotion_helpers import stamp_run
 from typer.testing import CliRunner
 
 from axial.align import align, paired_bootstrap_ci
@@ -58,6 +59,7 @@ def write_run(store: Store, mode: str, version: int, verdicts: list[bool]) -> No
 def promoted_run(store: Store, mode: str, version: int, verdicts: list[bool]) -> None:
     """Write a run and promote it through the real `report.promote`, hashes and all."""
     write_run(store, mode, version, verdicts)
+    stamp_run(store, mode, version)
     promote(store, mode, version, PERFECT, PERFECT, Thresholds())
 
 
