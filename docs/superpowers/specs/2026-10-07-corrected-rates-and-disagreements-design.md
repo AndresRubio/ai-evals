@@ -148,7 +148,9 @@ axial measure <mode> --version N --traces <file> --name <batch> [--adapter A] [-
 ```
 
 1. **Require a promoted judge.** The marker and hash checks now in `gate._load` move to
-   `report.require_promoted(store, mode, version)`, which returns the two recorded hashes.
+   `report.require_promoted(store, mode, version)`, which returns the recorded hashes (the two
+   hashes of `judge.yaml` and `verdicts.jsonl`, and from 2026-10-20 a third, `prompt_sha256`,
+   added by prompt pinning).
    `gate` and `measure` both call it, so they cannot disagree about what "promoted" means.
    `--version` is required: the judge doing the measuring is always named.
 2. **Read the batch** with `traces.ingest(path, adapter=...)`, the same loader as
@@ -187,7 +189,8 @@ Output files:
 | `measurement.json` | See below |
 
 `measurement.json` fields: `mode`, `batch`, `judge_version`, `judge_yaml_sha256`,
-`verdicts_sha256` (the two hashes the PROMOTED marker recorded), `test_matrix`
+`verdicts_sha256` (the two hashes the PROMOTED marker recorded), `prompt_sha256` (the
+third, added 2026-10-20 by prompt pinning), `test_matrix`
 (`tp`, `fn`, `tn`, `fp`), `n_traces`, `n_graded`, `n_set_aside`, `flagged`,
 `observed_rate`, `corrected_rate`, `interval` (`[low, high]` or `null`),
 `interval_if_judge_exact` (`[low, high]` or `null`), `draws`, `seed`, `notes` (list of

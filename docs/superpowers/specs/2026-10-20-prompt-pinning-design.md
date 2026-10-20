@@ -144,6 +144,6 @@ Before each commit: `ruff check`, `mypy --strict src/axial`, `pytest`, and
 
 ## Documentation
 
-- README: replace the known limitation with the rule above and the upgrade steps.
-- The corrected-rates spec: record in "Changes made during implementation" that the
-  limitation is closed, with a link here.
+The README's known limitation became the rule above plus the upgrade steps. The
+corrected-rates spec records in "Changes made during implementation" that the limitation
+was closed, with a link here.

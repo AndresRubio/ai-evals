@@ -97,14 +97,16 @@ The refusals are the product.
 - **A corrected rate comes only from a promoted judge's test-split error rates,
   and every measurement states the assumption it rests on:** that the judge errs on
   the new batch as it did on test. A measurement taken by a judge that has since
-  been re-judged or edited fails the gate until it is re-measured. Each verdict row
-  records a fingerprint of the full prompt: `judge.yaml` plus the few-shot examples as
-  resolved from the current traces and labels. `axial promote` refuses unless every dev
-  and test row carries the current fingerprint, and writes it into `PROMOTED`. `measure`
-  and `gate` refuse a judge whose examples have since been relabelled or re-ingested,
-  until dev and test are re-run and the judge is promoted
-  again. A judge promoted before this change has to re-run both splits and be promoted
-  again, and batches measured before it need `--replace` to be measured again:
+  been re-judged or edited fails the gate until it is re-measured. Every verdict and
+  error row records a fingerprint of the full prompt: `judge.yaml` plus the few-shot
+  examples as resolved from the current traces and labels. `axial promote` refuses a
+  judge with no `judge.yaml`, and refuses unless every dev and test row in
+  `verdicts.jsonl` and `errors.jsonl` carries the current fingerprint. It then writes
+  the fingerprint as the third line of `PROMOTED`, `prompt_sha256=<hex>`. `measure` and
+  `gate` refuse a judge whose examples have since been relabelled or re-ingested, until
+  dev and test are re-run and the judge is promoted again. A judge promoted before this
+  change has to re-run both splits and be promoted again, and batches measured before it
+  need `--replace` to be measured again:
 
   ```bash
   axial judge <mode> --version N --split dev
