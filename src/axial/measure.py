@@ -229,16 +229,28 @@ def judge_test_matrix(store: Store, mode: str, version: int) -> ConfusionMatrix:
     return matrix
 
 
+def set_aside_note(n_set_aside: int, n_traces: int) -> str | None:
+    """The note for a batch with more than `SET_ASIDE_NOTE_SHARE` of its traces set aside.
+
+    `measure` stores it and `gate --batch` prints it from the batch's counts, which
+    `load_measurement` has checked against the batch's files.
+    """
+    if n_set_aside <= SET_ASIDE_NOTE_SHARE * n_traces:
+        return None
+    return (
+        f"{n_set_aside} of {n_traces} traces ({n_set_aside / n_traces:.0%}) were set "
+        "aside (see errors.jsonl); if what set them aside correlates with failure, as "
+        "truncation on long outputs can, the rate is biased"
+    )
+
+
 def _notes(
     test: ConfusionMatrix, rate: CorrectedRate | None, n_traces: int, n_set_aside: int
 ) -> list[str]:
     notes = [ASSUMPTION_NOTE]
-    if n_set_aside > SET_ASIDE_NOTE_SHARE * n_traces:
-        notes.append(
-            f"{n_set_aside} of {n_traces} traces ({n_set_aside / n_traces:.0%}) were set "
-            "aside (see errors.jsonl); if what set them aside correlates with failure, as "
-            "truncation on long outputs can, the rate is biased"
-        )
+    set_aside = set_aside_note(n_set_aside, n_traces)
+    if set_aside:
+        notes.append(set_aside)
     if rate is None:
         notes.append("every trace was set aside, so no rate was estimated")
         return notes

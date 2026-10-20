@@ -87,6 +87,67 @@ def test_a_batch_with_set_aside_traces_and_a_few_shot_example_still_gates(tmp_pa
     assert result.messages[1].endswith("n=98 graded, 3 set aside")
 
 
+def with_set_aside(n_bad: int, n_set_aside: int, n: int = 500) -> list[str]:
+    """`n` outputs of which `n_set_aside` are GARBLED (the judge cannot grade them)."""
+    return ["BAD"] * n_bad + ["GARBLED"] * n_set_aside + ["GOOD"] * (n - n_bad - n_set_aside)
+
+
+def set_aside_note(store: Store, batch: str) -> str:
+    """The note `measure` stored for a batch that had too many traces set aside."""
+    path = store.measurement_dir(MEASURE_MODE, batch) / "measurement.json"
+    (note,) = [n for n in json.loads(path.read_text())["notes"] if "were set aside" in n]
+    return note
+
+
+def test_a_candidate_with_a_fifth_set_aside_gets_the_note_and_the_same_decision(store: Store):
+    """Owner's ruling: the gate warns about set-aside traces and decides as it did."""
+    measure(store, "rel-1", with_set_aside(60, 100))
+    note = set_aside_note(store, "rel-1")
+    assert note.startswith("100 of 500 traces (20%) were set aside")
+    passing = run(store, "rel-1", max_rate=0.20)
+    assert passing.passed
+    assert f"note: {note}" in passing.messages
+    assert passing.messages.index(f"note: {note}") == 2  # right after the two summary lines
+    failing = run(store, "rel-1", max_rate=0.10)
+    assert not failing.passed
+    assert any(m.startswith("ABOVE CEILING") for m in failing.messages)
+    assert f"note: {note}" in failing.messages
+
+
+def test_a_regression_still_fails_and_a_clean_comparison_still_passes_beside_the_note(
+    store: Store,
+):
+    measure(store, "base", flags(40))
+    measure(store, "worse", with_set_aside(80, 100))
+    measure(store, "same", with_set_aside(40, 100))
+    worse = run(store, "worse", baseline_batch="base")
+    assert not worse.passed
+    assert any(m.startswith("REGRESSION") for m in worse.messages)
+    assert f"note: {set_aside_note(store, 'worse')}" in worse.messages
+    same = run(store, "same", baseline_batch="base")
+    assert same.passed
+    assert f"note: {set_aside_note(store, 'same')}" in same.messages
+
+
+def test_a_baseline_with_a_fifth_set_aside_gets_its_note_after_its_own_summary(store: Store):
+    measure(store, "base", with_set_aside(40, 100))
+    measure(store, "cand", flags(40))
+    result = run(store, "cand", baseline_batch="base")
+    note = set_aside_note(store, "base")
+    assert f"baseline note: {note}" in result.messages
+    summary = next(i for i, m in enumerate(result.messages) if m.startswith("baseline merged"))
+    assert result.messages.index(f"baseline note: {note}") == summary + 2
+    assert not any(m.startswith("note: ") for m in result.messages)  # the candidate has none
+
+
+def test_a_batch_with_5_percent_or_less_set_aside_prints_no_note(store: Store):
+    measure(store, "edge", with_set_aside(40, 25))  # 25 of 500 is exactly 5%
+    assert not any("set aside (see" in m for m in run(store, "edge", max_rate=0.5).messages)
+    measure(store, "over", with_set_aside(40, 26))  # 26 of 500 is 5.2%
+    over = run(store, "over", max_rate=0.5)
+    assert f"note: {set_aside_note(store, 'over')}" in over.messages
+
+
 def test_a_batch_with_nothing_graded_fails_the_gate(store: Store):
     measure(store, "rel-1", ["GARBLED"] * 5)
     with pytest.raises(InvariantViolation, match="graded no traces"):

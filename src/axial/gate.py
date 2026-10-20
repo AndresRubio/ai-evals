@@ -28,6 +28,7 @@ from axial.measure import (
     judge_test_matrix,
     load_measurement,
     pair_batches,
+    set_aside_note,
     summary_lines,
 )
 from axial.report import SATURATION_WARNING, require_promoted
@@ -182,6 +183,12 @@ def gate_batches(
     candidate, candidate_rows = _load_fresh(store, mode, batch)
     assert candidate.rate is not None  # _load_fresh refuses a batch with no rate
     messages = summary_lines(candidate)
+    # A warning only: set-aside traces never change the decision below. They can hide
+    # a regression (the pairs shrink to the traces that were graded), so the reader sees
+    # the note `measure` printed.
+    candidate_note = set_aside_note(candidate.n_set_aside, candidate.n_traces)
+    if candidate_note:
+        messages.append(f"note: {candidate_note}")
     passed = True
 
     if candidate.flagged == 0:
@@ -217,6 +224,9 @@ def gate_batches(
                 "judge change with a system change. Measure both with the same judge."
             )
         messages += [f"baseline {line.strip()}" for line in summary_lines(baseline)]
+        baseline_note = set_aside_note(baseline.n_set_aside, baseline.n_traces)
+        if baseline_note:
+            messages.append(f"baseline note: {baseline_note}")
         pairing = pair_batches(baseline_rows, candidate_rows)
         messages.append(pairing.describe())
         if pairing.paired:
