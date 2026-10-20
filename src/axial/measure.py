@@ -335,12 +335,14 @@ def measure_batch(
         )
     model = build_model(spec)
 
-    few_shot_ids = set(spec.few_shot_ids)
+    # By input, whatever the id: an example's answer is in the prompt under any id, and
+    # a batch id that happens to equal an example's says nothing about its content.
+    example_inputs = {input_sha256(example.input) for example, _ in few_shot}
     verdicts: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
     for trace in batch:
         key = input_sha256(trace.input)
-        if trace.trace_id in few_shot_ids:
+        if key in example_inputs:
             errors.append(
                 {
                     "trace_id": trace.trace_id,

@@ -29,7 +29,7 @@ from axial.judge import (
     prompt_sha256,
     run_judge,
 )
-from axial.measure import measure_batch
+from axial.measure import input_sha256, measure_batch
 from axial.model import FakeModel
 from axial.report import (
     PROMPT_HASH_KEY,
@@ -408,3 +408,43 @@ def test_gate_refuses_a_measurement_written_before_prompt_pinning(tmp_path: Path
     path.write_text(json.dumps(data))
     with pytest.raises(AxialError, match="not a readable measurement.*--replace"):
         gate_batches(store, MEASURE_MODE, "rel-1", max_rate=0.5, draws=2000)
+
+
+# --- few-shot examples inside a batch ----------------------------------------------
+
+
+def measured_rows(store: Store, name: str) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+    directory = store.measurement_dir(MEASURE_MODE, name)
+    return (
+        store.read_jsonl(directory / "verdicts.jsonl"),
+        store.read_jsonl(directory / "errors.jsonl"),
+    )
+
+
+def test_a_batch_trace_sharing_only_an_id_with_an_example_is_graded(tmp_path: Path):
+    store = Store(tmp_path)
+    build_promoted_judge(store, few_shot_ids=["train-0"])
+    collision = Trace(trace_id="train-0", input="an unrelated question", output="BAD")
+    measure_batch(
+        store, MEASURE_MODE, 1, "rel-1", [collision] + batch_traces(["GOOD"] * 3),
+        fake_judge_builder(), draws=2000,
+    )
+    verdicts, errors = measured_rows(store, "rel-1")
+    assert "train-0" in {r["trace_id"] for r in verdicts}
+    assert errors == []
+
+
+def test_an_example_under_another_id_is_set_aside(tmp_path: Path):
+    store = Store(tmp_path)
+    build_promoted_judge(store, few_shot_ids=["train-0"])
+    renamed = Trace(trace_id="fresh-1", input="question train-0", output="BAD")
+    measure_batch(
+        store, MEASURE_MODE, 1, "rel-1", [renamed] + batch_traces(["GOOD"] * 3),
+        fake_judge_builder(), draws=2000,
+    )
+    verdicts, errors = measured_rows(store, "rel-1")
+    assert [(e["trace_id"], e["failure_class"]) for e in errors] == [
+        ("fresh-1", "few_shot_example")
+    ]
+    assert errors[0]["input_sha256"] == input_sha256("question train-0")
+    assert "fresh-1" not in {r["trace_id"] for r in verdicts}
