@@ -33,8 +33,17 @@ def judge_reply(prompt: str) -> str:
 
 
 def build_promoted_judge(
-    store: Store, *, version: int = 1, few_shot_ids: list[str] | None = None
+    store: Store,
+    *,
+    version: int = 1,
+    few_shot_ids: list[str] | None = None,
+    test_matrix: tuple[int, int, int, int] = (28, 2, 66, 4),
+    thresholds: Thresholds | None = None,
 ) -> None:
+    """Promote a judge whose test split comes out at `test_matrix` (tp, fn, tn, fp).
+
+    Another matrix than the default may need lowered `thresholds` to be promoted.
+    """
     corpus: list[Trace] = []
     labels: list[Label] = []
 
@@ -46,10 +55,11 @@ def build_promoted_judge(
 
     train = [f"train-{i}" for i in range(4)]
     dev = [f"dev-{i:02d}" for i in range(26)]
-    test = [f"test-{i:03d}" for i in range(100)]
+    tp, fn, tn, fp = test_matrix
+    outputs = ["BAD"] * tp + ["BAD-MISSED"] * fn + ["GOOD"] * tn + ["GOOD-ALARM"] * fp
+    test = [f"test-{i:03d}" for i in range(len(outputs))]
     for i, trace_id in enumerate(train + dev):
         add(trace_id, "BAD" if i % 2 == 0 else "GOOD", i % 2 == 0)
-    outputs = ["BAD"] * 28 + ["BAD-MISSED"] * 2 + ["GOOD"] * 66 + ["GOOD-ALARM"] * 4
     for trace_id, output in zip(test, outputs, strict=True):
         add(trace_id, output, output.startswith("BAD"))
 
@@ -77,7 +87,7 @@ def build_promoted_judge(
         store, MEASURE_MODE, version,
         alignment_from_verdicts(verdicts, "dev"),
         alignment_from_verdicts(verdicts, "test"),
-        Thresholds(),
+        thresholds or Thresholds(),
     )
 
 

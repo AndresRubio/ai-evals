@@ -187,6 +187,15 @@ def test_batches_without_shared_inputs_are_compared_unpaired(store: Store):
     assert result.passed  # the unpaired interval for 60 vs 80 of 500 straddles zero
 
 
+def test_an_unpaired_regression_fails_the_gate(store: Store):
+    measure(store, "base", flags(40))
+    measure(store, "cand", flags(90), start=10_000)
+    result = run(store, "cand", baseline_batch="base")
+    assert not result.passed
+    assert any(m.startswith("unpaired: only 0") for m in result.messages)
+    assert any(m.startswith("REGRESSION") for m in result.messages)
+
+
 def test_a_batch_compared_with_itself_is_refused(store: Store):
     """It can never regress, so a copy-paste slip in CI would pass every build."""
     measure(store, "rel-1", flags(60))
@@ -230,6 +239,42 @@ def test_the_clipping_note_names_the_side_the_rates_were_clipped_to(
     assert f"corrected {shown[1]}" in result.messages[0]
     notes = [m for m in result.messages if "computed before clipping" in m]
     assert len(notes) == 1 and wording in notes[0]
+
+
+# --- a judge too close to chance for an interval -------------------------------------
+
+# Lowered so a judge at test J = 10/20 + 11/20 - 1 = 0.05 can be promoted at all: about
+# half its Monte Carlo draws fall at or below the cut-off, so no interval survives.
+NEAR_CHANCE = Thresholds(
+    min_tpr=0.0, min_tnr=0.0, max_gap=1.0, min_test_positives=20, min_test_negatives=20
+)
+
+
+@pytest.fixture
+def near_chance(tmp_path: Path) -> Store:
+    store = Store(tmp_path)
+    build_promoted_judge(store, test_matrix=(10, 10, 11, 9), thresholds=NEAR_CHANCE)
+    return store
+
+
+def test_max_rate_fails_when_the_rate_has_no_interval(near_chance: Store):
+    """A ceiling cannot pass on an interval that could not be computed, however high."""
+    measure(near_chance, "rel-1", flags(60))
+    result = run(near_chance, "rel-1", max_rate=0.99)
+    assert not result.passed
+    assert any(m.startswith("FAIL: the corrected rate has no interval") for m in result.messages)
+    assert not any(m.startswith("within the ceiling") for m in result.messages)
+
+
+def test_a_difference_with_no_interval_fails_the_gate(near_chance: Store):
+    """The same flags in both batches would show no change with an interval; without one
+    no regression check is possible, so the gate fails."""
+    measure(near_chance, "base", flags(40))
+    measure(near_chance, "cand", flags(40))
+    result = run(near_chance, "cand", baseline_batch="base")
+    assert not result.passed
+    assert any(m.startswith("FAIL: the difference vs base has no interval") for m in result.messages)
+    assert "no change detectable above the noise floor" not in result.messages
 
 
 # --- stale measurements ------------------------------------------------------------
@@ -283,6 +328,38 @@ def test_rejudging_to_identical_verdicts_and_repromoting_keeps_a_measurement_val
     rejudge(store)
     build_promoted_judge(store)
     assert run(store, "rel-1").passed
+
+
+def judge_verdicts_path(store: Store) -> Path:
+    return store.judge_dir(MEASURE_MODE, 1) / "verdicts.jsonl"
+
+
+def test_a_judge_whose_verdicts_were_edited_under_its_marker_fails_the_gate(store: Store):
+    """Only the reason text changes, so the test matrix and the measurement's numbers still
+    agree: the verdicts hash in PROMOTED is the one check that catches it."""
+    measure(store, "rel-1", flags(60))
+    rows = store.read_jsonl(judge_verdicts_path(store))
+    row = next(r for r in rows if r["split"] == "test")
+    row["raw"] = row["raw"].replace("the output was", "the output, edited, was")
+    store.write_jsonl(judge_verdicts_path(store), rows)
+    assert (store.judge_dir(MEASURE_MODE, 1) / "PROMOTED").exists()
+    with pytest.raises(InvariantViolation) as caught:
+        run(store, "rel-1", max_rate=0.5)
+    message = str(caught.value)
+    assert "batch 'rel-1' was measured by merged v1" in message
+    assert "verdicts.jsonl has changed since it was promoted" in message
+
+
+def test_measure_refuses_a_judge_whose_verdicts_were_edited_under_its_marker(store: Store):
+    """A missed failure flipped to caught raises the judge's test TPR, which would shrink
+    every corrected rate measured with it."""
+    rows = store.read_jsonl(judge_verdicts_path(store))
+    missed = next(r for r in rows if r["split"] == "test" and r["truth"] and not r["verdict"])
+    missed["verdict"] = True
+    store.write_jsonl(judge_verdicts_path(store), rows)
+    with pytest.raises(InvariantViolation, match="verdicts.jsonl has changed since it was promoted"):
+        measure(store, "rel-1", flags(60))
+    assert not store.measurement_dir(MEASURE_MODE, "rel-1").exists()
 
 
 def test_a_stale_baseline_fails_too(store: Store):
