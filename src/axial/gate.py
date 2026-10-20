@@ -34,6 +34,13 @@ from axial.measure import (
 from axial.report import SATURATION_WARNING, require_promoted
 from axial.store import Store
 
+# How far a stored interval bound may sit from the recomputed one. The bounds are
+# percentiles of Beta draws, and numpy does not promise the same stream across versions,
+# so an upgrade between `measure` and `gate` can move them in the third decimal. Anything
+# else in a measurement is deterministic and compared exactly.
+INTERVAL_TOLERANCE = 0.01
+_INTERVAL_KEYS = ("interval", "interval_if_judge_exact")
+
 
 @dataclass
 class GateResult:
@@ -107,6 +114,26 @@ def gate(
     return GateResult(passed=passed, messages=messages)
 
 
+def _bounds_agree(stored: list[float] | None, recomputed: list[float] | None) -> bool:
+    """Both absent, or both present with each bound within the tolerance. A NaN bound
+    never is: `abs(nan - x) <= tolerance` is False."""
+    if stored is None or recomputed is None:
+        return stored is None and recomputed is None
+    return all(abs(a - b) <= INTERVAL_TOLERANCE for a, b in zip(stored, recomputed, strict=True))
+
+
+def _same_numbers(stored: Measurement, recomputed: Measurement) -> bool:
+    """Whether a stored measurement is what its verdicts give, compared as written to disk.
+
+    Every field is exact except the two intervals' bounds, which have a tolerance. A nan
+    point is null on both sides, and a NaN read back into a bound is never close to a
+    recomputed one.
+    """
+    a, b = stored.to_json(), recomputed.to_json()
+    bounds = all(_bounds_agree(a.pop(key), b.pop(key)) for key in _INTERVAL_KEYS)
+    return bounds and a == b
+
+
 def _load_fresh(
     store: Store, mode: str, batch: str
 ) -> tuple[Measurement, list[dict[str, Any]]]:
@@ -116,8 +143,9 @@ def _load_fresh(
     `measurement.json` is a plain file anyone can edit, and its interval decides
     `--max-rate`. So the test matrix is rebuilt from the judge's hash-checked verdicts,
     the rate is recomputed from the batch's own verdict rows with the recorded draws
-    and seed, and any difference is refused. The gate then uses the recomputed values,
-    which are equal to the stored ones once the check passes.
+    and seed, and any difference is refused. The gate then uses the recomputed values:
+    an interval bound may differ from the stored one by `INTERVAL_TOLERANCE`, and an edit
+    inside that tolerance cannot change a decision because the stored bound is never read.
     """
     measurement, rows = load_measurement(store, mode, batch)
     version = measurement.judge_version
@@ -158,10 +186,9 @@ def _load_fresh(
     except ValueError as exc:  # a negative draws or seed
         raise AxialError(mismatch) from exc
     recomputed = dataclasses.replace(measurement, test_matrix=test, rate=rate)
-    # Compared as written to disk: a nan point is null there, and a NaN read back into
-    # an interval never equals a recomputed bound.
-    if recomputed.to_json() != measurement.to_json():
+    if not _same_numbers(measurement, recomputed):
         raise AxialError(mismatch)
+    # The recomputed measurement, not the stored one: the gate decides on these bounds.
     return recomputed, rows
 
 

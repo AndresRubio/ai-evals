@@ -16,12 +16,13 @@ from measure_helpers import (
     judge_reply,
 )
 
+from axial.align import corrected_rate
 from axial.config import Thresholds
 from axial.dataset import Splits, read_labels
 from axial.errors import AxialError, InvariantViolation
 from axial.gate import gate_batches
 from axial.judge import JudgeSpec, run_judge
-from axial.measure import measure_batch
+from axial.measure import judge_test_matrix, measure_batch
 from axial.model import FakeModel
 from axial.report import alignment_from_verdicts, promote
 from axial.store import Store
@@ -313,8 +314,6 @@ def edit(store: Store, batch: str, **changes: object) -> None:
         {"clipped": "low"},
         {"test_matrix": {"tp": 30, "fn": 0, "tn": 70, "fp": 0}},
         {"test_matrix": {"tp": 0, "fn": 0, "tn": 5, "fp": 0}},  # was a ValueError in align
-        {"seed": 1},
-        {"draws": 2000},
     ],
     ids=lambda changes: next(iter(changes)),
 )
@@ -327,6 +326,105 @@ def test_a_measurement_whose_numbers_its_verdicts_do_not_give_is_refused(
         run(store, "rel-1", max_rate=0.10)
     assert "--name rel-1 --replace" in str(caught.value)
     assert "\n" not in str(caught.value)
+
+
+@pytest.mark.parametrize("changes", [{"seed": 1}, {"draws": 2000}], ids=lambda c: next(iter(c)))
+def test_an_edited_seed_or_draws_is_used_by_the_recomputation(
+    store: Store, changes: dict[str, int]
+):
+    """Nothing but the measurement records its seed and draws, so they cannot be compared:
+    the gate recomputes with them and accepts stored bounds within the tolerance of what
+    they give. A ceiling between the stored and the recomputed upper bound is judged
+    against the recomputed one."""
+    measure(store, "rel-1", flags(60))
+    stored_high = stored_measurement(store, "rel-1")["interval"][1]
+    edit(store, "rel-1", **changes)
+    test = judge_test_matrix(store, MEASURE_MODE, 1)
+    recomputed = corrected_rate(test, 60, 500, **{"draws": 4000, "seed": 0} | changes)
+    assert recomputed.interval is not None
+    high = recomputed.interval[1]
+    assert high != stored_high
+    result = run(store, "rel-1", max_rate=(high + stored_high) / 2)
+    assert result.passed == (high < stored_high)
+
+
+def stored_measurement(store: Store, batch: str) -> dict[str, list[float]]:
+    path = store.measurement_dir(MEASURE_MODE, batch) / "measurement.json"
+    return json.loads(path.read_text())
+
+
+BOUNDS = [("interval", 0), ("interval", 1), ("interval_if_judge_exact", 0),
+          ("interval_if_judge_exact", 1)]
+
+
+def shifted(store: Store, key: str, end: int, by: float) -> dict[str, list[float]]:
+    bounds = list(stored_measurement(store, "rel-1")[key])
+    bounds[end] += by
+    return {key: bounds}
+
+
+@pytest.mark.parametrize(("key", "end"), BOUNDS, ids=lambda v: str(v))
+@pytest.mark.parametrize("by", [0.005, -0.005, 0.009])
+def test_an_interval_bound_within_a_hundredth_of_the_recomputed_one_is_accepted(
+    store: Store, key: str, end: int, by: float
+):
+    """The bounds are percentiles of Beta draws, and numpy does not promise the same
+    draws across versions, so a measurement must survive an upgrade between `measure`
+    and `gate` without a paid re-measure."""
+    measure(store, "rel-1", flags(60))
+    edit(store, "rel-1", **shifted(store, key, end, by))
+    assert run(store, "rel-1", max_rate=0.5).passed
+
+
+@pytest.mark.parametrize(("key", "end"), BOUNDS, ids=lambda v: str(v))
+@pytest.mark.parametrize("by", [0.05, -0.05, 0.011])
+def test_an_interval_bound_further_than_a_hundredth_from_the_recomputed_one_is_refused(
+    store: Store, key: str, end: int, by: float
+):
+    measure(store, "rel-1", flags(60))
+    edit(store, "rel-1", **shifted(store, key, end, by))
+    with pytest.raises(AxialError, match="does not match its own verdicts"):
+        run(store, "rel-1", max_rate=0.5)
+
+
+@pytest.mark.parametrize("key", ["interval", "interval_if_judge_exact"])
+@pytest.mark.parametrize("end", [0, 1])
+def test_a_nan_bound_is_refused(store: Store, key: str, end: int):
+    measure(store, "rel-1", flags(60))
+    edit(store, "rel-1", **shifted(store, key, end, math.nan))
+    with pytest.raises(AxialError, match="does not match its own verdicts"):
+        run(store, "rel-1", max_rate=0.5)
+
+
+@pytest.mark.parametrize("key", ["interval", "interval_if_judge_exact"])
+def test_an_interval_that_is_null_where_the_recomputation_has_one_is_refused(
+    store: Store, key: str
+):
+    """Whether an interval exists is compared exactly; only the bounds have a tolerance."""
+    measure(store, "rel-1", flags(60))
+    edit(store, "rel-1", **{key: None})
+    with pytest.raises(AxialError, match="does not match its own verdicts"):
+        run(store, "rel-1", max_rate=0.5)
+
+
+def test_the_gate_decides_on_the_recomputed_bound_not_the_stored_one(store: Store):
+    """A stored upper bound 0.005 low is accepted, and a ceiling between the two bounds
+    is judged against the recomputed one, so an edit inside the tolerance changes no
+    decision."""
+    measure(store, "rel-1", flags(60))
+    high = stored_measurement(store, "rel-1")["interval"][1]
+    edit(store, "rel-1", **shifted(store, "interval", 1, -0.005))
+    result = run(store, "rel-1", max_rate=high - 0.0025)
+    assert not result.passed
+    assert any(m.startswith("ABOVE CEILING") and f"{high:.3f}" in m for m in result.messages)
+
+
+def test_a_baseline_bound_within_the_tolerance_is_accepted_too(store: Store):
+    measure(store, "base", flags(40))
+    measure(store, "cand", flags(60))
+    bounds = stored_measurement(store, "base")["interval"]
+    edit(store, "base", interval=[bounds[0], bounds[1] + 0.005])
+    assert not run(store, "cand", baseline_batch="base").passed  # the paired regression stands
 
 
 def test_a_baseline_whose_numbers_its_verdicts_do_not_give_is_refused(store: Store):
