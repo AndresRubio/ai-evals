@@ -1,7 +1,7 @@
 # Pinning a promoted judge to the prompt it was tested with
 
 **Date:** 2026-10-20
-**Status:** approved design, not yet implemented
+**Status:** implemented (plan: docs/superpowers/plans/2026-10-20-prompt-pinning.md)
 **Builds on:** [`2026-10-07-corrected-rates-and-disagreements-design.md`](2026-10-07-corrected-rates-and-disagreements-design.md)
 
 ## Why
@@ -85,9 +85,12 @@ to `measurement.json`.
 
 `_load_fresh` in `gate.py` compares the measurement's `prompt_sha256` with the marker's,
 beside the two hashes it compares today. A `measurement.json` with no `prompt_sha256` is
-refused with the re-measure command. `gate_batches` refuses a candidate and a baseline with
-different fingerprints, next to its existing judge-version check, with a message saying
-the two batches were graded by different prompts.
+refused with the re-measure command.
+
+`gate_batches` was meant to compare the candidate's and the baseline's fingerprints too.
+That comparison was dropped during implementation because it cannot fire: `_load_fresh`
+already refuses each batch whose fingerprint is not the marker's, and the version check
+makes both batches name the same marker.
 
 After a relabel, then, `measure` refuses before grading anything, and `gate --batch`
 refuses every batch the judge measured, until the judge is re-tested and promoted.
@@ -130,7 +133,9 @@ Tests are written first, and each is seen to fail before the code that passes it
 - `require_promoted` refuses a marker without `prompt_sha256` and a corpus or labels that
   resolve to another prompt, and does not read the corpus for a judge with no few-shot ids.
 - `measurement.json` records the fingerprint. `gate --batch` refuses a measurement without
-  one and a baseline with a different one.
+  one and a measurement whose fingerprint is not the marker's.
+- If the examples change between `require_promoted` and grading, `measure` refuses before
+  grading anything.
 - A batch trace sharing only an id with an example is graded; one repeating an example's
   input under a new id is set aside.
 

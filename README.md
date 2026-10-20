@@ -97,14 +97,20 @@ The refusals are the product.
 - **A corrected rate comes only from a promoted judge's test-split error rates,
   and every measurement states the assumption it rests on:** that the judge errs on
   the new batch as it did on test. A measurement taken by a judge that has since
-  been re-judged or edited fails the gate until it is re-measured. Known limitation,
-  deferred to a follow-up: the promotion binds `judge.yaml` and the judge's verdicts,
-  and the few-shot examples are read from the current corpus and labels each time the
-  judge grades. `axial promote` itself does not check which `judge.yaml` or examples
-  produced the test rows, so editing `judge.yaml` and then promoting binds the edited
-  prompt to verdicts from the old one. After relabelling or re-ingesting a few-shot
-  example, or after editing `judge.yaml`, re-run the judge on test and promote again
-  before measuring.
+  been re-judged or edited fails the gate until it is re-measured. Each verdict row
+  records a fingerprint of the full prompt: `judge.yaml` plus the few-shot examples as
+  resolved from the current traces and labels. `axial promote` refuses unless every dev
+  and test row carries the current fingerprint, and writes it into `PROMOTED`. `measure`
+  and `gate` refuse a judge whose examples have since been relabelled or re-ingested,
+  until dev and test are re-run and the judge is promoted
+  again. A judge promoted before this change has to re-run both splits and be promoted
+  again, and batches measured before it need `--replace` to be measured again:
+
+  ```bash
+  axial judge <mode> --version N --split dev
+  axial judge <mode> --version N --split test
+  axial promote <mode> N
+  ```
 - **Infra failures never score as model failures.** They are quarantined in
   `errors.jsonl` with a failure class.
 - **Perplexity is never a verdict.** It selects which traces a human reads and stops

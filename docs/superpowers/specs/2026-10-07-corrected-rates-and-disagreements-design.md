@@ -128,13 +128,16 @@ section says otherwise, this section describes what the code does.
 - `gate --batch` prints a batch's set-aside note, for the candidate and the baseline, when
   more than 5% of that batch was set aside. It does not fail on it (owner's ruling): the
   decision is made as before.
-- Known limitation, deferred to a follow-up: the promotion binds `judge.yaml` and the
-  judge's verdicts, and the few-shot examples are read from the current corpus and labels
-  each time the judge grades. `axial promote` itself does not check which `judge.yaml` or
-  examples produced the test rows, so editing `judge.yaml` and then promoting binds the
-  edited prompt to verdicts from the old one. After relabelling or re-ingesting a few-shot
-  example, or after editing `judge.yaml`, the judge has to be re-run on test and promoted
-  again before measuring. The README says so.
+- Known limitation, closed on 2026-10-20 by prompt pinning
+  ([`2026-10-20-prompt-pinning-design.md`](2026-10-20-prompt-pinning-design.md)). Until
+  then the promotion bound `judge.yaml` and the judge's verdicts, and the few-shot
+  examples were read from the current corpus and labels each time the judge graded.
+  `axial promote` did not check which `judge.yaml` or examples produced the test rows, so
+  editing `judge.yaml` and then promoting bound the edited prompt to verdicts from the old
+  one, and relabelling or re-ingesting a few-shot example changed the prompt without
+  anything noticing. Verdict rows now carry a fingerprint of the full prompt, `promote`
+  checks it and `PROMOTED` records it, and `measure` and `gate` refuse a judge whose
+  prompt has changed.
 
 ## 1. Commands and data flow
 
@@ -165,8 +168,9 @@ axial measure <mode> --version N --traces <file> --name <batch> [--adapter A] [-
    signature and on-disk behaviour.
 5. **Set aside** what cannot be scored, in `errors.jsonl` with the existing failure
    classes (`bad_template`, `harness`, `truncated`, `unparseable`) plus one new one:
-   `few_shot_example`, for a batch trace whose id is one of the judge's few-shot ids. That
-   trace's answer is printed in its own prompt.
+   `few_shot_example`, for a batch trace whose input is the input of one of the judge's
+   few-shot examples, whatever its id (changed 2026-10-20; this first matched on the id).
+   That trace's answer is printed in its own prompt.
 6. **Estimate** the corrected rate (section 2) from the judge's test-split confusion matrix
    and the batch's flagged count. If every trace was set aside (`n_graded = 0`), nothing is
    estimated: the rate fields are `null`, a note says so, and the command exits non-zero
