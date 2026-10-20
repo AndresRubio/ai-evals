@@ -20,9 +20,8 @@ from pathlib import Path
 from typing import Any
 
 from axial.align import ConfusionMatrix, CorrectedRate, confusion_matrix, corrected_rate
-from axial.dataset import Label, Splits, read_labels
 from axial.errors import AxialError
-from axial.judge import Graded, JudgeSpec, grade_trace, resolve_few_shot
+from axial.judge import Graded, JudgeSpec, grade_trace, load_few_shot
 from axial.model import Model
 from axial.report import SATURATION_WARNING, require_promoted
 from axial.store import Store, json_text, jsonl_text, refuse_non_directory
@@ -291,36 +290,6 @@ def _notes(
     return notes
 
 
-def _read_few_shot(
-    store: Store, spec: JudgeSpec, mode: str, version: int
-) -> tuple[list[tuple[Trace, Label]], Splits | None]:
-    """The judge's few-shot examples and the splits its prompt needs.
-
-    Read only for a judge that has few-shot ids: `measure` needs the labelled corpus for
-    nothing else, so a damaged corpus must not stop a judge without examples. For one
-    with examples, an unreadable file is refused here, before the first trace is graded
-    and paid for.
-    """
-    if not spec.few_shot_ids:
-        return [], None
-
-    def read[T](what: str, reader: Callable[[], T]) -> T:
-        try:
-            return reader()
-        except (OSError, ValueError) as exc:  # ValueError covers JSON and pydantic errors
-            detail = (str(exc).splitlines() or [""])[0]
-            raise AxialError(
-                f"could not read {what}, which judge {mode} v{version}'s few-shot examples "
-                f"come from: {detail}"
-            ) from exc
-
-    corpus = read(f"the traces ({store.traces_path})", store.read_traces)
-    where = store.dataset_dir(mode)
-    labels = read(f"the labels (in {where})", lambda: read_labels(store, mode))
-    splits = read(f"the splits (in {where})", lambda: Splits.load(store, mode))
-    return resolve_few_shot(spec, corpus, labels), splits
-
-
 def measure_batch(
     store: Store,
     mode: str,
@@ -353,7 +322,7 @@ def measure_batch(
     _check_batch(batch)
     test = judge_test_matrix(store, mode, version)
     spec = JudgeSpec.load(store, mode, version)
-    few_shot, splits = _read_few_shot(store, spec, mode, version)
+    few_shot, splits = load_few_shot(store, spec)
     model = build_model(spec)
 
     few_shot_ids = set(spec.few_shot_ids)

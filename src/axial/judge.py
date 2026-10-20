@@ -9,16 +9,18 @@ the headline in a way nothing downstream can undo.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, Field
 
-from axial.dataset import Label, Splits
-from axial.errors import InvariantViolation
+from axial.dataset import Label, Splits, read_labels
+from axial.errors import AxialError, InvariantViolation
 from axial.model import JevModel, LiteLLMModel, Model, is_decision_model
 from axial.store import Store
 from axial.traces import Trace
@@ -102,6 +104,35 @@ def build_judge_model(spec: JudgeSpec) -> Model:
     )
 
 
+def render_few_shot(few_shot: list[tuple[Trace, Label]]) -> str:
+    """The few-shot block exactly as the prompt carries it.
+
+    `assemble_prompt` and `prompt_sha256` both call this, so the fingerprint is taken
+    over the text the model is sent.
+    """
+    blocks = []
+    for example, label in few_shot:
+        verdict = "fail" if label.label else "pass"
+        blocks.append(
+            f"\nEXAMPLE\nINPUT:\n{example.input}\nOUTPUT:\n{example.output}\n"
+            f'ANSWER: {{"verdict": "{verdict}", "reason": "{label.critique}"}}\n'
+        )
+    return "".join(blocks)
+
+
+def prompt_sha256(spec: JudgeSpec, few_shot: list[tuple[Trace, Label]]) -> str:
+    """The fingerprint of everything in a judge's prompt except the trace it grades.
+
+    It covers the spec's fields, not `judge.yaml`'s bytes, so reformatting the file
+    leaves it alone, and the rendered few-shot block, so a relabelled or re-ingested
+    example changes it. `ensure_ascii` writes a lone surrogate as an escape, which keeps
+    the document encodable.
+    """
+    document = {"spec": spec.model_dump(), "few_shot": render_few_shot(few_shot)}
+    text = json.dumps(document, sort_keys=True, ensure_ascii=True)
+    return hashlib.sha256(text.encode("ascii")).hexdigest()
+
+
 def assemble_prompt(
     spec: JudgeSpec,
     trace: Trace,
@@ -127,14 +158,7 @@ def assemble_prompt(
                     "inflate the score measured on it."
                 )
 
-    blocks = []
-    for example, label in few_shot:
-        verdict = "fail" if label.label else "pass"
-        blocks.append(
-            f"\nEXAMPLE\nINPUT:\n{example.input}\nOUTPUT:\n{example.output}\n"
-            f'ANSWER: {{"verdict": "{verdict}", "reason": "{label.critique}"}}\n'
-        )
-    few_shot_text = "".join(blocks)
+    few_shot_text = render_few_shot(few_shot)
 
     return spec.prompt_template.format(
         mode_name=spec.mode_name or spec.mode,
@@ -207,6 +231,41 @@ def resolve_few_shot(
     return few_shot
 
 
+def load_few_shot(
+    store: Store, spec: JudgeSpec
+) -> tuple[list[tuple[Trace, Label]], Splits | None]:
+    """The judge's few-shot examples as the store resolves them now, and the splits its
+    prompt needs.
+
+    Read only for a judge that has few-shot ids, so a damaged corpus does not stop a
+    judge without examples. For one with examples, an unreadable file is refused here,
+    before anything is graded and paid for.
+    """
+    if not spec.few_shot_ids:
+        return [], None
+
+    def read[T](what: str, reader: Callable[[], T]) -> T:
+        try:
+            return reader()
+        except (OSError, ValueError) as exc:  # ValueError covers JSON and pydantic errors
+            detail = (str(exc).splitlines() or [""])[0]
+            raise AxialError(
+                f"could not read {what}, which judge {spec.mode} v{spec.version}'s few-shot "
+                f"examples come from: {detail}"
+            ) from exc
+
+    corpus = read(f"the traces ({store.traces_path})", store.read_traces)
+    where = store.dataset_dir(spec.mode)
+    labels = read(f"the labels (in {where})", lambda: read_labels(store, spec.mode))
+    splits = read(f"the splits (in {where})", lambda: Splits.load(store, spec.mode))
+    return resolve_few_shot(spec, corpus, labels), splits
+
+
+def current_prompt_sha256(store: Store, spec: JudgeSpec) -> str:
+    """The fingerprint of the prompt `spec` sends with the store's traces and labels now."""
+    return prompt_sha256(spec, load_few_shot(store, spec)[0])
+
+
 def grade_trace(
     spec: JudgeSpec,
     trace: Trace,
@@ -275,6 +334,7 @@ def run_judge(
     corpus explicitly.
     """
     few_shot = resolve_few_shot(spec, traces if corpus is None else corpus, labels)
+    fingerprint = prompt_sha256(spec, few_shot)
     label_by_id = {lbl.trace_id: lbl for lbl in labels}
 
     result = RunResult()
@@ -287,6 +347,7 @@ def run_judge(
                     "split": split,
                     "failure_class": outcome.failure_class,
                     "detail": outcome.detail,
+                    "prompt_sha256": fingerprint,
                 }
             )
             continue
@@ -300,6 +361,7 @@ def run_judge(
                     "failure_class": "unlabelled",
                     "detail": "no human label for this trace; a verdict with no ground "
                     "truth cannot be scored and must not carry truth=None downstream",
+                    "prompt_sha256": fingerprint,
                 }
             )
             continue
@@ -315,6 +377,7 @@ def run_judge(
                 "attempts": outcome.attempts,
                 "latency_s": outcome.latency_s,
                 "raw": outcome.raw,
+                "prompt_sha256": fingerprint,
             }
         )
 
