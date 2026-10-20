@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -184,6 +185,62 @@ def test_measure_without_few_shot_examples_never_reads_the_labelled_corpus(repo:
     corpus = repo / ".axial" / "traces" / "traces.jsonl"
     corpus.write_text(corpus.read_text() + "not json\n")
     assert_clean(measure(repo, "rel-1", 5, 20), 0, "observed 0.250")
+
+
+@pytest.fixture
+def few_shot_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    build_promoted_judge(Store(tmp_path), few_shot_ids=["train-0"])
+    monkeypatch.setattr(cli, "build_judge_model", fake_judge_builder())
+    monkeypatch.chdir(tmp_path)
+    return tmp_path
+
+
+def appending(text: bytes) -> Callable[[Path], None]:
+    return lambda path: path.write_bytes(path.read_bytes() + text)
+
+
+def overwriting(text: bytes) -> Callable[[Path], None]:
+    return lambda path: path.write_bytes(text)
+
+
+def a_directory(path: Path) -> None:
+    path.unlink()
+    path.mkdir()
+
+
+CORRUPTIONS = {
+    "traces: not json": ("traces", appending(b"not json\n")),
+    "traces: not a trace": ("traces", appending(b'{"nope": 1}\n')),
+    "traces: not utf-8": ("traces", appending(b"\xff\xfe\n")),
+    "traces: a directory": ("traces", a_directory),
+    "labels: not json": ("labels", appending(b"not json\n")),
+    "labels: not a label": ("labels", appending(b'{"nope": 1}\n')),
+    "labels: a directory": ("labels", a_directory),
+    "splits: not json": ("splits", overwriting(b"not json")),
+    "splits: not splits": ("splits", overwriting(b'{"train": 1}')),
+}
+
+
+@pytest.mark.parametrize("corruption", CORRUPTIONS)
+def test_measure_with_a_few_shot_judge_refuses_a_corpus_it_cannot_read_in_one_line(
+    few_shot_repo: Path, corruption: str
+):
+    what, damage = CORRUPTIONS[corruption]
+    axial_dir = few_shot_repo / ".axial"
+    damage(
+        {
+            "traces": axial_dir / "traces" / "traces.jsonl",
+            "labels": axial_dir / "datasets" / MEASURE_MODE / "labels.jsonl",
+            "splits": axial_dir / "datasets" / MEASURE_MODE / "splits.json",
+        }[what]
+    )
+    path = write_batch(few_shot_repo / "b.jsonl", ["BAD"] * 5 + ["GOOD"] * 15)
+    before = tree(axial_dir)
+    result = axial("measure", MEASURE_MODE, "--version", "1", "--traces", str(path), "--name", "g")
+    assert_clean(result, 1, f"could not read the {what}", "few-shot examples")
+    assert len(result.output.strip().splitlines()) == 1
+    assert "Traceback" not in result.output
+    assert tree(axial_dir) == before
 
 
 # --- gate --batch -------------------------------------------------------------------

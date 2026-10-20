@@ -98,6 +98,22 @@ def test_text_that_is_not_valid_utf8_is_refused_before_any_model_call(store: Sto
     assert not (store.root / "measurements").exists()
 
 
+def test_a_few_shot_judge_with_an_unreadable_corpus_is_refused_before_its_model_is_built(
+    tmp_path: Path,
+):
+    store = Store(tmp_path)
+    build_promoted_judge(store, few_shot_ids=["train-0"])
+    store.traces_path.write_text(store.traces_path.read_text() + "not json\n")
+    specs: list[JudgeSpec] = []
+    with pytest.raises(AxialError, match="could not read the traces .*few-shot examples"):
+        measure_batch(
+            store, MEASURE_MODE, 1, "rel-1", batch_traces(["GOOD"] * 3),
+            fake_judge_builder(specs), draws=2000,
+        )
+    assert specs == []
+    assert not (store.root / "measurements").exists()
+
+
 @pytest.mark.parametrize("name", ["", ".", "..", "../escape", "a/b", ".hidden", "sp ace"])
 def test_a_name_that_is_not_a_plain_directory_name_is_refused(store: Store, name: str):
     with pytest.raises(AxialError, match="not allowed"):
