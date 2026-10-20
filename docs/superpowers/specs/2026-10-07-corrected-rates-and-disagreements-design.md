@@ -104,7 +104,9 @@ section says otherwise, this section describes what the code does.
   and would otherwise force a paid re-measure. The recomputation uses the draws and seed the
   measurement records, so an edit to either is caught only when it moves a bound by more
   than the tolerance. The gate decides on the recomputed values, so an edit inside the
-  tolerance cannot change a decision.
+  tolerance cannot change a decision. A measurement that records fewer than 1,000 or more
+  than 1,000,000 draws is refused: one draw gives an interval of zero width, and a huge
+  count exhausts memory.
 - The chance cut-off, J of 0.05 or less, that withholds the point estimate and the
   judge-exact interval is decided in exact arithmetic on the test counts. A judge exactly at
   the cut-off gets no point. The per-draw rule is unchanged.

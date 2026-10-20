@@ -41,6 +41,12 @@ from axial.store import Store
 INTERVAL_TOLERANCE = 0.01
 _INTERVAL_KEYS = ("interval", "interval_if_judge_exact")
 
+# The draws a measurement may record for the gate to recompute it with. A handful gives
+# percentiles that are noise (one draw gives an interval of zero width), and a huge count
+# exhausts memory. `measure` uses 20,000.
+MIN_DRAWS = 1_000
+MAX_DRAWS = 1_000_000
+
 
 @dataclass
 class GateResult:
@@ -173,6 +179,12 @@ def _load_fresh(
             f"batch {batch!r} graded no traces (all {measurement.n_traces} were set aside). "
             "A gate cannot pass on no evidence; see the batch's errors.jsonl."
         )
+    if not MIN_DRAWS <= measurement.draws <= MAX_DRAWS:
+        raise AxialError(
+            f"measurement {batch!r} for {mode} records {measurement.draws:,} Monte Carlo "
+            f"draws; the gate recomputes its interval with them and accepts {MIN_DRAWS:,} "
+            f"to {MAX_DRAWS:,}. Re-measure the batch with {remeasure}."
+        )
     test = judge_test_matrix(store, mode, version)
     flagged = sum(1 for r in rows if r["verdict"])
     mismatch = (
@@ -183,7 +195,7 @@ def _load_fresh(
         rate = corrected_rate(
             test, flagged, len(rows), draws=measurement.draws, seed=measurement.seed
         )
-    except ValueError as exc:  # a negative draws or seed
+    except ValueError as exc:  # a negative seed
         raise AxialError(mismatch) from exc
     recomputed = dataclasses.replace(measurement, test_matrix=test, rate=rate)
     if not _same_numbers(measurement, recomputed):

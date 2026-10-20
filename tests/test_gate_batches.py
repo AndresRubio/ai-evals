@@ -425,6 +425,37 @@ def test_an_edited_seed_or_draws_is_used_by_the_recomputation(
     assert result.passed == (high < stored_high)
 
 
+@pytest.mark.parametrize("draws", [1, 999, 1_000_001])
+def test_a_measurement_with_too_few_or_too_many_draws_is_refused(store: Store, draws: int):
+    """With 1 draw and intervals edited to match, the interval had zero width and a batch
+    whose honest upper bound is 0.128 passed --max-rate 0.1. A huge count is not tried
+    here: before the cap, 10**12 draws ran the test process out of memory."""
+    measure(store, "rel-1", flags(60))
+    if draws < 1_000:
+        rate = corrected_rate(judge_test_matrix(store, MEASURE_MODE, 1), 60, 500, draws=draws)
+        assert rate.interval is not None and rate.interval_if_judge_exact is not None
+        edit(
+            store, "rel-1", draws=draws, interval=list(rate.interval),
+            interval_if_judge_exact=list(rate.interval_if_judge_exact),
+        )
+    else:
+        edit(store, "rel-1", draws=draws)
+    with pytest.raises(AxialError, match=f"records {draws:,} Monte Carlo draws") as caught:
+        run(store, "rel-1", max_rate=0.1)
+    assert "1,000 to 1,000,000" in str(caught.value)
+    assert "--name rel-1 --replace" in str(caught.value)
+    assert "\n" not in str(caught.value)
+
+
+@pytest.mark.parametrize("draws", [1_000, 1_000_000])
+def test_a_measurement_with_draws_at_either_end_of_the_range_gates(store: Store, draws: int):
+    measure_batch(
+        store, MEASURE_MODE, 1, "rel-1", batch_traces(flags(60)), fake_judge_builder(),
+        draws=draws,
+    )
+    assert not run(store, "rel-1", max_rate=0.1).passed  # the upper bound is about 0.128
+
+
 def stored_measurement(store: Store, batch: str) -> dict[str, list[float]]:
     path = store.measurement_dir(MEASURE_MODE, batch) / "measurement.json"
     return json.loads(path.read_text())
