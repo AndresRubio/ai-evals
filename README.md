@@ -88,14 +88,20 @@ The refusals are the product.
   failure rate interval is above the ceiling, and `--baseline-batch` fails when the
   interval on the difference from a baseline batch excludes zero on the side of more
   failures. The difference is paired by input when the shared inputs cover at least
-  80% of each batch's graded traces, and unpaired otherwise. `gate --version` compares
-  a judge's own verdicts across judge versions with `--baseline`; without a baseline
-  or a ceiling, either mode only prints and passes. Both warn when a suite stops
-  failing anything: a saturated eval has stopped carrying signal.
+  80% of each batch's graded traces, and unpaired otherwise. `gate --batch` also prints
+  a batch's set-aside note when more than 5% of it was set aside; the note warns and
+  leaves the decision as it was. `gate --version` compares a judge's own verdicts
+  across judge versions with `--baseline`; without a baseline or a ceiling, either mode
+  only prints and passes. Both warn when a suite stops failing anything: a saturated
+  eval has stopped carrying signal.
 - **A corrected rate comes only from a promoted judge's test-split error rates,
   and every measurement states the assumption it rests on:** that the judge errs on
   the new batch as it did on test. A measurement taken by a judge that has since
-  been re-judged or edited fails the gate until it is re-measured.
+  been re-judged or edited fails the gate until it is re-measured. Known limitation,
+  deferred to a follow-up: the promotion binds `judge.yaml` and the judge's verdicts,
+  and the few-shot examples are read from the current corpus and labels each time the
+  judge grades, so after relabelling or re-ingesting a few-shot example, or after
+  editing `judge.yaml`, re-run the judge on test and promote again before measuring.
 - **Infra failures never score as model failures.** They are quarantined in
   `errors.jsonl` with a failure class.
 - **Perplexity is never a verdict.** It selects which traces a human reads and stops
@@ -175,8 +181,8 @@ with an interval that includes the judge's own uncertainty, and writes everythin
 and TNR 0.94 on 30 real failures and 70 real passes, catching a rise from 10% to 14%
 failing reliably takes about 1,000 inputs run through both versions, or about 500 if
 most inputs whose behaviour did not change produce identical output. A weaker judge
-needs more. Compared unpaired, 1,000 inputs from unrelated batches catch the same rise
-only 58% of the time, against 81% when paired.
+needs more. Compared unpaired, two unrelated batches of 1,000 inputs each catch the
+same rise only 58% of the time, against 81% when paired.
 
 ## Decision models
 
