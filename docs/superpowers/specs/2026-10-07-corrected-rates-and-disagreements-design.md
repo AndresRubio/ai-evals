@@ -75,6 +75,60 @@ is present. TPR is the share of real failures the judge flags. TNR is the share 
 passes it leaves alone. The course's skills count Pass as positive, so their TPR is this
 TNR. The README states this beside the invariants.
 
+## Changes made during implementation
+
+An adversarial review at the end of the build changed the code in these ways. Where a later
+section says otherwise, this section describes what the code does.
+
+- Mode names and batch names must be one plain directory name: letters, digits, `.`, `_`
+  and `-`, starting with a letter or digit, at most 100 characters. Every path built from a
+  mode goes through one check, so `../judges/merged` or an absolute path is refused in one
+  line before anything is read or written.
+- A batch name that differs from an existing one only in case is refused by `measure` and
+  `gate` on every filesystem. Mode names that differ only in case are not checked.
+- A batch gated against itself is a usage error (exit 2) in the CLI and an `AxialError` in
+  the library, because it can never regress.
+- A batch with an input or output that has no UTF-8 form (a lone surrogate, as a cut emoji
+  leaves) is refused before any trace is graded.
+- `measure` reads the traces, labels and splits only for a judge with few-shot ids. When it
+  does and cannot read them, it refuses in one line before the model is built.
+- `load_measurement` checks the four files against each other. All four must be files, the
+  mode and batch must match the directory, the counts must match the rows, every trace must
+  be graded or set aside exactly once, every verdict must be true or false, and each
+  verdict row's `input_sha256` must be the hash of its trace's input.
+- `gate --batch` recomputes the corrected rate from the measurement's own verdicts and the
+  promoted judge's test split, and refuses a measurement whose stored numbers differ. Counts,
+  observed rate, point estimate, clip flag, test matrix and whether each interval exists
+  are compared exactly. Interval bounds are compared with an absolute tolerance of 0.01,
+  because a numpy upgrade between `measure` and `gate` can move the Monte Carlo percentiles
+  and would otherwise force a paid re-measure. The recomputation uses the draws and seed the
+  measurement records, so an edit to either is caught only when it moves a bound by more
+  than the tolerance. The gate decides on the recomputed values, so an edit inside the
+  tolerance cannot change a decision.
+- The chance cut-off, J of 0.05 or less, that withholds the point estimate and the
+  judge-exact interval is decided in exact arithmetic on the test counts. A judge exactly at
+  the cut-off gets no point. The per-draw rule is unchanged.
+- Both intervals follow a Jeffreys boundary rule: the lower bound is 0 when nothing was
+  flagged and the upper bound is 1 when everything was. At those two counts the point
+  estimate stays inside the interval even when the test split dwarfs the batch.
+- `alignment.md` escapes HTML in critiques and judge reasons, and shows trace ids and
+  annotators as code spans that nothing inside them can close. When a label changed since
+  the run, the case shows "(label changed since this run; re-run `axial judge`)" in place
+  of the new label's critique. Both reports are rendered before either is written, and
+  `alignment.md` is written as UTF-8, with a lone surrogate written as its escape.
+- A `PROMOTED` marker that is not readable text is refused in one line, and
+  `write_dir_atomically` refuses a target that exists and is not a directory.
+- The gate's clipping note names the side the rates were clipped to, and says so when one
+  rate was clipped to 0 and the other to 1.
+- `gate --batch` prints a batch's set-aside note, for the candidate and the baseline, when
+  more than 5% of that batch was set aside. It does not fail on it (owner's ruling): the
+  decision is made as before.
+- Known limitation, deferred to a follow-up: the promotion binds `judge.yaml` and the
+  judge's verdicts, and the few-shot examples are read from the current corpus and labels
+  each time the judge grades. After relabelling or re-ingesting a few-shot example, or after
+  editing `judge.yaml`, the judge has to be re-run on test and promoted again before
+  measuring. The README says so.
+
 ## 1. Commands and data flow
 
 ### `axial measure`
