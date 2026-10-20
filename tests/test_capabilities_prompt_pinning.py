@@ -1,26 +1,22 @@
-"""Prompt pinning: what a promoted judge binds, and the gap that remains.
+"""Prompt pinning: what a promoted judge binds.
 
-README, on the corrected rate: "Known limitation, deferred to a follow-up: the promotion
-binds `judge.yaml` and the judge's verdicts, and the few-shot examples are read from the
-current corpus and labels each time the judge grades." Two consequences followed, one
-test each. The first now holds as a normal test; the second is still
-`xfail(strict=True)`: it asserts what the follow-up should deliver and fails today.
+README, on the corrected rate, used to list a known limitation: the promotion bound
+`judge.yaml` and the judge's verdicts, and the few-shot examples were read from the
+current corpus and labels each time the judge graded. Both consequences are closed and
+each test holds the behaviour.
 
 1. `axial promote` checks which prompt produced the dev and test rows. Edit
    `judge.yaml`, re-run only dev, and promote: it refuses, because the test rows that
    supply the TPR and TNR every measurement corrects with came from the old prompt.
-2. Nothing records the few-shot examples a measurement used. Relabel or re-ingest an
-   example after promotion and `measure` sends a different prompt, with no field in
-   `measurement.json` to say so and no gate refusal.
+2. `PROMOTED` records the prompt fingerprint. Relabel or re-ingest an example after
+   promotion and `measure` refuses before grading, and a batch measured earlier no
+   longer gates.
 
-Everything runs offline against local data and `FakeModel`. When the second gap is
-closed (the resolved few-shot block recorded in `measurement.json`), that test starts to
-pass and strict mode fails it until its marker is removed.
+Everything runs offline against local data and `FakeModel`.
 """
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
@@ -76,58 +72,37 @@ def test_repromoting_after_a_dev_only_rerun_binds_test_rows_from_another_prompt(
         )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the promotion binds judge.yaml and verdicts but not the few-shot examples the "
-    "prompt resolves, so a relabelled example changes the measuring prompt unrecorded; "
-    "prompt pinning is deferred",
-)
-def test_relabelling_a_few_shot_example_changes_the_measuring_prompt_unrecorded(
+def test_a_changed_few_shot_example_stops_measure_and_gate_until_the_judge_is_retested(
     tmp_path: Path,
 ) -> None:
-    """Limit: `PROMOTED` binds `judge.yaml` and `verdicts.jsonl`, not the corpus or labels
-    that few-shot ids resolve against. Relabelling the train example after promotion
-    changes the prompt `measure` sends, and nothing in `measurement.json` records it: both
-    measurements gate as fresh, and as one judge version against each other."""
+    """`PROMOTED` binds the prompt the examples resolve to. Relabel the train example,
+    or re-ingest it with another output, and `measure` refuses before grading, and the
+    batch measured before the change no longer gates."""
     store = Store(tmp_path)
     build_promoted_judge(store, few_shot_ids=["train-0"])
+    batch = batch_traces(["BAD"] * 60 + ["GOOD"] * 440)
+    measure_batch(store, MEASURE_MODE, 1, "before", batch, fake_judge_builder(), draws=2000)
+    labels_path = store.dataset_dir(MEASURE_MODE)
+    original = {p.name: p.read_bytes() for p in labels_path.iterdir() if p.is_file()}
 
-    def run(name: str) -> list[str]:
-        prompts: list[str] = []
-        measure_batch(
-            store, MEASURE_MODE, 1, name, batch_traces(["BAD"] * 60 + ["GOOD"] * 440),
-            fake_judge_builder(prompts=prompts), draws=2000,
-        )
-        return prompts
-
-    before = run("before")
-    # The human flips the train example and rewrites its critique; the corpus is
-    # re-ingested with a different output for the same id.
     add_labels(
         store, MEASURE_MODE,
         [Label(trace_id="train-0", label=False, critique="actually fine", annotator="andres")],
     )
-    corpus = store.read_traces()
+    with pytest.raises(AxialError, match="not the prompt it was promoted with"):
+        measure_batch(store, MEASURE_MODE, 1, "after", batch, fake_judge_builder(), draws=2000)
+    with pytest.raises(AxialError, match="no longer promoted as it was"):
+        gate_batches(store, MEASURE_MODE, "before", max_rate=0.5, draws=2000)
+
+    for name, data in original.items():
+        (labels_path / name).write_bytes(data)
     store.write_traces(
         [
             Trace(trace_id=t.trace_id, input=t.input, output="SOMETHING ELSE")
             if t.trace_id == "train-0"
             else t
-            for t in corpus
+            for t in store.read_traces()
         ]
     )
-    after = run("after")
-
-    # The premise: the judge that measured is not the judge that was promoted.
-    assert before[0] != after[0]
-    m_before = json.loads(
-        (store.measurement_dir(MEASURE_MODE, "before") / "measurement.json").read_text()
-    )
-    m_after = json.loads(
-        (store.measurement_dir(MEASURE_MODE, "after") / "measurement.json").read_text()
-    )
-    differing = {k for k in m_before if m_before[k] != m_after[k]} - {"batch", "created"}
-    gated = gate_batches(store, MEASURE_MODE, "after", baseline_batch="before", draws=2000)
-    # The behaviour the follow-up should deliver: some recorded field tells the two
-    # measurements apart, or the gate refuses the pair.
-    assert differing or not gated.passed, (differing, gated.messages)
+    with pytest.raises(AxialError, match="not the prompt it was promoted with"):
+        measure_batch(store, MEASURE_MODE, 1, "after", batch, fake_judge_builder(), draws=2000)

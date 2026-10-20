@@ -20,8 +20,8 @@ from pathlib import Path
 from typing import Any
 
 from axial.align import ConfusionMatrix, CorrectedRate, confusion_matrix, corrected_rate
-from axial.errors import AxialError
-from axial.judge import Graded, JudgeSpec, grade_trace, load_few_shot
+from axial.errors import AxialError, InvariantViolation
+from axial.judge import Graded, JudgeSpec, grade_trace, load_few_shot, prompt_sha256
 from axial.model import Model
 from axial.report import SATURATION_WARNING, require_promoted
 from axial.store import Store, json_text, jsonl_text, refuse_non_directory
@@ -55,6 +55,7 @@ class Measurement:
     judge_version: int
     judge_yaml_sha256: str
     verdicts_sha256: str
+    prompt_sha256: str
     test_matrix: ConfusionMatrix
     n_traces: int
     n_graded: int
@@ -74,6 +75,7 @@ class Measurement:
             "judge_version": self.judge_version,
             "judge_yaml_sha256": self.judge_yaml_sha256,
             "verdicts_sha256": self.verdicts_sha256,
+            "prompt_sha256": self.prompt_sha256,
             "test_matrix": {
                 "tp": self.test_matrix.tp,
                 "fn": self.test_matrix.fn,
@@ -120,6 +122,7 @@ class Measurement:
             judge_version=int(data["judge_version"]),
             judge_yaml_sha256=str(data["judge_yaml_sha256"]),
             verdicts_sha256=str(data["verdicts_sha256"]),
+            prompt_sha256=str(data["prompt_sha256"]),
             test_matrix=ConfusionMatrix(
                 tp=int(matrix["tp"]), fn=int(matrix["fn"]),
                 tn=int(matrix["tn"]), fp=int(matrix["fp"]),
@@ -323,6 +326,13 @@ def measure_batch(
     test = judge_test_matrix(store, mode, version)
     spec = JudgeSpec.load(store, mode, version)
     few_shot, splits = load_few_shot(store, spec)
+    # require_promoted resolved the examples too; resolve-then-compare here catches
+    # labels or traces that changed in between, before anything is paid for.
+    if prompt_sha256(spec, few_shot) != hashes.prompt_sha256:
+        raise InvariantViolation(
+            f"judge {mode} v{version}'s few-shot examples changed while this measurement "
+            "was starting. Nothing was graded; run `axial measure` again."
+        )
     model = build_model(spec)
 
     few_shot_ids = set(spec.few_shot_ids)
@@ -375,6 +385,7 @@ def measure_batch(
         judge_version=version,
         judge_yaml_sha256=hashes.judge_yaml_sha256,
         verdicts_sha256=hashes.verdicts_sha256,
+        prompt_sha256=hashes.prompt_sha256,
         test_matrix=test,
         n_traces=len(batch),
         n_graded=len(verdicts),

@@ -5,15 +5,23 @@ See docs/superpowers/specs/2026-10-20-prompt-pinning-design.md.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 import yaml
-from measure_helpers import MEASURE_MODE, build_promoted_judge, judge_reply
+from measure_helpers import (
+    MEASURE_MODE,
+    batch_traces,
+    build_promoted_judge,
+    fake_judge_builder,
+    judge_reply,
+)
 
 from axial.config import Thresholds
 from axial.dataset import Label, Splits, add_labels, read_labels
-from axial.errors import InvariantViolation
+from axial.errors import AxialError, InvariantViolation
+from axial.gate import gate_batches
 from axial.judge import (
     JudgeSpec,
     current_prompt_sha256,
@@ -21,6 +29,7 @@ from axial.judge import (
     prompt_sha256,
     run_judge,
 )
+from axial.measure import measure_batch
 from axial.model import FakeModel
 from axial.report import (
     PROMPT_HASH_KEY,
@@ -303,3 +312,99 @@ def test_require_promoted_refuses_a_judge_whose_judge_yaml_was_deleted(tmp_path:
     (judge_dir(store) / "judge.yaml").unlink()
     with pytest.raises(InvariantViolation, match="judge.yaml"):
         require_promoted(store, MEASURE_MODE, 1)
+
+
+# --- measure and gate --batch ------------------------------------------------------
+
+
+def measure(store: Store, name: str, outputs: list[str] | None = None) -> None:
+    measure_batch(
+        store, MEASURE_MODE, 1, name, batch_traces(outputs or ["BAD"] * 60 + ["GOOD"] * 440),
+        fake_judge_builder(), draws=2000,
+    )
+
+
+def measurement_json(store: Store, name: str) -> dict[str, object]:
+    path = store.measurement_dir(MEASURE_MODE, name) / "measurement.json"
+    data: dict[str, object] = json.loads(path.read_text())
+    return data
+
+
+def test_measurement_json_records_the_promoted_fingerprint(tmp_path: Path):
+    store = Store(tmp_path)
+    build_promoted_judge(store, few_shot_ids=["train-0"])
+    measure(store, "rel-1")
+    assert (
+        measurement_json(store, "rel-1")["prompt_sha256"]
+        == require_promoted(store, MEASURE_MODE, 1).prompt_sha256
+    )
+
+
+def test_measure_refuses_after_a_few_shot_example_was_relabelled(tmp_path: Path):
+    store = Store(tmp_path)
+    build_promoted_judge(store, few_shot_ids=["train-0"])
+    relabel_train_0(store)
+    prompts: list[str] = []
+    with pytest.raises(InvariantViolation, match="not the prompt it was promoted with"):
+        measure_batch(
+            store, MEASURE_MODE, 1, "rel-1", batch_traces(["GOOD"] * 3),
+            fake_judge_builder(prompts=prompts), draws=2000,
+        )
+    assert prompts == []
+
+
+def test_measure_refuses_examples_that_change_after_the_promotion_check(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """The labels change between `require_promoted` and grading."""
+    import axial.measure
+
+    store = Store(tmp_path)
+    build_promoted_judge(store, few_shot_ids=["train-0"])
+
+    def then_relabel(*args: object) -> object:
+        hashes = require_promoted(*args)
+        relabel_train_0(store)
+        return hashes
+
+    monkeypatch.setattr(axial.measure, "require_promoted", then_relabel)
+    prompts: list[str] = []
+    with pytest.raises(InvariantViolation, match="changed while"):
+        measure_batch(
+            store, MEASURE_MODE, 1, "rel-1", batch_traces(["GOOD"] * 3),
+            fake_judge_builder(prompts=prompts), draws=2000,
+        )
+    assert prompts == []
+
+
+def test_gate_refuses_a_batch_measured_before_a_relabel(tmp_path: Path):
+    store = Store(tmp_path)
+    build_promoted_judge(store, few_shot_ids=["train-0"])
+    measure(store, "rel-1")
+    relabel_train_0(store)
+    with pytest.raises(InvariantViolation, match="no longer promoted as it was"):
+        gate_batches(store, MEASURE_MODE, "rel-1", max_rate=0.5, draws=2000)
+
+
+def test_gate_refuses_a_measurement_with_another_fingerprint(tmp_path: Path):
+    store = Store(tmp_path)
+    build_promoted_judge(store)
+    measure(store, "rel-1")
+    path = store.measurement_dir(MEASURE_MODE, "rel-1") / "measurement.json"
+    data = json.loads(path.read_text())
+    data["prompt_sha256"] = "0" * 64
+    path.write_text(json.dumps(data))
+    with pytest.raises(InvariantViolation, match="measured by an earlier"):
+        gate_batches(store, MEASURE_MODE, "rel-1", max_rate=0.5, draws=2000)
+
+
+def test_gate_refuses_a_measurement_written_before_prompt_pinning(tmp_path: Path):
+    store = Store(tmp_path)
+    build_promoted_judge(store)
+    measure(store, "rel-1")
+    path = store.measurement_dir(MEASURE_MODE, "rel-1") / "measurement.json"
+    data = json.loads(path.read_text())
+    del data["prompt_sha256"]
+    path.write_text(json.dumps(data))
+    with pytest.raises(AxialError, match="not a readable measurement.*--replace"):
+        gate_batches(store, MEASURE_MODE, "rel-1", max_rate=0.5, draws=2000)

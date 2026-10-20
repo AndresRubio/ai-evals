@@ -165,14 +165,15 @@ def _load_fresh(
             f"batch {batch!r} was measured by {mode} v{version}, which is no longer "
             f"promoted as it was: {exc} Then re-measure the batch with {remeasure}."
         ) from exc
-    if (hashes.judge_yaml_sha256, hashes.verdicts_sha256) != (
+    if (hashes.judge_yaml_sha256, hashes.verdicts_sha256, hashes.prompt_sha256) != (
         measurement.judge_yaml_sha256,
         measurement.verdicts_sha256,
+        measurement.prompt_sha256,
     ):
         raise InvariantViolation(
-            f"batch {batch!r} was measured by an earlier {mode} v{version}: its judge.yaml "
-            "or verdicts changed and it was promoted again since. Re-measure the batch "
-            f"with {remeasure}."
+            f"batch {batch!r} was measured by an earlier {mode} v{version}: its judge.yaml, "
+            "verdicts or prompt changed and it was promoted again since. Re-measure the "
+            f"batch with {remeasure}."
         )
     if measurement.rate is None:
         raise InvariantViolation(
