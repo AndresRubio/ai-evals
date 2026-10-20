@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable
 from pathlib import Path
 
@@ -99,9 +100,20 @@ def test_measure_prints_the_corrected_rate_and_its_notes(repo: Path):
     result = measure(repo, "rel-1", 60)
     assert_clean(
         result, 0,
-        "merged v1 on rel-1: observed 0.120 -> corrected 0.072 [0.000, 0.128]",
-        "(judge exact: [0.042, 0.107]), n=500 graded, 0 set aside",
+        "merged v1 on rel-1: observed 0.120 -> corrected 0.072 [",
+        "]), n=500 graded, 0 set aside",
         "note: the correction assumes the judge errs on this batch",
+    )
+    # The bounds are Monte Carlo percentiles, and numpy does not promise the same random
+    # stream across versions: seeds 2 and 5 give 0.127 and 0.041. The design's worked
+    # numbers are [0.000, 0.128] and, with the judge exact, [0.042, 0.107].
+    bounds = re.search(
+        r"corrected 0\.072 \[([\d.]+), ([\d.]+)\]\n  \(judge exact: \[([\d.]+), ([\d.]+)\]\)",
+        result.output,
+    )
+    assert bounds is not None, result.output
+    assert [float(b) for b in bounds.groups()] == pytest.approx(
+        [0.000, 0.128, 0.042, 0.107], abs=0.002
     )
     assert (repo / ".axial" / "measurements" / MEASURE_MODE / "rel-1" / "measurement.json").exists()
 

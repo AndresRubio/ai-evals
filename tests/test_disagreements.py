@@ -210,6 +210,10 @@ def test_without_disagreements_the_report_is_byte_identical_to_before(tmp_path: 
     test = align(y, [True] * 27 + [False] * 3 + [False] * 28 + [True] * 2, n_boot=200, seed=1)
     store = Store(tmp_path)
     path = write_alignment(store, "merged", 1, perfect(), test, n_errors=2, notes=["a note"])
+    # Both files print bootstrap intervals drawn from numpy's random stream, which numpy
+    # does not promise to keep across versions. If an upgrade breaks these hashes, show
+    # first that the report's format is unchanged (diff the files written before and
+    # after on the old numpy, say), and only then recompute them.
     assert hashlib.sha256(path.read_bytes()).hexdigest() == (
         "548fb47a2ed4ffc3fb4a3139e3a128e29fbb12af6a9af321cdab2fd5a0096362"
     )
