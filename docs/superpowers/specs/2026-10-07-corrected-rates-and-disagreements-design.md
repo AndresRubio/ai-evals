@@ -1,7 +1,7 @@
 # Corrected failure rates on new traces, and a dev disagreement listing
 
 **Date:** 2026-10-07, revised 2026-10-08 (pairing by input; difference before clipping)
-**Status:** implemented on branch corrected-rates (plan: docs/superpowers/plans/2026-10-14-corrected-rates-and-disagreements.md)
+**Status:** implemented (plan: docs/superpowers/plans/2026-10-14-corrected-rates-and-disagreements.md)
 **Builds on:** [`2026-09-17-axial-evals-toolkit-design.md`](2026-09-17-axial-evals-toolkit-design.md)
 
 ## Why
@@ -87,7 +87,8 @@ section says otherwise, this section describes what the code does.
 - A batch name that differs from an existing one only in case is refused by `measure` and
   `gate` on every filesystem. Mode names that differ only in case are not checked.
 - A batch gated against itself is a usage error (exit 2) in the CLI and an `AxialError` in
-  the library, because it can never regress.
+  the library, because it can never regress. So is a `--max-rate` outside (0, 1), NaN
+  included, since a NaN ceiling would pass any batch.
 - A batch with an input or output that has no UTF-8 form (a lone surrogate, as a cut emoji
   leaves) is refused before any trace is graded.
 - `measure` reads the traces, labels and splits only for a judge with few-shot ids. When it
@@ -117,7 +118,9 @@ section says otherwise, this section describes what the code does.
   annotators as code spans that nothing inside them can close. When a label changed since
   the run, the case shows "(label changed since this run; re-run `axial judge`)" in place
   of the new label's critique. Both reports are rendered before either is written, and
-  `alignment.md` is written as UTF-8, with a lone surrogate written as its escape.
+  `alignment.md` is written as UTF-8, with a lone surrogate written as its escape. Before
+  the judge has been run on test, the table has no test row, so the closing line says only
+  that test disagreements are never listed.
 - A `PROMOTED` marker that is not readable text is refused in one line, and
   `write_dir_atomically` refuses a target that exists and is not a directory.
 - The gate's clipping note names the side the rates were clipped to, and says so when one

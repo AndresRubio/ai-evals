@@ -141,7 +141,25 @@ def test_the_markdown_lists_each_case_with_its_excerpts(tmp_path: Path):
     assert "**Judge:** why d0" in md
     assert "Input (first 300 of 2,184 characters):\n\n```\n" + "i" * 300 + "\n```" in md
     assert "Output (all 64 characters):" in md
-    assert "Test disagreements are counted in the table above and never listed here" in md
+
+
+def test_the_closing_line_points_at_the_table_only_when_it_has_a_test_row(tmp_path: Path):
+    disagreements = find_disagreements(VERDICTS, LABELS, TRACES)
+    md, _ = render(tmp_path, disagreements)  # no test split was run
+    assert md.endswith(
+        "\nTest disagreements are never listed here, so the test split stays a held-out "
+        "measurement.\n"
+    )
+    assert "counted in the table above" not in md
+    store = Store(tmp_path / "with-test")
+    path = write_alignment(
+        store, "merged", 1, perfect(), perfect(), n_errors=0, disagreements=disagreements
+    )
+    assert "\n| test | 60 |" in path.read_text()
+    assert path.read_text().endswith(
+        "\nTest disagreements are counted in the table above and never listed here, so the "
+        "test split stays a held-out measurement.\n"
+    )
 
 
 def test_a_backtick_run_in_an_excerpt_gets_a_longer_fence(tmp_path: Path):
@@ -270,7 +288,7 @@ def test_a_report_that_fails_to_render_leaves_alignment_json_as_it_was(
     path = write_alignment(store, "merged", 1, perfect(), None, n_errors=0)
     before = (path.parent / "alignment.json").read_bytes()
 
-    def broken(*_args: object) -> list[str]:
+    def broken(*_args: object, **_kwargs: object) -> list[str]:
         raise RuntimeError("rendering failed")
 
     monkeypatch.setattr(report, "_disagreement_section", broken)

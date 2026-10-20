@@ -71,6 +71,15 @@ def test_max_rate_fails_above_the_ceiling_and_passes_below_it(store: Store):
     assert any(m.startswith("within the ceiling") for m in below.messages)
 
 
+@pytest.mark.parametrize("max_rate", [math.nan, 0.0, 1.0, -0.1, 1.5, math.inf])
+def test_a_max_rate_outside_zero_to_one_is_refused(store: Store, max_rate: float):
+    """`upper > nan` is False, so a NaN ceiling read as within it and passed the batch.
+    The CLI already refused these; the library gate now does too."""
+    measure(store, "rel-1", flags(60))
+    with pytest.raises(AxialError, match="max_rate must lie strictly between 0 and 1"):
+        run(store, "rel-1", max_rate=max_rate)
+
+
 def test_a_batch_that_flagged_nothing_gets_the_saturation_warning(store: Store):
     measure(store, "rel-1", flags(0, 50))
     assert any(m.startswith("saturation warning") for m in run(store, "rel-1").messages)

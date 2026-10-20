@@ -403,7 +403,9 @@ def _excerpt_lines(name: str, excerpt: str | None, length: int | None) -> list[s
     return [f"{name} ({shown} characters):", "", fence, excerpt, fence, ""]
 
 
-def _disagreement_section(mode: str, disagreements: list[Disagreement]) -> list[str]:
+def _disagreement_section(
+    mode: str, disagreements: list[Disagreement], *, has_test: bool
+) -> list[str]:
     lines = ["## Dev disagreements", ""]
     if not disagreements:
         lines += ["No dev disagreements.", ""]
@@ -433,9 +435,11 @@ def _disagreement_section(mode: str, disagreements: list[Disagreement]) -> list[
                 ]
                 lines += _excerpt_lines("Input", d.input_excerpt, d.input_length)
                 lines += _excerpt_lines("Output", d.output_excerpt, d.output_length)
+    # The table has a test row only once the judge has been run on test.
+    counted = "are counted in the table above and " if has_test else "are "
     lines.append(
-        "Test disagreements are counted in the table above and never listed here, so the "
-        "test split stays a held-out measurement."
+        f"Test disagreements {counted}never listed here, so the test split stays a held-out "
+        "measurement."
     )
     return lines
 
@@ -508,7 +512,7 @@ def write_alignment(
         lines += ["", "## Notes", ""]
         lines += [f"- {note}" for note in notes]
     if disagreements is not None:
-        lines += [""] + _disagreement_section(mode, disagreements)
+        lines += [""] + _disagreement_section(mode, disagreements, has_test=test is not None)
     lines += [""]
     # Both reports are rendered before either is written, so a rendering error leaves
     # the pair as it was. UTF-8 whatever the locale; a lone surrogate, which JSON lets a

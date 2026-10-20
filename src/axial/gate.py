@@ -214,6 +214,9 @@ def gate_batches(
     draws: int = 20_000,
     seed: int = 0,
 ) -> GateResult:
+    # As the CLI checks it. `upper > nan` is False, so a NaN ceiling would pass any batch.
+    if max_rate is not None and not 0 < max_rate < 1:
+        raise AxialError(f"max_rate must lie strictly between 0 and 1, got {max_rate}")
     if baseline_batch == batch:
         raise AxialError(
             f"batch {batch!r} is both the candidate and the baseline; a batch compared with "
