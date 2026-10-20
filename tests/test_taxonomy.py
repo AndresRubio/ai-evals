@@ -1,11 +1,12 @@
 import json
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 
 from axial.errors import InvariantViolation
 from axial.sample import Review
-from axial.store import Store
+from axial.store import Store, validate_name
 from axial.taxonomy import (
     FailureMode,
     Taxonomy,
@@ -154,3 +155,45 @@ def test_saturation_curve_flattens_once_codes_repeat():
 def test_propose_rejects_unparseable_model_output():
     with pytest.raises(ValueError, match="could not parse"):
         propose_taxonomy(coded(30), lambda _p: "not json at all")
+
+
+def proposing(*ids: str, name: str = "") -> Callable[[str], str]:
+    """A model that proposes one mode per id, each named `name` or after its position."""
+    modes = [{"id": i, "name": name or f"mode {n}", "definition": "d"} for n, i in enumerate(ids)]
+    return lambda _prompt: json.dumps({"modes": modes})
+
+
+@pytest.mark.parametrize(
+    ("proposed", "saved"),
+    [
+        ("merged_stories", "merged_stories"),
+        ("Wrong Topic", "wrong_topic"),
+        ("naïve_mode", "na_ve_mode"),
+        ("../judges/x", "judges_x"),
+        ("--hallucinated--", "hallucinated"),
+        ("v1.2-tone", "v1.2-tone"),
+        ("a" * 150, "a" * 100),
+    ],
+)
+def test_a_proposed_id_is_saved_as_a_mode_name_every_command_accepts(proposed: str, saved: str):
+    """Every mode command refuses a mode that is not one plain directory name, so an id
+    like "Wrong Topic" could be saved but never used."""
+    taxonomy = propose_taxonomy(coded(30), proposing(proposed))
+    assert [m.id for m in taxonomy.modes] == [saved]
+    assert validate_name(saved, "mode") == saved
+
+
+def test_an_id_with_nothing_usable_falls_back_to_the_name_then_to_mode():
+    assert [m.id for m in propose_taxonomy(coded(30), proposing("!!!", name="Wrong topic")).modes] == [
+        "wrong_topic"
+    ]
+    assert [m.id for m in propose_taxonomy(coded(30), proposing("!!!", name="???")).modes] == ["mode"]
+
+
+def test_ids_that_slugify_alike_are_numbered_and_stay_within_the_length_cap():
+    taxonomy = propose_taxonomy(
+        coded(30), proposing("Wrong Topic", "wrong topic", "wrong_topic", "a" * 150, "a" * 120)
+    )
+    ids = [m.id for m in taxonomy.modes]
+    assert ids == ["wrong_topic", "wrong_topic_2", "wrong_topic_3", "a" * 100, "a" * 98 + "_2"]
+    assert all(validate_name(i, "mode") == i for i in ids)

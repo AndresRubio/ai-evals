@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 
 from axial.errors import InvariantViolation
 from axial.sample import Review
-from axial.store import Store
+from axial.store import MAX_NAME_LENGTH, Store
 
 PROMPT = """\
 You are helping with axial coding of qualitative annotations on LLM traces.
@@ -109,6 +109,37 @@ def _extract_json(text: str) -> dict[str, Any]:
         raise ValueError(f"could not parse a taxonomy from the model output: {exc}") from exc
 
 
+_OUTSIDE_SLUG = re.compile(r"[^a-z0-9._-]+")
+_SEPARATORS = "._-"
+
+
+def _slug(text: str, limit: int = MAX_NAME_LENGTH) -> str:
+    """`text` lowercased, each run of other characters made one "_", trimmed so it starts
+    and ends with a letter or digit, and cut to `limit` characters."""
+    slug = _OUTSIDE_SLUG.sub("_", text.lower()).strip(_SEPARATORS)
+    return slug[:limit].rstrip(_SEPARATORS)
+
+
+def _mode_ids(modes: list[FailureMode]) -> None:
+    """Give each proposed mode an id every mode command accepts.
+
+    A mode becomes a directory name, so `validate_name` refuses anything else, and a
+    model's "Wrong Topic" or "naïve_mode" would be saved and then refused by `split`,
+    `judge` and the rest. An id with nothing usable falls back to the mode's name, then
+    to "mode"; a repeated id gets "_2", "_3" and so on.
+    """
+    taken: set[str] = set()
+    for mode in modes:
+        base = _slug(mode.id) or _slug(mode.name) or "mode"
+        candidate, n = base, 1
+        while candidate in taken:
+            n += 1
+            suffix = f"_{n}"
+            candidate = _slug(base, MAX_NAME_LENGTH - len(suffix)) + suffix
+        taken.add(candidate)
+        mode.id = candidate
+
+
 def propose_taxonomy(
     reviews: list[Review],
     complete: Callable[[str], str],
@@ -130,5 +161,6 @@ def propose_taxonomy(
     )
     payload = _extract_json(complete(PROMPT.format(codes=codes)))
     taxonomy = Taxonomy.model_validate(payload)
+    _mode_ids(taxonomy.modes)
     taxonomy.recount(reviews)
     return taxonomy
