@@ -14,7 +14,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 RESERVED_KEYS = {"trace_id", "input", "output"}
 
@@ -42,9 +42,25 @@ def _trace_from_row(row: object, *, where: str) -> Trace:
     for key in ("input", "output"):
         if row.get(key) is None:
             raise ValueError(f"{where}: missing required field {key!r}")
-    trace_id = row.get("trace_id") or compute_trace_id(row["input"], row["output"])
+    trace_id = row.get("trace_id")
+    if trace_id is None or trace_id == "":
+        # An empty id means no id, as an empty CSV cell does, so both formats derive the
+        # same content hash. A 0 is an id like any other.
+        trace_id = compute_trace_id(str(row["input"]), str(row["output"]))
+    elif isinstance(trace_id, int) and not isinstance(trace_id, bool):
+        # Exports often carry integer keys. An integer has one decimal spelling, the one
+        # the CSV export of the same row carries; a float or a bool has none and is refused.
+        trace_id = str(trace_id)
     metadata = {k: v for k, v in row.items() if k not in RESERVED_KEYS}
-    return Trace(trace_id=trace_id, input=row["input"], output=row["output"], metadata=metadata)
+    try:
+        return Trace(trace_id=trace_id, input=row["input"], output=row["output"], metadata=metadata)
+    except ValidationError as exc:
+        # One line naming the row and the field: pydantic's own message runs to four
+        # lines, names no row and ends in a URL.
+        error = exc.errors()[0]
+        field = ".".join(str(part) for part in error["loc"])
+        got = type(error["input"]).__name__
+        raise ValueError(f"{where}: {field}: {error['msg']}, got {got}") from exc
 
 
 def ingest_jsonl(path: Path) -> list[Trace]:
@@ -63,6 +79,10 @@ def ingest_csv(path: Path) -> list[Trace]:
             rows = list(csv.DictReader(fh))
         except csv.Error as exc:  # not a ValueError, so callers catching ValueError would miss it
             raise ValueError(f"{path}: {exc}") from exc
+    for n, row in enumerate(rows, start=1):
+        # DictReader files the surplus cells of a ragged row under the key None.
+        if None in row:
+            raise ValueError(f"row {n}: {len(row[None])} more cell(s) than the header has columns")
     return [_trace_from_row(dict(r), where=f"row {n}") for n, r in enumerate(rows, start=1)]
 
 

@@ -53,3 +53,49 @@ def test_ingest_csv_reads_input_and_output_columns(tmp_path: Path):
 def test_trace_round_trips_through_json():
     t = Trace(trace_id="x", input="i", output="o", metadata={"k": 1})
     assert Trace.model_validate_json(t.model_dump_json()) == t
+
+
+def write_row(tmp_path: Path, row: dict) -> Path:
+    path = tmp_path / "t.jsonl"
+    path.write_text(json.dumps(row) + "\n")
+    return path
+
+
+@pytest.mark.parametrize("trace_id", [7, 0])
+def test_an_integer_trace_id_is_kept_as_its_decimal_string(tmp_path: Path, trace_id: int):
+    """The CSV export of the same rows carries "7", so both formats give one id. A 0 is an
+    id like any other, never swapped for the content hash."""
+    path = write_row(tmp_path, {"trace_id": trace_id, "input": "i", "output": "o"})
+    assert ingest_jsonl(path)[0].trace_id == str(trace_id)
+
+
+@pytest.mark.parametrize(
+    ("row", "field", "got"),
+    [
+        ({"trace_id": 7.5, "input": "i", "output": "o"}, "trace_id", "float"),
+        ({"trace_id": True, "input": "i", "output": "o"}, "trace_id", "bool"),
+        ({"trace_id": [], "input": "i", "output": "o"}, "trace_id", "list"),
+        ({"input": [{"role": "user", "content": "x"}], "output": "o"}, "input", "list"),
+        ({"input": "i", "output": {"text": "o"}}, "output", "dict"),
+    ],
+    ids=["float-id", "bool-id", "empty-list-id", "chat-input", "object-output"],
+)
+def test_a_wrongly_typed_field_is_refused_in_one_line_naming_the_row_and_field(
+    tmp_path: Path, row: dict, field: str, got: str
+):
+    path = tmp_path / "t.jsonl"
+    path.write_text(json.dumps({"input": "fine", "output": "fine"}) + "\n" + json.dumps(row) + "\n")
+    with pytest.raises(ValueError) as caught:
+        ingest_jsonl(path)
+    message = str(caught.value)
+    assert message.startswith(f"row 2: {field}: ")
+    assert message.endswith(f"got {got}")
+    assert "\n" not in message
+    assert "pydantic" not in message
+
+
+def test_a_csv_row_with_more_cells_than_the_header_is_refused_in_one_line(tmp_path: Path):
+    path = tmp_path / "t.csv"
+    path.write_text("input,output\ni,o\ni,o,surplus,more\n")
+    with pytest.raises(ValueError, match=r"^row 2: 2 more cell\(s\) than the header has columns$"):
+        ingest_csv(path)

@@ -125,11 +125,18 @@ def test_an_empty_source_trace_id_is_treated_as_no_id(tmp_path: Path):
     assert ingest_jsonl(tmp_path / "t.jsonl")[0].trace_id == compute_trace_id("i", "o")
 
 
-def test_a_numeric_jsonl_trace_id_is_rejected_not_stringified(tmp_path: Path):
-    """Limit: ids must already be strings in JSONL; `"trace_id": 123` is refused."""
+def test_an_integer_jsonl_trace_id_is_kept_as_its_decimal_string(tmp_path: Path):
+    """`"trace_id": 123` becomes "123", the id the CSV export of the same row carries."""
     write_jsonl(tmp_path / "t.jsonl", [{"trace_id": 123, "input": "i", "output": "o"}])
-    with pytest.raises(ValueError, match="trace_id"):
-        ingest_jsonl(tmp_path / "t.jsonl")
+    assert ingest_jsonl(tmp_path / "t.jsonl")[0].trace_id == "123"
+
+
+def test_a_float_or_boolean_jsonl_trace_id_is_rejected_not_stringified(tmp_path: Path):
+    """Limit: a float or a boolean id has no one spelling to keep, so it is refused."""
+    for bad in (123.0, True):
+        write_jsonl(tmp_path / "t.jsonl", [{"trace_id": bad, "input": "i", "output": "o"}])
+        with pytest.raises(ValueError, match="row 1: trace_id: "):
+            ingest_jsonl(tmp_path / "t.jsonl")
 
 
 def test_duplicate_trace_ids_are_all_kept_and_never_deduplicated(tmp_path: Path):

@@ -137,6 +137,37 @@ def test_measure_reports_a_jsonl_line_that_is_not_an_object(repo: Path):
     assert_clean(result, 1, "could not read", "row 1")
 
 
+def write_rows(path: Path, rows: list[dict[str, object]]) -> Path:
+    path.write_text("".join(json.dumps(row) + "\n" for row in rows))
+    return path
+
+
+def test_measure_accepts_integer_trace_ids(repo: Path):
+    path = write_rows(
+        repo / "ids.jsonl",
+        [{"trace_id": i, "input": f"case {i}", "output": "BAD" if i < 5 else "GOOD"} for i in range(20)],
+    )
+    result = axial("measure", MEASURE_MODE, "--version", "1", "--traces", str(path), "--name", "ids")
+    assert_clean(result, 0, "observed 0.250")
+    traces = Store(repo).measurement_dir(MEASURE_MODE, "ids") / "traces.jsonl"
+    assert json.loads(traces.read_text().splitlines()[0])["trace_id"] == "0"
+
+
+def test_measure_refuses_a_chat_message_list_as_input_in_one_line(repo: Path):
+    path = write_rows(
+        repo / "chat.jsonl",
+        [
+            {"trace_id": "a", "input": "fine", "output": "GOOD"},
+            {"trace_id": "b", "input": [{"role": "user", "content": "x"}], "output": "GOOD"},
+        ],
+    )
+    result = axial("measure", MEASURE_MODE, "--version", "1", "--traces", str(path), "--name", "c")
+    assert_clean(result, 1, "could not read", "row 2: input: ", "got list")
+    assert len(result.output.strip().splitlines()) == 1
+    assert "pydantic" not in result.output
+    assert not (repo / ".axial" / "measurements" / MEASURE_MODE / "c").exists()
+
+
 def test_measure_reports_a_csv_field_over_the_parser_limit(repo: Path):
     bad = repo / "huge.csv"
     bad.write_text("input,output\n" + "x" * 131073 + ",y\n")
