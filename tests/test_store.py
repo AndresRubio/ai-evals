@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from axial.dataset import Splits
 from axial.errors import AxialError, MalformedFile
 from axial.store import Store
 from axial.traces import Trace
@@ -198,6 +199,27 @@ def test_read_jsonl_gives_only_the_column_of_jsons_own_position(tmp_path: Path):
     detail = "invalid JSON on line 2, column 2: Expecting property name enclosed in double quotes"
     assert caught.value.detail == detail
     assert str(caught.value) == f"{path}: {detail}"
+
+
+def test_read_json_names_the_line_and_column_of_bad_json(tmp_path: Path):
+    """A whole document's line is json's own, so it is kept, without the "(char N)" count."""
+    s = Store(tmp_path)
+    path = s.root / "bad.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('{\n  "a": oops\n}\n')
+    with pytest.raises(MalformedFile) as caught:
+        s.read_json(path)
+    assert str(caught.value) == f"{path}: invalid JSON on line 2, column 8: Expecting value"
+
+
+def test_read_json_model_names_the_field_a_document_gets_wrong(tmp_path: Path):
+    s = Store(tmp_path)
+    path = s.root / "splits.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('{"train": 5}')
+    with pytest.raises(MalformedFile) as caught:
+        s.read_json_model(path, Splits)
+    assert str(caught.value) == f"{path}: train: Input should be a valid list, got int"
 
 
 def test_write_dir_atomically_writes_every_file(tmp_path: Path):

@@ -343,6 +343,21 @@ def test_split_before_any_labels_fails_and_does_not_freeze_an_empty_test_split(
     assert_one_line_refusal(result, "m has no labels yet", "axial label-import")
 
 
+def test_the_real_split_goes_through_after_an_early_one_was_refused(tmp_path: Path) -> None:
+    """An early split once froze an empty test split, and the real one was then refused
+    as a redraw. Now the refusal freezes nothing, so splitting after labelling works."""
+    assert_one_line_refusal(run("split", "m"), "m has no labels yet")
+    labels = human_labels(60)
+    assert run("label-import", "m", "--path", str(write_labels(tmp_path, labels))).exit_code == 0
+    result = run("split", "m")
+    assert result.exit_code == 0, result.output
+    splits = json.loads(Path(".axial/datasets/m/splits.json").read_text())
+    assert splits["test"]
+    assert sorted(splits["train"] + splits["dev"] + splits["test"]) == sorted(
+        str(row["trace_id"]) for row in labels
+    )
+
+
 def test_split_over_a_corrupt_labels_file_fails_cleanly() -> None:
     """A damaged labels.jsonl is named with its line, and no split is saved."""
     labels = Path(".axial/datasets/m/labels.jsonl")
@@ -560,6 +575,77 @@ def test_checks_over_a_corrupt_store_fails_cleanly(tmp_path: Path, damaged: str)
     assert_one_line_refusal(
         run("checks", MEASURE_MODE, "1"), f"could not check {MEASURE_MODE} v1", expected
     )
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("{oops\n", "splits.json: invalid JSON on line 1, column 2: Expecting property name"),
+        ('{"train": 5}\n', "splits.json: train: Input should be a valid list, got int"),
+    ],
+    ids=["syntax", "shape"],
+)
+@pytest.mark.parametrize(
+    "command", [("judge", MEASURE_MODE, "--split", "dev"), ("split", MEASURE_MODE)],
+    ids=["judge", "split"],
+)
+def test_judge_and_split_over_a_corrupt_splits_file_fail_cleanly_and_write_nothing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    text: str,
+    expected: str,
+    command: tuple[str, ...],
+) -> None:
+    """A hand-edited splits.json is named with its line or field, without json's own
+    "(char 1)" count, and neither judge.yaml nor the split is rewritten."""
+    store = Store(tmp_path)
+    build_promoted_judge(store)
+    monkeypatch.setattr("axial.cli.build_judge_model", fake_judge_builder())
+    (store.dataset_dir(MEASURE_MODE) / "splits.json").write_text(text)
+    before = snapshot(store.root)
+    assert_one_line_refusal(run(*command), f"could not {command[0]} {MEASURE_MODE}", expected)
+    assert snapshot(store.root) == before
+
+
+@pytest.mark.parametrize(
+    ("damage", "expected"),
+    [
+        (b"{oops\n", "errors.jsonl: invalid JSON on line 1, column 2"),
+        (b"\xff\xfe\n", "errors.jsonl: not utf-8 text: invalid start byte"),
+    ],
+    ids=["not-json", "not-utf-8"],
+)
+def test_promote_over_a_corrupt_errors_file_fails_cleanly_and_writes_nothing(
+    tmp_path: Path, damage: bytes, expected: str
+) -> None:
+    """promote reads errors.jsonl to check every row came from the current prompt; a
+    damaged one is refused in one line naming it, and PROMOTED is not rewritten."""
+    store = Store(tmp_path)
+    build_promoted_judge(store)
+    with (store.judge_dir(MEASURE_MODE, 1) / "errors.jsonl").open("ab") as fh:
+        fh.write(damage)
+    before = snapshot(store.root)
+    assert_one_line_refusal(
+        run("promote", MEASURE_MODE, "1"), f"could not promote {MEASURE_MODE} v1", expected
+    )
+    assert snapshot(store.root) == before
+
+
+def test_promote_leaves_a_value_error_from_its_own_logic_uncaught(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only a bad file or a failed write is a refusal. A ValueError from promotion's own
+    logic is a bug, and printing it as "could not promote" would hide it."""
+    store = Store(tmp_path)
+    build_promoted_judge(store)
+
+    def broken_promote(*_args: object, **_kwargs: object) -> None:
+        raise ValueError("a bug in promotion")
+
+    monkeypatch.setattr("axial.cli.do_promote", broken_promote)
+    result = run("promote", MEASURE_MODE, "1")
+    assert isinstance(result.exception, ValueError)
+    assert "could not promote" not in result.output
 
 
 def test_judge_resumes_the_latest_version_beside_a_copied_judge_folder(

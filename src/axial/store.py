@@ -163,20 +163,24 @@ class Store:
 
     def _numbered_rows(self, path: Path) -> Iterator[tuple[int, Any]]:
         with path.open() as fh:
-            for lineno, line in enumerate(fh, start=1):
-                if not line.strip():
-                    continue
-                try:
-                    yield lineno, json.loads(line)
-                except json.JSONDecodeError as exc:
-                    # Name the file and the line so a corrupt session or
-                    # labels file produces a diagnosis, not an anonymous
-                    # JSONDecodeError that aborts every session that happens
-                    # to load it. json's own "line 1 column 5" counts within
-                    # this one line, so only its column is kept.
-                    raise MalformedFile(
-                        path, f"invalid JSON on line {lineno}, column {exc.colno}: {exc.msg}"
-                    ) from exc
+            try:
+                for lineno, line in enumerate(fh, start=1):
+                    if not line.strip():
+                        continue
+                    try:
+                        yield lineno, json.loads(line)
+                    except json.JSONDecodeError as exc:
+                        # Name the file and the line so a corrupt session or
+                        # labels file produces a diagnosis, not an anonymous
+                        # JSONDecodeError that aborts every session that happens
+                        # to load it. json's own "line 1 column 5" counts within
+                        # this one line, so only its column is kept.
+                        raise MalformedFile(
+                            path, f"invalid JSON on line {lineno}, column {exc.colno}: {exc.msg}"
+                        ) from exc
+            except UnicodeDecodeError as exc:
+                # The file is decoded a block at a time, so the bad byte's line is unknown.
+                raise MalformedFile(path, f"not {exc.encoding} text: {exc.reason}") from exc
 
     def read_jsonl(self, path: Path) -> list[dict[str, Any]]:
         if not path.exists():
@@ -309,7 +313,25 @@ class Store:
                     pass
 
     def read_json(self, path: Path) -> Any:
-        return json.loads(path.read_text())
+        """The JSON document at `path`. Bad JSON is a MalformedFile naming the line and
+        column in one line, as bad YAML is."""
+        try:
+            return json.loads(path.read_text())
+        except UnicodeDecodeError as exc:
+            raise MalformedFile(path, f"not {exc.encoding} text: {exc.reason}") from exc
+        except json.JSONDecodeError as exc:
+            raise MalformedFile(
+                path, f"invalid JSON on line {exc.lineno}, column {exc.colno}: {exc.msg}"
+            ) from exc
+
+    def read_json_model[M: BaseModel](self, path: Path, model: type[M]) -> M:
+        """`read_json` validated as `model`. A document that does not validate is a
+        MalformedFile naming the field."""
+        data = self.read_json(path)
+        try:
+            return model.model_validate(data)
+        except ValidationError as exc:
+            raise MalformedFile(path, validation_message(exc)) from exc
 
     def read_yaml(self, path: Path) -> Any:
         """The YAML document at `path`. A syntax error is a MalformedFile naming the line

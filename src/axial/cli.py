@@ -19,7 +19,7 @@ from axial.dataset import (
     make_splits,
     read_labels,
 )
-from axial.errors import AxialError, validation_message
+from axial.errors import AxialError, MalformedFile, validation_message
 from axial.gate import gate as run_gate
 from axial.gate import gate_batches
 from axial.judge import JudgeSpec, build_judge_model, run_judge
@@ -567,12 +567,12 @@ def promote(
     _require_verdicts(verdicts, "dev", mode, version)
     _require_verdicts(verdicts, "test", mode, version)
     try:
-        do_promote(
-            store, mode, version,
-            alignment_from_verdicts(verdicts, "dev"),
-            alignment_from_verdicts(verdicts, "test"),
-            config.thresholds,
-        )
+        dev = alignment_from_verdicts(verdicts, "dev")
+        test = alignment_from_verdicts(verdicts, "test")
+    except ValueError as exc:  # a verdict row that carries no human label
+        _fail(f"could not promote {mode} v{version}: {_one_line(exc)}")
+    try:
+        do_promote(store, mode, version, dev, test, config.thresholds)
     except AxialError as exc:
         # Print the refusal one line at a time rather than collapsing it to a
         # single `typer.echo(str(exc))` call: `check_promotion` can attach
@@ -582,7 +582,10 @@ def promote(
         for line in str(exc).splitlines():
             typer.echo(line)
         raise typer.Exit(code=1) from None
-    except ValueError as exc:  # a verdict row that carries no human label
+    except (OSError, MalformedFile) as exc:
+        # A corrupt errors.jsonl, read to check every row came from the current prompt,
+        # or a PROMOTED marker that cannot be written. Any other ValueError is a bug, so
+        # it is left uncaught.
         _fail(f"could not promote {mode} v{version}: {_one_line(exc)}")
     typer.echo(f"{mode} v{version} promoted")
 

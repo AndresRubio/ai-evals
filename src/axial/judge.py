@@ -20,7 +20,7 @@ import yaml
 from pydantic import BaseModel, Field
 
 from axial.dataset import Label, Splits, read_labels
-from axial.errors import AxialError, InvariantViolation
+from axial.errors import AxialError, InvariantViolation, MalformedFile
 from axial.model import JevModel, LiteLLMModel, Model, is_decision_model
 from axial.store import Store
 from axial.traces import Trace
@@ -247,7 +247,11 @@ def load_few_shot(
         try:
             return reader()
         except (OSError, ValueError) as exc:  # ValueError covers JSON and pydantic errors
-            detail = (str(exc).splitlines() or [""])[0]
+            # A MalformedFile's message starts with the path `what` already names.
+            if isinstance(exc, MalformedFile):
+                detail = exc.detail
+            else:
+                detail = (str(exc).splitlines() or [""])[0]
             raise AxialError(
                 f"could not read {what}, which judge {spec.mode} v{spec.version}'s few-shot "
                 f"examples come from: {detail}"
@@ -255,8 +259,8 @@ def load_few_shot(
 
     corpus = read(f"the traces ({store.traces_path})", store.read_traces)
     where = store.dataset_dir(spec.mode)
-    labels = read(f"the labels (in {where})", lambda: read_labels(store, spec.mode))
-    splits = read(f"the splits (in {where})", lambda: Splits.load(store, spec.mode))
+    labels = read(f"the labels ({where / 'labels.jsonl'})", lambda: read_labels(store, spec.mode))
+    splits = read(f"the splits ({where / 'splits.json'})", lambda: Splits.load(store, spec.mode))
     return resolve_few_shot(spec, corpus, labels), splits
 
 

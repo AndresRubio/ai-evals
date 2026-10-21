@@ -301,7 +301,7 @@ class Splits(BaseModel):
             )
         path = store.dataset_dir(mode) / "splits.json"
         if path.exists():
-            previous = Splits.model_validate(store.read_json(path))
+            previous = store.read_json_model(path, Splits)
             if sorted(previous.test) != sorted(self.test):
                 raise InvariantViolation(
                     f"the test split for {mode!r} is write-once and already exists. "
@@ -313,7 +313,7 @@ class Splits(BaseModel):
 
     @classmethod
     def load(cls, store: Store, mode: str) -> Splits:
-        return cls.model_validate(store.read_json(store.dataset_dir(mode) / "splits.json"))
+        return store.read_json_model(store.dataset_dir(mode) / "splits.json", cls)
 
 
 def make_splits(
