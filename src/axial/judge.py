@@ -247,9 +247,12 @@ def load_few_shot(
         try:
             return reader()
         except (OSError, ValueError) as exc:  # ValueError covers JSON and pydantic errors
-            # A MalformedFile's message starts with the path `what` already names.
+            # A MalformedFile's message and an OSError's both carry the path `what`
+            # already names, so only the reason is kept.
             if isinstance(exc, MalformedFile):
                 detail = exc.detail
+            elif isinstance(exc, OSError) and exc.strerror:
+                detail = exc.strerror
             else:
                 detail = (str(exc).splitlines() or [""])[0]
             raise AxialError(

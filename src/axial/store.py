@@ -156,13 +156,16 @@ class Store:
         return (self.latest_judge_version(mode) or 0) + 1
 
     # --- io ------------------------------------------------------------
+    # Files are read as UTF-8 whatever the locale. Everything axial writes is ASCII, so
+    # it reads the same either way, and a hand-edited file is almost always UTF-8, which
+    # the locale's own encoding (ASCII under a bare C locale) would refuse.
     def append_jsonl(self, path: Path, row: dict[str, Any]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a") as fh:
             fh.write(json.dumps(row, sort_keys=True) + "\n")
 
     def _numbered_rows(self, path: Path) -> Iterator[tuple[int, Any]]:
-        with path.open() as fh:
+        with path.open(encoding="utf-8") as fh:
             try:
                 for lineno, line in enumerate(fh, start=1):
                     if not line.strip():
@@ -325,7 +328,7 @@ class Store:
         """The JSON document at `path`. Bad JSON is a MalformedFile naming the line and
         column in one line, as bad YAML is."""
         try:
-            return json.loads(path.read_text())
+            return json.loads(path.read_text(encoding="utf-8"))
         except UnicodeDecodeError as exc:
             raise MalformedFile(path, f"not {exc.encoding} text: {exc.reason}") from exc
         except json.JSONDecodeError as exc:
@@ -346,7 +349,9 @@ class Store:
         """The YAML document at `path`. A syntax error is a MalformedFile naming the line
         and column in one line; PyYAML's own message runs to several."""
         try:
-            return yaml.safe_load(path.read_text())
+            return yaml.safe_load(path.read_text(encoding="utf-8"))
+        except UnicodeDecodeError as exc:
+            raise MalformedFile(path, f"not {exc.encoding} text: {exc.reason}") from exc
         except yaml.MarkedYAMLError as exc:
             mark = exc.problem_mark
             where = f" on line {mark.line + 1}, column {mark.column + 1}" if mark else ""

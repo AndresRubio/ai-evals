@@ -279,18 +279,19 @@ def test_measure_with_a_few_shot_judge_refuses_a_corpus_it_cannot_read_in_one_li
 ):
     what, damage = CORRUPTIONS[corruption]
     axial_dir = few_shot_repo / ".axial"
-    damage(
-        {
-            "traces": axial_dir / "traces" / "traces.jsonl",
-            "labels": axial_dir / "datasets" / MEASURE_MODE / "labels.jsonl",
-            "splits": axial_dir / "datasets" / MEASURE_MODE / "splits.json",
-        }[what]
-    )
+    damaged = {
+        "traces": axial_dir / "traces" / "traces.jsonl",
+        "labels": axial_dir / "datasets" / MEASURE_MODE / "labels.jsonl",
+        "splits": axial_dir / "datasets" / MEASURE_MODE / "splits.json",
+    }[what]
+    damage(damaged)
     path = write_batch(few_shot_repo / "b.jsonl", ["BAD"] * 5 + ["GOOD"] * 15)
     before = tree(axial_dir)
     result = axial("measure", MEASURE_MODE, "--version", "1", "--traces", str(path), "--name", "g")
     assert_clean(result, 1, f"could not read the {what}", "few-shot examples")
     assert len(result.output.strip().splitlines()) == 1
+    # The refusal names the file, and the reason after it does not name it again.
+    assert result.output.count(damaged.name) == 1, result.output
     assert "Traceback" not in result.output
     assert tree(axial_dir) == before
 

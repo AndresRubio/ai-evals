@@ -1,6 +1,9 @@
+import json
 import os
 import shutil
 import stat
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -234,6 +237,52 @@ def test_read_json_model_names_the_field_a_document_gets_wrong(tmp_path: Path):
     with pytest.raises(MalformedFile) as caught:
         s.read_json_model(path, Splits)
     assert str(caught.value) == f"{path}: train: Input should be a valid list, got int"
+
+
+@pytest.mark.parametrize("reader", ["read_jsonl", "read_json", "read_yaml"])
+def test_a_reader_refuses_bytes_that_are_not_utf8_in_one_line(tmp_path: Path, reader: str):
+    s = Store(tmp_path)
+    path = s.root / "bad.txt"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b'{"a": "\xff"}\n')
+    with pytest.raises(MalformedFile) as caught:
+        getattr(s, reader)(path)
+    assert str(caught.value) == f"{path}: not utf-8 text: invalid start byte"
+
+
+READ_UNDER_ANY_LOCALE = r"""
+import json, locale, sys
+from pathlib import Path
+from axial.store import Store
+
+print(locale.getencoding(), flush=True)
+store, root = Store(sys.argv[1]), Path(sys.argv[1])
+texts = [
+    store.read_jsonl(root / "rows.jsonl")[0]["text"],
+    store.read_json(root / "doc.json")["text"],
+    store.read_yaml(root / "doc.yaml")["text"],
+]
+print(json.dumps(texts))
+"""
+
+
+def test_the_store_reads_utf8_whatever_the_locale(tmp_path: Path):
+    # With UTF-8 mode and locale coercion off, the C locale's default encoding is ASCII,
+    # which cannot decode the text below as a hand edit would save it.
+    text = "café — entrée"
+    (tmp_path / "rows.jsonl").write_text(f'{{"text": "{text}"}}\n', encoding="utf-8")
+    (tmp_path / "doc.json").write_text(f'{{"text": "{text}"}}', encoding="utf-8")
+    (tmp_path / "doc.yaml").write_text(f"text: {text}\n", encoding="utf-8")
+    env = {**os.environ, "LC_ALL": "C", "LANG": "C", "PYTHONCOERCECLOCALE": "0", "PYTHONUTF8": "0"}
+    result = subprocess.run(
+        [sys.executable, "-X", "utf8=0", "-c", READ_UNDER_ANY_LOCALE, str(tmp_path)],
+        env=env, capture_output=True, text=True, timeout=60, check=False,
+    )
+    encoding = result.stdout.split()[0] if result.stdout else ""
+    if encoding.lower().replace("-", "") == "utf8":
+        pytest.skip("this platform's C locale is UTF-8, so the default encoding is not tested")
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout.splitlines()[1]) == [text] * 3
 
 
 def test_write_dir_atomically_writes_every_file(tmp_path: Path):

@@ -1,10 +1,14 @@
-"""CLI failure UX: missing inputs, stages run out of order, and bad flags.
+"""CLI failure UX: missing inputs, stages run out of order, bad flags and corrupt files.
 
 Each test runs one command the way a user would get it wrong and asserts what a
 usable CLI owes them: a non-zero exit, a message that says what is wrong, and no
 uncaught exception (under Typer's CliRunner an uncaught exception surfaces as
 `result.exception` being something other than SystemExit — in a terminal it is a
-traceback). Where the CLI falls short, the test is a strict xfail naming the gap.
+traceback). Where the CLI falls short, the test is an xfail naming the gap.
+
+One test asserts the opposite on purpose. A ValueError raised by promotion's own logic
+is a bug in axial, and it must surface as a traceback: reported as "could not promote",
+it would read as a problem with the user's files and never get fixed.
 """
 
 from __future__ import annotations
@@ -630,6 +634,26 @@ def test_promote_over_a_corrupt_errors_file_fails_cleanly_and_writes_nothing(
         run("promote", MEASURE_MODE, "1"), f"could not promote {MEASURE_MODE} v1", expected
     )
     assert snapshot(store.root) == before
+
+
+def test_promote_that_cannot_write_its_marker_fails_cleanly(tmp_path: Path) -> None:
+    """PROMOTED is written last, after every check passed; a write the filesystem
+    refuses is reported in one line naming the marker. A directory in its place fails
+    the write for root too, where a read-only file would not."""
+    store = Store(tmp_path)
+    build_promoted_judge(store)
+    marker = store.judge_dir(MEASURE_MODE, 1) / "PROMOTED"
+    marker.unlink()
+    marker.mkdir()
+    before = snapshot(store.root)
+    assert_one_line_refusal(
+        run("promote", MEASURE_MODE, "1"),
+        f"could not promote {MEASURE_MODE} v1",
+        "Is a directory",
+        "PROMOTED",
+    )
+    assert snapshot(store.root) == before
+    assert marker.is_dir()
 
 
 def test_promote_leaves_a_value_error_from_its_own_logic_uncaught(
