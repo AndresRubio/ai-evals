@@ -100,9 +100,10 @@ The refusals are the product.
   been re-judged or edited fails the gate until it is re-measured. Every verdict and
   error row records a fingerprint of the full prompt: `judge.yaml` plus the few-shot
   examples as resolved from the current traces and labels. `axial promote` refuses a
-  judge with no `judge.yaml`, and refuses unless every dev and test row in
-  `verdicts.jsonl` and `errors.jsonl` carries the current fingerprint. It then writes
-  the fingerprint as the third line of `PROMOTED`, `prompt_sha256=<hex>`. `measure` and
+  judge with no `judge.yaml`, and refuses unless every row in `verdicts.jsonl` and
+  `errors.jsonl`, whatever its split, carries the current fingerprint. It then writes
+  the fingerprint as the third `key=value` line of `PROMOTED`, `prompt_sha256=<hex>`,
+  after the two hashes. `measure` and
   `gate` refuse a judge whose examples have since been relabelled or re-ingested, until
   dev and test are re-run and the judge is promoted again. A judge promoted before this
   change has to re-run both splits and be promoted again, and batches measured before it

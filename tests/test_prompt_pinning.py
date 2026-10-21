@@ -223,6 +223,40 @@ def test_promote_refuses_a_split_run_by_another_prompt(tmp_path: Path, stale: st
     assert not (judge_dir(store) / "PROMOTED").exists()
 
 
+def test_promote_refuses_a_train_split_run_by_another_prompt(tmp_path: Path):
+    """`axial judge --split train` writes into the same verdicts.jsonl, and the
+    judge-vs-judge gate counts every row whatever its split, so a train run from an old
+    prompt is bound at promotion unless promote checks it too."""
+    store = Store(tmp_path)
+    build_promoted_judge(store)
+    original = (judge_dir(store) / "judge.yaml").read_text()
+    reword(store)
+    rerun(store, "train")
+    (judge_dir(store) / "judge.yaml").write_text(original)
+    rerun(store, "dev")
+    rerun(store, "test")
+    with pytest.raises(InvariantViolation, match="--split train`") as caught:
+        promote_again(store)
+    assert "--split dev`" not in str(caught.value)
+    assert "--split test`" not in str(caught.value)
+    assert not (judge_dir(store) / "PROMOTED").exists()
+
+
+def test_promote_refuses_a_stale_row_with_no_split(tmp_path: Path):
+    store = Store(tmp_path)
+    build_promoted_judge(store)
+    path = judge_dir(store) / "verdicts.jsonl"
+    store.write_jsonl(
+        path,
+        store.read_jsonl(path)
+        + [{"trace_id": "x", "verdict": True, "truth": True, "prompt_sha256": "0" * 64}],
+    )
+    with pytest.raises(InvariantViolation, match="no split") as caught:
+        promote_again(store)
+    assert "--split None`" not in str(caught.value)
+    assert "--split dev`" not in str(caught.value)
+
+
 def test_promote_refuses_a_split_after_a_few_shot_example_was_relabelled(tmp_path: Path):
     store = Store(tmp_path)
     build_promoted_judge(store, few_shot_ids=["train-0"])
@@ -265,6 +299,27 @@ def test_promote_refuses_a_judge_with_no_judge_yaml(tmp_path: Path):
     (judge_dir(store) / "judge.yaml").unlink()
     with pytest.raises(InvariantViolation, match="has no judge.yaml"):
         promote_again(store)
+
+
+def test_promote_refuses_a_judge_yaml_that_is_not_yaml(tmp_path: Path):
+    store = Store(tmp_path)
+    build_promoted_judge(store)
+    (judge_dir(store) / "judge.yaml").write_text("mode: [unclosed\n")
+    with pytest.raises(InvariantViolation, match="judge.yaml") as caught:
+        promote_again(store)
+    assert "cannot be loaded" in str(caught.value)
+
+
+def test_promote_refuses_a_judge_yaml_with_a_bad_value(tmp_path: Path):
+    store = Store(tmp_path)
+    build_promoted_judge(store)
+    path = judge_dir(store) / "judge.yaml"
+    data = yaml.safe_load(path.read_text())
+    data["decision_threshold"] = "high"
+    path.write_text(yaml.safe_dump(data, sort_keys=False))
+    with pytest.raises(InvariantViolation, match="judge.yaml") as caught:
+        promote_again(store)
+    assert "decision_threshold" in str(caught.value)
 
 
 def test_require_promoted_refuses_a_marker_without_a_fingerprint(tmp_path: Path):

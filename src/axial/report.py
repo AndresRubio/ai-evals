@@ -14,6 +14,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, NamedTuple
 
+import yaml
+from pydantic import ValidationError
+
 from axial.align import Alignment, align
 from axial.config import Thresholds
 from axial.dataset import Label
@@ -112,16 +115,18 @@ def format_promoted_marker(
     verdicts_hash: str,
     prompt_hash: str,
 ) -> str:
-    """Render the `PROMOTED` marker: a human-readable summary plus two
+    """Render the `PROMOTED` marker: a human-readable summary plus three
     machine-parseable `key=value` lines binding the marker to the exact
-    `judge.yaml` and `verdicts.jsonl` it was earned on.
+    `judge.yaml`, `verdicts.jsonl` and prompt it was earned on.
 
     Without this binding, `gate` could only check that *some* `PROMOTED` file
     existed, not that the judge or its verdicts still matched what earned it
     -- which is exactly what let a promoted judge be silently replaced under
-    its own marker. `require_promoted` recomputes both hashes with `store.hash_file`
-    and calls `parse_promoted_marker` to compare them against these. The third
-    line binds the full prompt, few-shot examples included.
+    its own marker. `require_promoted` recomputes the two file hashes with
+    `store.hash_file`, recomputes the prompt fingerprint from the current
+    judge.yaml, traces and labels, and calls `parse_promoted_marker` to compare
+    all three against these. The prompt fingerprint covers the few-shot examples,
+    so a relabelled example withdraws the promotion even though neither file changed.
     """
     return (
         f"test {test_summary}\n"
@@ -194,18 +199,45 @@ def _load_spec(store: Store, mode: str, version: int) -> JudgeSpec:
             f"from cannot be checked. Run `axial judge {mode} --version {version} --split "
             "dev` and `--split test` first."
         )
-    return JudgeSpec.load(store, mode, version)
+    path = store.judge_dir(mode, version) / "judge.yaml"
+    try:
+        return JudgeSpec.load(store, mode, version)
+    except (OSError, ValueError, yaml.YAMLError) as exc:
+        # Malformed YAML raises `yaml.YAMLError`; a value the spec rejects, such as
+        # `decision_threshold: high`, raises pydantic's `ValidationError`, a `ValueError`.
+        # Both would otherwise reach the CLI as a traceback.
+        if isinstance(exc, ValidationError):
+            # The first line of a pydantic error only counts the problems; the
+            # field and the reason are on the lines after it.
+            first = exc.errors()[0]
+            detail = f"{'.'.join(str(part) for part in first['loc'])}: {first['msg']}"
+        elif isinstance(exc, yaml.MarkedYAMLError) and exc.problem and exc.problem_mark:
+            detail = f"{exc.problem} (line {exc.problem_mark.line + 1})"
+        else:
+            lines = str(exc).strip().splitlines()
+            detail = lines[0] if lines else type(exc).__name__
+        raise InvariantViolation(
+            f"judge {mode} v{version}'s judge.yaml at {path} cannot be loaded: {detail}. "
+            "Fix the file, or run `axial judge --new` to score a fresh version."
+        ) from exc
 
 
-def _splits_from_another_prompt(store: Store, directory: Path, fingerprint: str) -> list[str]:
-    """The dev and test splits holding a row not stamped with `fingerprint`."""
-    stale: set[str] = set()
+def _splits_from_another_prompt(
+    store: Store, directory: Path, fingerprint: str
+) -> list[str | None]:
+    """The splits holding a row not stamped with `fingerprint`, whatever the split.
+
+    `axial judge --split train` writes into the same verdicts.jsonl as dev and test,
+    and the judge-vs-judge gate counts every row, so a train row from another prompt
+    is bound at promotion too. A row with no `split` key is reported as `None`.
+    """
+    stale: set[str | None] = set()
     for name in ("verdicts.jsonl", "errors.jsonl"):
         for row in store.read_jsonl(directory / name):
-            split = row.get("split")
-            if split in ("dev", "test") and row.get(PROMPT_HASH_KEY) != fingerprint:
-                stale.add(str(split))
-    return sorted(stale)
+            if row.get(PROMPT_HASH_KEY) != fingerprint:
+                split = row.get("split")
+                stale.add(split if split is None else str(split))
+    return sorted(s for s in stale if s is not None) + ([None] if None in stale else [])
 
 
 def require_promoted(store: Store, mode: str, version: int) -> PromotedHashes:
@@ -257,10 +289,11 @@ def require_promoted(store: Store, mode: str, version: int) -> PromotedHashes:
     if current_prompt_sha256(store, _load_spec(store, mode, version)) != recorded_prompt_hash:
         raise InvariantViolation(
             f"judge {mode} v{version} would send a prompt that is not the prompt it was "
-            "promoted with: its few-shot examples, resolved from the current traces and "
-            "labels, have changed (an example was relabelled or re-ingested). Re-run `axial "
-            f"judge {mode} --version {version} --split dev` and `--split test`, then `axial "
-            "promote` again."
+            "promoted with. judge.yaml is unchanged, so either a few-shot example, resolved "
+            "from the current traces and labels, was relabelled or re-ingested, or an axial "
+            "upgrade changed how the prompt is built (a JudgeSpec field or default, or the "
+            f"few-shot rendering). Re-run `axial judge {mode} --version {version} --split "
+            "dev` and `--split test`, then `axial promote` again."
         )
     return PromotedHashes(recorded_judge_hash, recorded_verdicts_hash, recorded_prompt_hash)
 
@@ -576,14 +609,26 @@ def promote(
     fingerprint = current_prompt_sha256(store, _load_spec(store, mode, version))
     stale = _splits_from_another_prompt(store, directory, fingerprint)
     if stale:
+        named = [split for split in stale if split is not None]
+        subject = f"its {' and '.join(named)} rows" if named else ""
+        if None in stale:
+            subject += " and its rows with no split" if named else "its rows with no split"
         rerun = " and ".join(
-            f"`axial judge {mode} --version {version} --split {split}`" for split in stale
+            f"`axial judge {mode} --version {version} --split {split}`" for split in named
         )
+        advice: list[str] = []
+        if named:
+            advice.append(f"Run {rerun}, then promote.")
+        if None in stale:
+            advice.append(
+                "Rows with no split cannot be re-run by split; run `axial judge --new` to "
+                "score a fresh version."
+            )
         raise InvariantViolation(
-            f"judge {mode} v{version} cannot be promoted: its {' and '.join(stale)} rows "
+            f"judge {mode} v{version} cannot be promoted: {subject} "
             "were not produced by the prompt its judge.yaml, traces and labels give now. "
             "judge.yaml was edited, or a few-shot example relabelled or re-ingested, after "
-            f"they ran. Run {rerun}, then promote."
+            f"they ran. {' '.join(advice)}"
         )
     check = check_promotion(dev, test, thresholds)
     if not check.ok:

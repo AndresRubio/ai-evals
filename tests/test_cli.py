@@ -362,6 +362,35 @@ def test_promote_prints_every_failure_reason_on_one_line_each(tmp_path: Path):
     assert len(reason_lines) >= 3
 
 
+@pytest.mark.parametrize(
+    "judge_yaml", ["mode: [unclosed\n", "mode: m\nmodel: fake\nversion: 1\ndecision_threshold: high\n"]
+)
+def test_promote_refuses_an_invalid_judge_yaml_without_a_traceback(
+    tmp_path: Path, judge_yaml: str
+):
+    from axial.config import write_default_config
+
+    store = Store(tmp_path)
+    write_default_config(store)
+    directory = store.judge_dir("m", 1)
+    directory.mkdir(parents=True, exist_ok=True)
+    store.write_jsonl(
+        directory / "verdicts.jsonl",
+        [
+            {"trace_id": "d0", "split": "dev", "verdict": True, "truth": True},
+            {"trace_id": "t0", "split": "test", "verdict": True, "truth": True},
+        ],
+    )
+    stamp_run(store, "m", 1)
+    (directory / "judge.yaml").write_text(judge_yaml)
+
+    result = runner.invoke(app, ["promote", "m", "1", "--repo", str(tmp_path)])
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert "Traceback" not in result.output
+    assert "judge.yaml" in result.stdout
+
+
 def _seed_corpus_and_splits(store: Store, mode: str = "m") -> None:
     from axial.dataset import Splits
 

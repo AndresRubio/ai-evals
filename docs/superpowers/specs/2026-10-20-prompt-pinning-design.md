@@ -32,7 +32,7 @@ is graded with its own answer in the prompt.
 | Decision | Choice | Why |
 |---|---|---|
 | What happens when a few-shot example changes after promotion | The judge stops counting as promoted until dev and test are re-run and it is promoted again | Chosen by the user on 2026-10-20 over freezing a snapshot of the examples in the judge directory. The judge always reflects the current labels, and a change to its prompt is never measured with numbers from another prompt. |
-| Which rows `promote` checks | Every dev and test row, in `verdicts.jsonl` and `errors.jsonl` | Asked 2026-10-20. The promotion check reads the dev alignment as well as the test one. |
+| Which rows `promote` checks | Every row in `verdicts.jsonl` and `errors.jsonl`, whatever its split | Asked 2026-10-20, when the answer was dev and test rows, since the promotion check reads both alignments. Widened on 2026-10-21 after the final review found that `axial judge --split train` writes into the same `verdicts.jsonl` and that `gate --version` counts every row whatever its split, so a train run from an older prompt was bound at promotion and compared by the judge-vs-judge gate. A row with no `split` key counts as stale too. |
 | How `measure` recognises a few-shot example in a batch | By the SHA-256 of its input text only | Asked 2026-10-20. The answer sits in the prompt whatever id the trace carries, and an id alone says nothing about content. |
 
 ## The prompt fingerprint
@@ -63,8 +63,11 @@ by split is unchanged, so rows of a split that was not re-run keep their old sta
 
 Before writing the marker, `promote` loads `judge.yaml`, computes `current_prompt_sha256`,
 and reads `verdicts.jsonl` and `errors.jsonl`. It refuses with `InvariantViolation` if any
-dev or test row has no `prompt_sha256` or a different one. The message names each such
-split and the command to re-run it (`axial judge <mode> --version N --split <split>`). When
+row, whatever its split, has no `prompt_sha256` or a different one. The message names each
+such split and the command to re-run it (`axial judge <mode> --version N --split <split>`);
+a row with no `split` key is reported as such, with `axial judge --new` as the way out.
+Train rows count because `axial judge --split train` writes into the same file and the
+judge-vs-judge gate reads every row (decided 2026-10-21, see the table above). When
 every row matches, the marker gains a third line, `prompt_sha256=<hex>`, after the two it
 already has.
 
@@ -129,7 +132,11 @@ Tests are written first, and each is seen to fail before the code that passes it
   the template, the model, the decision threshold, an example's label, critique, input or
   output, and the order of the examples.
 - `run_judge` stamps verdict and error rows. `promote` refuses a stale or missing stamp on
-  dev and on test, each, and writes the third marker line.
+  dev, on test and on train, each, and a stale row with no split, and writes the third
+  marker line.
+- `promote` refuses a judge.yaml that is not valid YAML, or whose values the spec rejects,
+  with an `InvariantViolation` that names the file; the CLI exits cleanly with no
+  traceback.
 - `require_promoted` refuses a marker without `prompt_sha256` and a corpus or labels that
   resolve to another prompt, and does not read the corpus for a judge with no few-shot ids.
 - `measurement.json` records the fingerprint. `gate --batch` refuses a measurement without
