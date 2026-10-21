@@ -593,3 +593,28 @@ def test_a_session_name_that_is_not_a_plain_name_is_refused_and_writes_nothing(
     }[command]
     assert_one_line_refusal(run(*args), f"session name {name!r} is not allowed")
     assert snapshot(tmp_path) == before
+
+
+@pytest.mark.parametrize(
+    ("row", "problem"),
+    [
+        ({"trace_id": "t1", "split": "dev", "truth": True}, "verdict: Field required"),
+        (
+            {"trace_id": "t1", "split": "dev", "verdict": "maybe", "truth": True},
+            "verdict: Input should be a valid boolean",
+        ),
+        ({"split": "dev", "verdict": True, "truth": True}, "trace_id: Field required"),
+    ],
+    ids=["no-verdict", "verdict-not-boolean", "no-trace-id"],
+)
+@pytest.mark.parametrize(
+    ("command", "verb"), [("align", "align"), ("promote", "promote"), ("checks", "check")]
+)
+def test_align_promote_and_checks_refuse_a_malformed_verdict_row_in_one_line(
+    command: str, verb: str, row: dict[str, object], problem: str
+) -> None:
+    """A hand-edited verdicts.jsonl row is named by file, line and field, not a KeyError."""
+    write_verdicts([{"trace_id": "t0", "split": "dev", "verdict": True, "truth": True}, row])
+    assert_one_line_refusal(
+        run(command, "m", "1"), f"could not {verb} m v1", f"verdicts.jsonl: line 2: {problem}"
+    )

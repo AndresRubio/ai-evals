@@ -1,6 +1,8 @@
 """Exception types. Invariant violations are their own class so callers can
 distinguish 'you asked for something the methodology forbids' from a bug."""
 
+from pathlib import Path
+
 from pydantic import ValidationError
 
 
@@ -11,6 +13,20 @@ class AxialError(Exception):
 class InvariantViolation(AxialError):
     """A refusal. The operation is well-formed but would produce an untrustworthy
     artifact, so axial declines to perform it."""
+
+
+class MalformedFile(ValueError):
+    """A file axial reads holds something it cannot use.
+
+    The message is one line, `<path>: <detail>`. `detail` is the reason alone, for a
+    caller that names the file in its own words. A ValueError, so callers that catch
+    bad file content as ValueError catch this too.
+    """
+
+    def __init__(self, path: Path, detail: str) -> None:
+        super().__init__(f"{path}: {detail}")
+        self.path = path
+        self.detail = detail
 
 
 def validation_message(exc: ValidationError) -> str:

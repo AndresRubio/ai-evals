@@ -21,7 +21,7 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, ValidationError
 
-from axial.errors import AxialError, validation_message
+from axial.errors import AxialError, MalformedFile, validation_message
 from axial.traces import Trace
 
 # A mode or a batch name becomes one directory name under `.axial/`, and a review
@@ -172,8 +172,11 @@ class Store:
                     # Name the file and the line so a corrupt session or
                     # labels file produces a diagnosis, not an anonymous
                     # JSONDecodeError that aborts every session that happens
-                    # to load it.
-                    raise ValueError(f"{path}: invalid JSON on line {lineno}: {exc}") from exc
+                    # to load it. json's own "line 1 column 5" counts within
+                    # this one line, so only its column is kept.
+                    raise MalformedFile(
+                        path, f"invalid JSON on line {lineno}, column {exc.colno}: {exc.msg}"
+                    ) from exc
 
     def read_jsonl(self, path: Path) -> list[dict[str, Any]]:
         if not path.exists():
@@ -185,8 +188,8 @@ class Store:
     ) -> list[M]:
         """`read_jsonl` with each row validated as `model`.
 
-        A row that does not validate is a one-line ValueError naming the file and the
-        line, as corrupt JSON already is. A missing file reads as no rows unless
+        A row that does not validate is a MalformedFile naming the file and the line,
+        as corrupt JSON already is. A missing file reads as no rows unless
         `missing_ok` is False, for a file the user named rather than one of the store's.
         """
         if missing_ok and not path.exists():
@@ -196,7 +199,7 @@ class Store:
             try:
                 models.append(model.model_validate(row))
             except ValidationError as exc:
-                raise ValueError(f"{path}: line {lineno}: {validation_message(exc)}") from exc
+                raise MalformedFile(path, f"line {lineno}: {validation_message(exc)}") from exc
         return models
 
     def _atomic_write(self, path: Path, data: str) -> None:
@@ -309,25 +312,25 @@ class Store:
         return json.loads(path.read_text())
 
     def read_yaml(self, path: Path) -> Any:
-        """The YAML document at `path`. A syntax error is a one-line ValueError naming the
-        file, line and column; PyYAML's own message runs to several lines."""
+        """The YAML document at `path`. A syntax error is a MalformedFile naming the line
+        and column in one line; PyYAML's own message runs to several."""
         try:
             return yaml.safe_load(path.read_text())
         except yaml.MarkedYAMLError as exc:
             mark = exc.problem_mark
             where = f" on line {mark.line + 1}, column {mark.column + 1}" if mark else ""
-            raise ValueError(f"{path}: invalid YAML{where}: {exc.problem}") from exc
+            raise MalformedFile(path, f"invalid YAML{where}: {exc.problem}") from exc
         except yaml.YAMLError as exc:
-            raise ValueError(f"{path}: invalid YAML: {(str(exc).splitlines() or [''])[0]}") from exc
+            raise MalformedFile(path, f"invalid YAML: {(str(exc).splitlines() or [''])[0]}") from exc
 
     def read_yaml_model[M: BaseModel](self, path: Path, model: type[M], empty: Any = None) -> M:
         """`read_yaml` validated as `model`, reading an empty document as `empty`. A
-        document that does not validate is a one-line ValueError naming the file."""
+        document that does not validate is a MalformedFile naming the field."""
         data = self.read_yaml(path)
         try:
             return model.model_validate(empty if data is None else data)
         except ValidationError as exc:
-            raise ValueError(f"{path}: {validation_message(exc)}") from exc
+            raise MalformedFile(path, validation_message(exc)) from exc
 
     def hash_file(self, path: Path) -> str:
         """SHA-256 of a file's raw bytes, or of empty bytes if it doesn't exist.

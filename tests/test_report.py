@@ -15,6 +15,7 @@ from axial.report import (
     check_promotion,
     parse_promoted_marker,
     promote,
+    read_verdicts,
     write_alignment,
 )
 from axial.store import Store
@@ -283,3 +284,16 @@ def test_require_promoted_refuses_an_unpromoted_or_edited_judge(tmp_path: Path):
     (directory / "judge.yaml").write_text("mode: merged\nprompt_template: edited\n")
     with pytest.raises(InvariantViolation, match="judge.yaml has changed"):
         require_promoted(store, "merged", 1)
+
+
+def test_read_verdicts_returns_well_formed_rows_exactly_as_written(tmp_path: Path):
+    """Checking the named fields neither adds a field nor drops one such as usage."""
+    store = Store(tmp_path)
+    path = store.judge_dir("m", 1) / "verdicts.jsonl"
+    rows = [
+        {"trace_id": "t0", "split": "dev", "verdict": True, "truth": False,
+         "usage": {"input_tokens": 3}, "prompt_sha256": "abc"},
+        {"trace_id": "t1", "verdict": False},
+    ]
+    store.write_jsonl(path, rows)
+    assert read_verdicts(store, path) == rows

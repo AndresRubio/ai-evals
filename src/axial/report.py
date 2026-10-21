@@ -14,16 +14,38 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, NamedTuple
 
-import yaml
-from pydantic import ValidationError
+from pydantic import BaseModel, ConfigDict
 
 from axial.align import Alignment, align
 from axial.config import Thresholds
 from axial.dataset import Label
-from axial.errors import InvariantViolation
+from axial.errors import InvariantViolation, MalformedFile
 from axial.judge import JudgeSpec, current_prompt_sha256
 from axial.store import Store
 from axial.traces import Trace
+
+
+class VerdictRow(BaseModel):
+    """The fields of a verdicts.jsonl row that `align`, `promote` and `checks` read by
+    name. Every other field is kept as it is."""
+
+    model_config = ConfigDict(extra="allow")
+
+    trace_id: str
+    verdict: bool
+    split: str | None = None
+    truth: bool | None = None
+
+
+def read_verdicts(store: Store, path: Path) -> list[dict[str, Any]]:
+    """The rows of a verdicts.jsonl, each checked for the fields read by name.
+
+    A hand-edited row without `verdict` used to end in a KeyError far from the file;
+    it is now a MalformedFile naming the file, the line and the field. Only the
+    commands that read an unpromoted judge need this: `gate` and `measure` refuse a
+    verdicts.jsonl whose hash changed since promotion before they read a row.
+    """
+    return [row.model_dump(exclude_unset=True) for row in store.read_models(path, VerdictRow)]
 
 
 def alignment_from_verdicts(
@@ -202,19 +224,12 @@ def _load_spec(store: Store, mode: str, version: int) -> JudgeSpec:
     path = store.judge_dir(mode, version) / "judge.yaml"
     try:
         return JudgeSpec.load(store, mode, version)
-    except (OSError, ValueError, yaml.YAMLError) as exc:
-        # Malformed YAML raises `yaml.YAMLError`; a value the spec rejects, such as
-        # `decision_threshold: high`, raises pydantic's `ValidationError`, a `ValueError`.
-        # Both would otherwise reach the CLI as a traceback.
-        if isinstance(exc, ValidationError):
-            # The first line of a pydantic error only counts the problems; the
-            # field and the reason are on the lines after it.
-            first = exc.errors()[0]
-            field = ".".join(str(part) for part in first["loc"])
-            # An empty `loc` means the whole document is wrong (empty file, list, scalar).
-            detail = f"{field}: {first['msg']}" if field else first["msg"]
-        elif isinstance(exc, yaml.MarkedYAMLError) and exc.problem and exc.problem_mark:
-            detail = f"{exc.problem} (line {exc.problem_mark.line + 1})"
+    except (OSError, ValueError) as exc:
+        # `JudgeSpec.load` reports malformed YAML, and a value the spec rejects such as
+        # `decision_threshold: high`, as a MalformedFile whose detail is one line. Both
+        # would otherwise reach the CLI as a traceback.
+        if isinstance(exc, MalformedFile):
+            detail = exc.detail
         else:
             lines = str(exc).strip().splitlines()
             detail = lines[0] if lines else type(exc).__name__

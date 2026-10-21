@@ -32,6 +32,7 @@ from axial.report import (
     check_promotion,
     disagreement_counts,
     find_disagreements,
+    read_verdicts,
     write_alignment,
 )
 from axial.report import promote as do_promote
@@ -460,7 +461,7 @@ def align(
     config = _config(store)
     directory = store.judge_dir(mode, version)
     try:
-        verdicts = store.read_jsonl(directory / "verdicts.jsonl")
+        verdicts = read_verdicts(store, directory / "verdicts.jsonl")
         errors = store.read_jsonl(directory / "errors.jsonl")
         labels = read_labels(store, mode)
         traces = store.read_traces()
@@ -505,7 +506,7 @@ def checks(
 
     store = Store(repo)
     try:
-        verdicts = store.read_jsonl(store.judge_dir(mode, version) / "verdicts.jsonl")
+        verdicts = read_verdicts(store, store.judge_dir(mode, version) / "verdicts.jsonl")
         traces = store.read_traces()
     except (OSError, ValueError) as exc:
         _fail(f"could not check {mode} v{version}: {_one_line(exc)}")
@@ -560,7 +561,7 @@ def promote(
     store = Store(repo)
     config = _config(store)
     try:
-        verdicts = store.read_jsonl(store.judge_dir(mode, version) / "verdicts.jsonl")
+        verdicts = read_verdicts(store, store.judge_dir(mode, version) / "verdicts.jsonl")
     except (OSError, ValueError) as exc:
         _fail(f"could not promote {mode} v{version}: {_one_line(exc)}")
     _require_verdicts(verdicts, "dev", mode, version)

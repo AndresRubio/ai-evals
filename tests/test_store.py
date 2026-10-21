@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from axial.errors import AxialError
+from axial.errors import AxialError, MalformedFile
 from axial.store import Store
 from axial.traces import Trace
 
@@ -185,6 +185,19 @@ def test_read_jsonl_reports_the_file_and_line_number_on_corrupt_json(tmp_path: P
     path.write_text('{"a": 1}\nnot json\n{"a": 3}\n')
     with pytest.raises(ValueError, match=r"bad\.jsonl.*line 2"):
         s.read_jsonl(path)
+
+
+def test_read_jsonl_gives_only_the_column_of_jsons_own_position(tmp_path: Path):
+    """json counts lines within the one line it parsed, which read as a second line number."""
+    s = Store(tmp_path)
+    path = s.root / "bad.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('{"a": 1}\n{oops\n')
+    with pytest.raises(MalformedFile) as caught:
+        s.read_jsonl(path)
+    detail = "invalid JSON on line 2, column 2: Expecting property name enclosed in double quotes"
+    assert caught.value.detail == detail
+    assert str(caught.value) == f"{path}: {detail}"
 
 
 def test_write_dir_atomically_writes_every_file(tmp_path: Path):
