@@ -32,7 +32,8 @@ from axial.traces import Trace
 
 MEASUREMENT_FIELDS = {
     "mode", "batch", "judge_version", "judge_yaml_sha256", "verdicts_sha256", "prompt_sha256",
-    "test_matrix", "n_traces", "n_graded", "n_set_aside", "flagged", "observed_rate", "corrected_rate",
+    "test_matrix", "n_traces", "n_graded", "n_set_aside", "flagged", "observed_rate",
+    "corrected_rate",
     "clipped", "interval", "interval_if_judge_exact", "draws", "seed", "notes", "created",
 }
 

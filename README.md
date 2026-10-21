@@ -103,9 +103,9 @@ The refusals are the product.
   judge with no `judge.yaml`, and refuses unless every row in `verdicts.jsonl` and
   `errors.jsonl`, whatever its split, carries the current fingerprint. It then writes
   the fingerprint as the third `key=value` line of `PROMOTED`, `prompt_sha256=<hex>`,
-  after the two hashes. `measure` and
-  `gate` refuse a judge whose examples have since been relabelled or re-ingested, until
-  dev and test are re-run and the judge is promoted again. A judge promoted before this
+  after the two hashes. `measure` and `gate` refuse a judge whose examples have since
+  been relabelled or re-ingested, until dev and test are re-run and the judge is
+  promoted again. A judge promoted before this
   change has to re-run every split it has rows for, train included, and be promoted
   again, and batches measured before it need `--replace` to be measured again:
 
@@ -114,6 +114,7 @@ The refusals are the product.
   axial judge <mode> --version N --split test
   axial judge <mode> --version N --split train   # only if it has train rows
   axial promote <mode> N
+  axial measure <mode> --version N --traces <file> --name <batch> --replace
   ```
 - **Infra failures never score as model failures.** They are quarantined in
   `errors.jsonl` with a failure class.

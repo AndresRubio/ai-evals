@@ -35,7 +35,7 @@ from axial.gate import gate_batches
 from axial.judge import JudgeSpec, run_judge
 from axial.measure import measure_batch
 from axial.model import FakeModel
-from axial.report import alignment_from_verdicts, promote
+from axial.report import alignment_from_verdicts, promote, require_promoted
 from axial.store import Store
 from axial.traces import Trace
 
@@ -96,6 +96,8 @@ def test_a_changed_few_shot_example_stops_measure_and_gate_until_the_judge_is_re
 
     for name, data in original.items():
         (labels_path / name).write_bytes(data)
+    # The labels are back as promoted, so the refusal below comes from the re-ingest alone.
+    require_promoted(store, MEASURE_MODE, 1)
     store.write_traces(
         [
             Trace(trace_id=t.trace_id, input=t.input, output="SOMETHING ELSE")
