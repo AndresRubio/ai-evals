@@ -108,11 +108,12 @@ repeats an example's input under another id is set aside.
 ## Upgrading
 
 A judge promoted before this change has a marker without `prompt_sha256` and rows without
-stamps. `measure` and `gate` refuse it, and `promote` refuses until both splits are re-run:
+stamps. `measure` and `gate` refuse it, and `promote` refuses until every split it has rows for is re-run, train included:
 
 ```bash
 axial judge <mode> --version N --split dev
 axial judge <mode> --version N --split test
+axial judge <mode> --version N --split train   # only if it has train rows
 axial promote <mode> N
 ```
 

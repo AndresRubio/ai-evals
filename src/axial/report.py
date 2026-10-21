@@ -210,7 +210,9 @@ def _load_spec(store: Store, mode: str, version: int) -> JudgeSpec:
             # The first line of a pydantic error only counts the problems; the
             # field and the reason are on the lines after it.
             first = exc.errors()[0]
-            detail = f"{'.'.join(str(part) for part in first['loc'])}: {first['msg']}"
+            field = ".".join(str(part) for part in first["loc"])
+            # An empty `loc` means the whole document is wrong (empty file, list, scalar).
+            detail = f"{field}: {first['msg']}" if field else first["msg"]
         elif isinstance(exc, yaml.MarkedYAMLError) and exc.problem and exc.problem_mark:
             detail = f"{exc.problem} (line {exc.problem_mark.line + 1})"
         else:
@@ -627,8 +629,9 @@ def promote(
         raise InvariantViolation(
             f"judge {mode} v{version} cannot be promoted: {subject} "
             "were not produced by the prompt its judge.yaml, traces and labels give now. "
-            "judge.yaml was edited, or a few-shot example relabelled or re-ingested, after "
-            f"they ran. {' '.join(advice)}"
+            "judge.yaml was edited, a few-shot example was relabelled or re-ingested, or an "
+            "axial upgrade changed how the prompt is built, after they ran. "
+            f"{' '.join(advice)}"
         )
     check = check_promotion(dev, test, thresholds)
     if not check.ok:

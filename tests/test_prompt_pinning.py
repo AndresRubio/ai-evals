@@ -18,6 +18,7 @@ from measure_helpers import (
     judge_reply,
 )
 
+import axial.measure
 from axial.config import Thresholds
 from axial.dataset import Label, Splits, add_labels, read_labels
 from axial.errors import AxialError, InvariantViolation
@@ -140,20 +141,28 @@ def test_current_fingerprint_resolves_examples_from_the_store(tmp_path: Path):
 
 
 def test_run_judge_stamps_every_verdict_and_error_row(tmp_path: Path):
+    """t2 is graded, t3 has no label, and t4 gets an unreadable answer: one row of each
+    kind run_judge writes."""
     store = Store(tmp_path)
     judge = spec(few_shot_ids=["t1"])
-    corpus = [example(1)[0], example(2)[0], example(3)[0]]
-    labels = [example(1)[1], example(2, failed=False)[1]]  # t3 has no label: an error row
-    splits = Splits(train=["t1"], dev=["t2", "t3"], test=[])
+    corpus = [example(i)[0] for i in (1, 2, 3, 4)]
+    labels = [example(1)[1], example(2, failed=False)[1], example(4, failed=False)[1]]
+    splits = Splits(train=["t1"], dev=["t2", "t3", "t4"], test=[])
+
+    def reply(prompt: str) -> str:
+        return "maybe?" if prompt.endswith("OUTPUT: out4") else '{"verdict": "pass"}'
+
     run_judge(
-        store, judge, corpus[1:], labels, splits,
-        FakeModel(lambda _p: '{"verdict": "pass"}'), split="dev", corpus=corpus,
+        store, judge, corpus[1:], labels, splits, FakeModel(reply), split="dev", corpus=corpus,
     )
     expected = prompt_sha256(judge, [(corpus[0], labels[0])])
     directory = store.judge_dir("merged", 1)
     verdicts = store.read_jsonl(directory / "verdicts.jsonl")
     errors = store.read_jsonl(directory / "errors.jsonl")
-    assert len(verdicts) == 1 and len(errors) == 1
+    assert [r["trace_id"] for r in verdicts] == ["t2"]
+    assert sorted((e["trace_id"], e["failure_class"]) for e in errors) == [
+        ("t3", "unlabelled"), ("t4", "unparseable")
+    ]
     assert {r["prompt_sha256"] for r in verdicts + errors} == {expected}
 
 
@@ -272,9 +281,8 @@ def test_promote_refuses_rows_with_no_fingerprint(tmp_path: Path):
     build_promoted_judge(store)
     for name in ("verdicts.jsonl", "errors.jsonl"):
         path = judge_dir(store) / name
-        store.write_jsonl(
-            path, [{k: v for k, v in r.items() if k != "prompt_sha256"} for r in store.read_jsonl(path)]
-        )
+        rows = store.read_jsonl(path)
+        store.write_jsonl(path, [{k: v for k, v in r.items() if k != "prompt_sha256"} for r in rows])
     with pytest.raises(InvariantViolation, match="dev and test"):
         promote_again(store)
 
@@ -412,8 +420,6 @@ def test_measure_refuses_examples_that_change_after_the_promotion_check(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
     """The labels change between `require_promoted` and grading."""
-    import axial.measure
-
     store = Store(tmp_path)
     build_promoted_judge(store, few_shot_ids=["train-0"])
 
@@ -468,7 +474,9 @@ def test_gate_refuses_a_measurement_written_before_prompt_pinning(tmp_path: Path
 # --- few-shot examples inside a batch ----------------------------------------------
 
 
-def measured_rows(store: Store, name: str) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+def measured_rows(
+    store: Store, name: str
+) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
     directory = store.measurement_dir(MEASURE_MODE, name)
     return (
         store.read_jsonl(directory / "verdicts.jsonl"),
@@ -492,7 +500,8 @@ def test_a_batch_trace_sharing_only_an_id_with_an_example_is_graded(tmp_path: Pa
 def test_an_example_under_another_id_is_set_aside(tmp_path: Path):
     store = Store(tmp_path)
     build_promoted_judge(store, few_shot_ids=["train-0"])
-    renamed = Trace(trace_id="fresh-1", input="question train-0", output="BAD")
+    (question,) = [t.input for t in store.read_traces() if t.trace_id == "train-0"]
+    renamed = Trace(trace_id="fresh-1", input=question, output="BAD")
     measure_batch(
         store, MEASURE_MODE, 1, "rel-1", [renamed] + batch_traces(["GOOD"] * 3),
         fake_judge_builder(), draws=2000,
@@ -501,5 +510,39 @@ def test_an_example_under_another_id_is_set_aside(tmp_path: Path):
     assert [(e["trace_id"], e["failure_class"]) for e in errors] == [
         ("fresh-1", "few_shot_example")
     ]
-    assert errors[0]["input_sha256"] == input_sha256("question train-0")
+    assert errors[0]["input_sha256"] == input_sha256(question)
     assert "fresh-1" not in {r["trace_id"] for r in verdicts}
+
+
+def test_promote_names_a_whole_document_problem_without_an_empty_field(tmp_path: Path):
+    store = Store(tmp_path)
+    build_promoted_judge(store)
+    (judge_dir(store) / "judge.yaml").write_text("")
+    with pytest.raises(InvariantViolation) as caught:
+        promote_again(store)
+    message = str(caught.value)
+    assert "cannot be loaded: Input should be a valid dictionary" in message
+    assert "cannot be loaded: :" not in message
+
+
+def test_promote_stale_message_names_an_axial_upgrade(tmp_path: Path):
+    store = Store(tmp_path)
+    build_promoted_judge(store)
+    path = judge_dir(store) / "verdicts.jsonl"
+    store.write_jsonl(
+        path, [{**row, "prompt_sha256": "0" * 64} for row in store.read_jsonl(path)]
+    )
+    with pytest.raises(InvariantViolation) as caught:
+        promote_again(store)
+    message = str(caught.value)
+    assert "judge.yaml was edited" in message
+    assert "relabelled or re-ingested" in message
+    assert "axial upgrade changed how the prompt is built" in message
+
+
+def test_promote_without_train_rows_is_not_refused_for_them(tmp_path: Path):
+    store = Store(tmp_path)
+    build_promoted_judge(store)
+    rows = store.read_jsonl(judge_dir(store) / "verdicts.jsonl")
+    assert not any(row.get("split") == "train" for row in rows)
+    promote_again(store)

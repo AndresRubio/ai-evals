@@ -106,12 +106,13 @@ The refusals are the product.
   after the two hashes. `measure` and
   `gate` refuse a judge whose examples have since been relabelled or re-ingested, until
   dev and test are re-run and the judge is promoted again. A judge promoted before this
-  change has to re-run both splits and be promoted again, and batches measured before it
-  need `--replace` to be measured again:
+  change has to re-run every split it has rows for, train included, and be promoted
+  again, and batches measured before it need `--replace` to be measured again:
 
   ```bash
   axial judge <mode> --version N --split dev
   axial judge <mode> --version N --split test
+  axial judge <mode> --version N --split train   # only if it has train rows
   axial promote <mode> N
   ```
 - **Infra failures never score as model failures.** They are quarantined in
