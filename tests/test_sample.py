@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from axial.errors import AxialError
 from axial.sample import (
     Review,
     all_reviews,
@@ -169,3 +170,17 @@ def test_an_unscorable_trace_never_takes_the_top_review_slot():
 
     assert picked[0].input == "▓▓ qzxjkv wmbfgh ▓▓"
     assert "" not in [t.input for t in picked]
+
+
+@pytest.mark.parametrize("name", ["../escape", "a/b", ".hidden", ""])
+def test_a_session_name_that_is_not_one_plain_file_name_is_refused(tmp_path: Path, name: str):
+    """Every session path is checked, so no reader or writer can leave .axial/reviews/."""
+    store = Store(tmp_path)
+    for call in (
+        lambda: create_session(store, traces(1), name=name),
+        lambda: read_session(store, name),
+        lambda: write_session(store, name, []),
+    ):
+        with pytest.raises(AxialError, match="session name .* is not allowed"):
+            call()
+    assert not (tmp_path / ".axial").exists()

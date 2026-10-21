@@ -539,3 +539,57 @@ def test_judge_over_a_corrupt_yaml_file_fails_cleanly_and_writes_nothing(
         run("judge", MEASURE_MODE, "--split", "dev"), f"could not judge {MEASURE_MODE}", expected
     )
     assert snapshot(store.root) == before
+
+
+@pytest.mark.parametrize("damaged", ["traces", "verdicts", "verdicts-unreadable"])
+def test_checks_over_a_corrupt_store_fails_cleanly(tmp_path: Path, damaged: str) -> None:
+    """A damaged traces or verdicts file is refused in one line naming it."""
+    store = Store(tmp_path)
+    build_promoted_judge(store)
+    verdicts = store.judge_dir(MEASURE_MODE, 1) / "verdicts.jsonl"
+    if damaged == "verdicts-unreadable":
+        if os.geteuid() == 0:
+            pytest.skip("root reads a file whatever its mode")
+        verdicts.chmod(0)
+        expected = "Permission denied"
+    else:
+        path = store.traces_path if damaged == "traces" else verdicts
+        with path.open("a") as fh:
+            fh.write("{oops\n")
+        expected = f"{path.name}: invalid JSON on line"
+    assert_one_line_refusal(
+        run("checks", MEASURE_MODE, "1"), f"could not check {MEASURE_MODE} v1", expected
+    )
+
+
+def test_judge_resumes_the_latest_version_beside_a_copied_judge_folder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A backup copy named `v1-backup` is not a version: judge resumes v1 and starts no v2."""
+    store = Store(tmp_path)
+    build_promoted_judge(store)
+    monkeypatch.setattr("axial.cli.build_judge_model", fake_judge_builder())
+    judges = store.root / "judges" / MEASURE_MODE
+    (judges / "v1-backup").mkdir()
+    result = run("judge", MEASURE_MODE, "--split", "dev")
+    assert result.exit_code == 0, result.output
+    assert "26 verdicts" in result.output
+    assert sorted(p.name for p in judges.iterdir()) == ["v1", "v1-backup"]
+
+
+@pytest.mark.parametrize("name", ["../escape", "a/b", ".hidden"])
+@pytest.mark.parametrize("command", ["sample", "annotate", "label-from-reviews"])
+def test_a_session_name_that_is_not_a_plain_name_is_refused_and_writes_nothing(
+    tmp_path: Path, command: str, name: str
+) -> None:
+    """`sample --name ../escape` once wrote .axial/escape.jsonl, outside .axial/reviews/."""
+    run("init")
+    run("ingest", str(write_traces(tmp_path)))
+    before = snapshot(tmp_path)
+    args = {
+        "sample": ("sample", "--n", "2", "--name", name),
+        "annotate": ("annotate", "--name", name),
+        "label-from-reviews": ("label-from-reviews", "m", "ok", name),
+    }[command]
+    assert_one_line_refusal(run(*args), f"session name {name!r} is not allowed")
+    assert snapshot(tmp_path) == before

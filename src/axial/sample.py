@@ -16,7 +16,7 @@ from pydantic import BaseModel
 
 from axial.errors import AxialError
 from axial.perplexity import DEFAULT_ORDER, FIELDS, score_traces
-from axial.store import Store
+from axial.store import Store, validate_name
 from axial.traces import Trace
 
 STRATEGIES = ("random", "outlier", "longest", "perplexity")
@@ -100,7 +100,9 @@ def sample_batch(
 
 
 def _session_path(store: Store, name: str) -> Path:
-    return store.reviews_dir / f"{name}.jsonl"
+    """Every session path is built here, so none can skip the check on `name`: unchecked,
+    `../escape` wrote `.axial/escape.jsonl`, outside the reviews directory."""
+    return store.reviews_dir / f"{validate_name(name, 'session')}.jsonl"
 
 
 def refuse_existing_session(store: Store, name: str) -> None:

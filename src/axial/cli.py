@@ -55,9 +55,6 @@ RepoOption = typer.Option(".", "--repo", help="Repository root holding .axial/")
 # might be `fastapi.Path` — a module-level singleton sidesteps that false positive,
 # exactly as its own message suggests.
 LabelPathOption = typer.Option(..., help="JSONL of {trace_id, label, critique, annotator}")
-# Same B008 false positive as LabelPathOption above, for `label-from-reviews`'s
-# variadic session-name argument.
-SessionsArgument = typer.Argument(..., help="Review session name(s) to convert (repeatable)")
 # Same B008 false positive, for `measure`'s batch file.
 BatchTracesOption = typer.Option(
     ..., "--traces", help="JSONL or CSV of new traces to measure; never written to .axial/traces"
@@ -104,6 +101,25 @@ def _plain_mode(mode: str) -> str:
 ModeArgument = typer.Argument(..., callback=_plain_mode)
 
 
+def _plain_session(name: str) -> str:
+    try:
+        return validate_name(name, "session")
+    except AxialError as exc:
+        _fail(str(exc))
+
+
+def _plain_sessions(names: list[str]) -> list[str]:
+    return [_plain_session(name) for name in names]
+
+
+# Review session names are checked the same way: a session becomes
+# `.axial/reviews/<name>.jsonl`, and `sample --name ../escape` once wrote outside it.
+# Hoisted for the same B008 false positive as LabelPathOption above.
+SessionsArgument = typer.Argument(
+    ..., help="Review session name(s) to convert (repeatable)", callback=_plain_sessions
+)
+
+
 @app.command()
 def init(repo: str = RepoOption) -> None:
     """Create .axial/ and a default config."""
@@ -134,7 +150,7 @@ def ingest(
 @app.command()
 def sample(
     n: int = typer.Option(20, help="How many traces to put in the batch"),
-    name: str = typer.Option(..., help="Name for this review session"),
+    name: str = typer.Option(..., help="Name for this review session", callback=_plain_session),
     strategy: str = typer.Option(
         "random", help="random | outlier | longest | perplexity"
     ),
@@ -209,7 +225,7 @@ def sample(
 
 @app.command()
 def annotate(
-    name: str = typer.Option(..., help="Review session to open"),
+    name: str = typer.Option(..., help="Review session to open", callback=_plain_session),
     port: int = typer.Option(8000),
     repo: str = RepoOption,
 ) -> None:
@@ -488,8 +504,11 @@ def checks(
     from axial.checks import ci_half_width, cost_usd, slice_alignment, verbosity_bias
 
     store = Store(repo)
-    verdicts = store.read_jsonl(store.judge_dir(mode, version) / "verdicts.jsonl")
-    traces = store.read_traces()
+    try:
+        verdicts = store.read_jsonl(store.judge_dir(mode, version) / "verdicts.jsonl")
+        traces = store.read_traces()
+    except (OSError, ValueError) as exc:
+        _fail(f"could not check {mode} v{version}: {_one_line(exc)}")
     rows = [v for v in verdicts if v.get("split") == split_name]
     if not rows:
         _fail(f"no {split_name} verdicts for {mode} v{version}")

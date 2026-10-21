@@ -217,8 +217,6 @@ def test_directory_entries_not_named_like_versions_are_ignored(tmp_path: Path):
     assert s.latest_judge_version("m") == 2
 
 
-@pytest.mark.xfail(strict=True, reason="store.py:76 runs int() on every entry starting with 'v', so a "
-                   "backup folder like 'v1-backup' crashes judge-version lookup with ValueError")
 def test_a_folder_that_only_starts_with_v_does_not_break_version_lookup(tmp_path: Path):
     """Copying a judge to `v1-backup` should not make `judge` unusable for that mode."""
     s = Store(tmp_path)

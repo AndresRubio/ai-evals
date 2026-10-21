@@ -24,7 +24,8 @@ from pydantic import BaseModel, ValidationError
 from axial.errors import AxialError, validation_message
 from axial.traces import Trace
 
-# A mode or a batch name becomes one directory name under `.axial/`. Starting with a
+# A mode or a batch name becomes one directory name under `.axial/`, and a review
+# session's name one file name under `.axial/reviews/`. Starting with a
 # letter or digit keeps "." and ".." out and leaves dot-names free for the hidden
 # siblings `_atomic_write` and `write_dir_atomically` stage in.
 NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
@@ -34,9 +35,13 @@ NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 # also leaves room for `mkdtemp`'s and `mkstemp`'s own hidden names.
 MAX_NAME_LENGTH = 100
 
+# A judge version's directory under `.axial/judges/<mode>/`.
+VERSION_RE = re.compile(r"v(\d+)")
+
 
 def validate_name(name: str, kind: str) -> str:
-    """Refuse a `kind` ("mode" or "batch") name that is not one plain directory name.
+    """Refuse a `kind` ("mode", "batch" or "session") name that is not one plain file or
+    directory name.
 
     Unchecked, `../judges/x` or an absolute path resolves outside its own tree, and
     `x/y` lands inside another mode's directory, where `write_dir_atomically` would
@@ -46,12 +51,12 @@ def validate_name(name: str, kind: str) -> str:
     if len(name) > MAX_NAME_LENGTH:
         raise AxialError(
             f"{kind} name {name[:20]!r}... is {len(name)} characters long; it becomes a "
-            f"directory, so keep it to {MAX_NAME_LENGTH}"
+            f"file or directory name, so keep it to {MAX_NAME_LENGTH}"
         )
     if not NAME_RE.fullmatch(name):
         raise AxialError(
-            f"{kind} name {name!r} is not allowed: it becomes a directory, so use letters, "
-            "digits, '.', '_' and '-', starting with a letter or digit"
+            f"{kind} name {name!r} is not allowed: it becomes a file or directory name, so "
+            "use letters, digits, '.', '_' and '-', starting with a letter or digit"
         )
     return name
 
@@ -142,7 +147,9 @@ class Store:
         parent = self._mode_dir("judges", mode)
         if not parent.exists():
             return None
-        versions = [int(p.name[1:]) for p in parent.iterdir() if p.name.startswith("v")]
+        # Only `v<digits>` is a version; a copy such as `v1-backup` is left alone.
+        matches = (VERSION_RE.fullmatch(p.name) for p in parent.iterdir())
+        versions = [int(m.group(1)) for m in matches if m]
         return max(versions) if versions else None
 
     def next_judge_version(self, mode: str) -> int:
