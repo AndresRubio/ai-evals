@@ -201,6 +201,20 @@ def test_read_jsonl_gives_only_the_column_of_jsons_own_position(tmp_path: Path):
     assert str(caught.value) == f"{path}: {detail}"
 
 
+@pytest.mark.parametrize(
+    ("line", "kind"), [("5", "int"), ('"text"', "str"), ("[1, 2]", "list"), ("null", "NoneType")]
+)
+def test_read_jsonl_refuses_a_line_that_is_not_an_object(tmp_path: Path, line: str, kind: str):
+    """Every caller indexes rows by key, so a bare value is refused where it is read."""
+    s = Store(tmp_path)
+    path = s.root / "rows.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f'{{"a": 1}}\n{line}\n')
+    with pytest.raises(MalformedFile) as caught:
+        s.read_jsonl(path)
+    assert str(caught.value) == f"{path}: line 2: expected a JSON object, got {kind}"
+
+
 def test_read_json_names_the_line_and_column_of_bad_json(tmp_path: Path):
     """A whole document's line is json's own, so it is kept, without the "(char N)" count."""
     s = Store(tmp_path)

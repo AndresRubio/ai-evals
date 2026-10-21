@@ -612,8 +612,9 @@ def test_judge_and_split_over_a_corrupt_splits_file_fail_cleanly_and_write_nothi
     [
         (b"{oops\n", "errors.jsonl: invalid JSON on line 1, column 2"),
         (b"\xff\xfe\n", "errors.jsonl: not utf-8 text: invalid start byte"),
+        (b"5\n", "errors.jsonl: line 1: expected a JSON object, got int"),
     ],
-    ids=["not-json", "not-utf-8"],
+    ids=["not-json", "not-utf-8", "not-an-object"],
 )
 def test_promote_over_a_corrupt_errors_file_fails_cleanly_and_writes_nothing(
     tmp_path: Path, damage: bytes, expected: str

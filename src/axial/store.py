@@ -183,9 +183,18 @@ class Store:
                 raise MalformedFile(path, f"not {exc.encoding} text: {exc.reason}") from exc
 
     def read_jsonl(self, path: Path) -> list[dict[str, Any]]:
+        """Every row of `path`, each a JSON object. A line holding any other JSON value
+        is a MalformedFile naming the line; callers index rows by key."""
         if not path.exists():
             return []
-        return [row for _, row in self._numbered_rows(path)]
+        rows: list[dict[str, Any]] = []
+        for lineno, row in self._numbered_rows(path):
+            if not isinstance(row, dict):
+                raise MalformedFile(
+                    path, f"line {lineno}: expected a JSON object, got {type(row).__name__}"
+                )
+            rows.append(row)
+        return rows
 
     def read_models[M: BaseModel](
         self, path: Path, model: type[M], *, missing_ok: bool = True
