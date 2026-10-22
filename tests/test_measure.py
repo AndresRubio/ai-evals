@@ -437,7 +437,10 @@ def test_a_verdict_row_without_its_input_hash_is_refused(store: Store):
         directory(store) / "verdicts.jsonl",
         lambda r: {k: v for k, v in r.items() if k != "input_sha256"},
     )
-    with pytest.raises(AxialError, match="not a readable measurement .*KeyError"):
+    with pytest.raises(
+        AxialError,
+        match=r"not a readable measurement \(.*verdicts\.jsonl: line 1: input_sha256: Field required\)",
+    ):
         load_measurement(store, MEASURE_MODE, "rel-1")
 
 

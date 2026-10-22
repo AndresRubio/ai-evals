@@ -1,7 +1,7 @@
 """Every command against every .axial/ file it reads, damaged each way a file can be.
 
-The error contract: a command that meets a damaged file exits 1 with a refusal whose last
-line names that file exactly once, and it writes nothing. `READS` lists the files each
+The error contract: a command that meets a damaged file exits 1, prints one line that
+names that file exactly once, and writes nothing. `READS` lists the files each
 command reads through the store. `test_reads_names_every_file_each_command_reads` records
 the real reads on a working store, so a command that starts reading a new file fails
 there until `READS` names it, and the matrix then damages that file too.
@@ -213,18 +213,21 @@ DAMAGE: dict[str, dict[str, Callable[[Path], None]]] = {
         "not-an-object": appending(b"5\n"),
         "not-utf-8": appending(b"\xff\xfe\n"),
         "a-directory": a_directory,
+        "wrong-fields": appending(b'{"unexpected": 1}\n'),
     },
     ".json": {
         "not-json": overwriting(b"{oops"),
         "not-an-object": overwriting(b"5"),
         "not-utf-8": overwriting(b'{"a": "\xff"}'),
         "a-directory": a_directory,
+        "wrong-fields": overwriting(b'{"unexpected": 1}'),
     },
     ".yaml": {
         "not-yaml": appending(b"x: [oops\n"),
         "not-a-mapping": overwriting(b"- 1\n"),
         "not-utf-8": appending(b"\xff\n"),
         "a-directory": a_directory,
+        "wrong-fields": overwriting(b"unexpected: 1\n"),
     },
 }
 
@@ -256,7 +259,6 @@ def test_a_damaged_file_is_refused_in_one_line_naming_it_and_nothing_is_written(
         trace = "".join(traceback.format_exception(result.exception))
         pytest.fail(f"uncaught {type(result.exception).__name__}:\n{trace}")
     assert result.exit_code == 1, result.output
-    lines = result.output.strip().splitlines()
-    assert damaged.name in lines[-1], result.output
+    assert len(result.output.strip().splitlines()) == 1, result.output
     assert result.output.count(damaged.name) == 1, result.output
     assert snapshot(case / ".axial") == before

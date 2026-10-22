@@ -156,9 +156,9 @@ class Store:
         return (self.latest_judge_version(mode) or 0) + 1
 
     # --- io ------------------------------------------------------------
-    # Files are read as UTF-8 whatever the locale. Everything axial writes is ASCII, so
-    # it reads the same either way, and a hand-edited file is almost always UTF-8, which
-    # the locale's own encoding (ASCII under a bare C locale) would refuse.
+    # Files are read and written as UTF-8 whatever the locale. A hand-edited file is
+    # almost always UTF-8, which the locale's own encoding (ASCII under a bare C locale)
+    # would refuse.
     def append_jsonl(self, path: Path, row: dict[str, Any]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as fh:
@@ -190,14 +190,15 @@ class Store:
         is a MalformedFile naming the line; callers index rows by key."""
         if not path.exists():
             return []
-        rows: list[dict[str, Any]] = []
+        return [row for _, row in self._object_rows(path)]
+
+    def _object_rows(self, path: Path) -> Iterator[tuple[int, dict[str, Any]]]:
         for lineno, row in self._numbered_rows(path):
             if not isinstance(row, dict):
                 raise MalformedFile(
                     path, f"line {lineno}: expected a JSON object, got {type(row).__name__}"
                 )
-            rows.append(row)
-        return rows
+            yield lineno, row
 
     def read_models[M: BaseModel](
         self, path: Path, model: type[M], *, missing_ok: bool = True
@@ -211,7 +212,7 @@ class Store:
         if missing_ok and not path.exists():
             return []
         models: list[M] = []
-        for lineno, row in self._numbered_rows(path):
+        for lineno, row in self._object_rows(path):
             try:
                 models.append(model.model_validate(row))
             except ValidationError as exc:
@@ -245,7 +246,7 @@ class Store:
             mode = 0o666 & ~_current_umask()
         fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
         try:
-            with os.fdopen(fd, "w") as fh:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
                 fh.write(data)
             os.chmod(tmp_name, mode)
             os.replace(tmp_name, path)
@@ -299,7 +300,7 @@ class Store:
         try:
             os.chmod(staging, 0o777 & ~_current_umask())
             for name, data in files.items():
-                (staging / name).write_text(data)
+                (staging / name).write_text(data, encoding="utf-8")
             if path.exists():
                 os.replace(path, retired)
             os.replace(staging, path)

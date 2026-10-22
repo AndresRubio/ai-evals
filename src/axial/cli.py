@@ -22,7 +22,14 @@ from axial.dataset import (
 from axial.errors import AxialError, MalformedFile, validation_message
 from axial.gate import gate as run_gate
 from axial.gate import gate_batches
-from axial.judge import JudgeSpec, build_judge_model, run_judge
+from axial.judge import (
+    JudgeSpec,
+    build_judge_model,
+    kept_rows,
+    read_errors,
+    read_verdicts,
+    run_judge,
+)
 from axial.measure import measure_batch, summary_lines
 from axial.model import LiteLLMModel, require_text_model
 from axial.perplexity import DEGENERATE_SPREAD, score_traces
@@ -32,7 +39,6 @@ from axial.report import (
     check_promotion,
     disagreement_counts,
     find_disagreements,
-    read_verdicts,
     write_alignment,
 )
 from axial.report import promote as do_promote
@@ -413,10 +419,9 @@ def judge(
         # would silently starve few-shot resolution.
         corpus = store.read_traces()
         labels = read_labels(store, mode)
-        # run_judge merges its rows into these after grading; a damaged one is refused
-        # here, before judge.yaml is written or a single call is paid for.
-        for name in ("verdicts.jsonl", "errors.jsonl"):
-            store.read_jsonl(store.judge_dir(mode, version) / name)
+        # run_judge reads the rows it keeps before grading, but by then judge.yaml is
+        # saved; reading them here refuses a damaged verdicts or errors file first.
+        kept_rows(store, mode, version, split_name)
     except (OSError, ValueError) as exc:
         _fail(f"could not judge {mode}: {_one_line(exc)}")
     entry = taxonomy_modes.get(mode)
@@ -466,7 +471,7 @@ def align(
     directory = store.judge_dir(mode, version)
     try:
         verdicts = read_verdicts(store, directory / "verdicts.jsonl")
-        errors = store.read_jsonl(directory / "errors.jsonl")
+        errors = read_errors(store, directory / "errors.jsonl")
         labels = read_labels(store, mode)
         traces = store.read_traces()
     except (OSError, ValueError) as exc:

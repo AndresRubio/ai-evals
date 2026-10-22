@@ -14,38 +14,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, NamedTuple
 
-from pydantic import BaseModel, ConfigDict
-
 from axial.align import Alignment, align
 from axial.config import Thresholds
 from axial.dataset import Label
 from axial.errors import InvariantViolation, MalformedFile
-from axial.judge import JudgeSpec, current_prompt_sha256
+from axial.judge import JudgeSpec, current_prompt_sha256, read_errors, read_verdicts
 from axial.store import Store
 from axial.traces import Trace
-
-
-class VerdictRow(BaseModel):
-    """The fields of a verdicts.jsonl row that `align`, `promote` and `checks` read by
-    name. Every other field is kept as it is."""
-
-    model_config = ConfigDict(extra="allow")
-
-    trace_id: str
-    verdict: bool
-    split: str | None = None
-    truth: bool | None = None
-
-
-def read_verdicts(store: Store, path: Path) -> list[dict[str, Any]]:
-    """The rows of a verdicts.jsonl, each checked for the fields read by name.
-
-    A hand-edited row without `verdict` used to end in a KeyError far from the file;
-    it is now a MalformedFile naming the file, the line and the field. Only the
-    commands that read an unpromoted judge need this: `gate` and `measure` refuse a
-    verdicts.jsonl whose hash changed since promotion before they read a row.
-    """
-    return [row.model_dump(exclude_unset=True) for row in store.read_models(path, VerdictRow)]
 
 
 def alignment_from_verdicts(
@@ -265,11 +240,11 @@ def _splits_from_another_prompt(
     is bound at promotion too. A row with no `split` key is reported as `None`.
     """
     stale: set[str | None] = set()
-    for name in ("verdicts.jsonl", "errors.jsonl"):
-        for row in store.read_jsonl(directory / name):
-            if row.get(PROMPT_HASH_KEY) != fingerprint:
-                split = row.get("split")
-                stale.add(split if split is None else str(split))
+    rows = read_verdicts(store, directory / "verdicts.jsonl")
+    for row in rows + read_errors(store, directory / "errors.jsonl"):
+        if row.get(PROMPT_HASH_KEY) != fingerprint:
+            split = row.get("split")
+            stale.add(split if split is None else str(split))
     return sorted(s for s in stale if s is not None) + ([None] if None in stale else [])
 
 
@@ -293,7 +268,7 @@ def require_promoted(store: Store, mode: str, version: int) -> PromotedHashes:
             "whose agreement with human labels was never measured on test cannot gate a build."
         )
     try:
-        text = marker_path.read_text()
+        text = marker_path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as exc:
         raise InvariantViolation(
             f"judge {mode} v{version}'s PROMOTED marker is not readable text "
@@ -680,5 +655,6 @@ def promote(
     (directory / "PROMOTED").write_text(
         format_promoted_marker(
             dev.summary(), test.summary(), judge_yaml_hash, verdicts_hash, fingerprint
-        )
+        ),
+        encoding="utf-8",
     )

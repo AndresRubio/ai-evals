@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from axial.dataset import Label, Splits
-from axial.errors import InvariantViolation
+from axial.errors import InvariantViolation, MalformedFile
 from axial.judge import (
     Graded,
     JudgeSpec,
@@ -155,6 +155,31 @@ def test_running_a_second_split_keeps_the_first(tmp_path: Path):
     run_judge(store, spec(), [trace(2)], labels, splits, model, split="test")
     rows = store.read_jsonl(store.judge_dir("merged", 1) / "verdicts.jsonl")
     assert {r["split"] for r in rows} == {"dev", "test"}
+
+
+@pytest.mark.parametrize("damaged", ["verdicts.jsonl", "errors.jsonl"])
+def test_a_damaged_rows_file_is_refused_before_any_call_and_promoted_stays(
+    tmp_path: Path, damaged: str
+):
+    """The rows a run keeps are read before grading, so nothing is paid for or deleted."""
+    store = Store(tmp_path)
+    directory = store.judge_dir("merged", 1)
+    directory.mkdir(parents=True)
+    (directory / "PROMOTED").write_text("marker\n")
+    (directory / damaged).write_text("{oops\n")
+    prompts: list[str] = []
+
+    def reply(prompt: str) -> str:
+        prompts.append(prompt)
+        return '{"verdict": "pass"}'
+
+    with pytest.raises(MalformedFile, match=damaged):
+        run_judge(
+            store, spec(), [trace(1)], [label(1, False)], Splits(dev=["t1"]), FakeModel(reply),
+            split="dev",
+        )
+    assert prompts == []
+    assert (directory / "PROMOTED").read_text() == "marker\n"
 
 
 def test_rerunning_a_split_replaces_only_that_split(tmp_path: Path):

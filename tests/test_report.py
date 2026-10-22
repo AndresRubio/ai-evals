@@ -258,7 +258,9 @@ def test_require_promoted_returns_the_hashes_the_marker_recorded(tmp_path: Path)
     store = Store(tmp_path)
     directory = store.judge_dir("merged", 1)
     directory.mkdir(parents=True)
-    (directory / "verdicts.jsonl").write_text('{"trace_id": "t1", "split": "dev"}\n')
+    (directory / "verdicts.jsonl").write_text(
+        '{"trace_id": "t1", "split": "dev", "verdict": true, "truth": true}\n'
+    )
     stamp_run(store, "merged", 1)
     promote(store, "merged", 1, perfect(), perfect(), Thresholds())
 

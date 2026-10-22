@@ -14,7 +14,7 @@ from collections.abc import Callable
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from axial.errors import InvariantViolation, validation_message
 from axial.sample import Review
@@ -54,13 +54,16 @@ class Taxonomy(BaseModel):
 
     def save(self, store: Store) -> None:
         store.taxonomy_path.parent.mkdir(parents=True, exist_ok=True)
-        store.taxonomy_path.write_text(yaml.safe_dump(self.model_dump(), sort_keys=False))
+        store.taxonomy_path.write_text(
+            yaml.safe_dump(self.model_dump(), sort_keys=False), encoding="utf-8"
+        )
 
     @classmethod
     def load(cls, store: Store) -> Taxonomy:
         if not store.taxonomy_path.exists():
             return cls()
-        return store.read_yaml_model(store.taxonomy_path, cls, empty={})
+        document = store.read_yaml_model(store.taxonomy_path, _TaxonomyFile, empty={})
+        return cls.model_validate(document.model_dump())
 
     def recount(self, reviews: list[Review]) -> None:
         """Set each mode's prevalence from how many open codes mention its name."""
@@ -69,6 +72,14 @@ class Taxonomy(BaseModel):
             mode.prevalence = sum(
                 1 for r in reviews if r.open_code and pattern.search(r.open_code)
             )
+
+
+class _TaxonomyFile(Taxonomy):
+    """taxonomy.yaml as read back. `modes` has a default, so a misspelt key would read as
+    an empty taxonomy; the file is refused instead. A model's reply is validated against
+    the lenient `Taxonomy`, so the schema sent to the model is unchanged."""
+
+    model_config = ConfigDict(extra="forbid")
 
 
 def count_open_codes(reviews: list[Review]) -> int:

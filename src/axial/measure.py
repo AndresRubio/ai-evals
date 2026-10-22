@@ -19,6 +19,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from pydantic import BaseModel, ConfigDict
+
 from axial.align import ConfusionMatrix, CorrectedRate, confusion_matrix, corrected_rate
 from axial.errors import AxialError, InvariantViolation, MalformedFile
 from axial.judge import Graded, JudgeSpec, grade_trace, load_few_shot, prompt_sha256
@@ -414,6 +416,24 @@ def measure_batch(
 MEASUREMENT_FILES = ("traces.jsonl", "verdicts.jsonl", "errors.jsonl", "measurement.json")
 
 
+class _MeasuredRow(BaseModel):
+    """The fields of a measurement's error row that `load_measurement` reads by name.
+    Values are kept as written, so `_inconsistency` still sees a bad one."""
+
+    model_config = ConfigDict(extra="allow")
+
+    trace_id: str
+
+
+class _MeasuredVerdict(_MeasuredRow):
+    verdict: Any
+    input_sha256: Any
+
+
+def _measured_rows(store: Store, path: Path, model: type[_MeasuredRow]) -> list[dict[str, Any]]:
+    return [row.model_dump(exclude_unset=True) for row in store.read_models(path, model)]
+
+
 def _inconsistency(
     measurement: Measurement,
     mode: str,
@@ -471,18 +491,23 @@ def load_measurement(
         document = store.read_json(path)
         if not isinstance(document, dict):
             raise MalformedFile(path, f"expected a JSON object, got {type(document).__name__}")
-        measurement = Measurement.from_json(document)
-        traces = [Trace.model_validate(r) for r in store.read_jsonl(directory / "traces.jsonl")]
-        rows = store.read_jsonl(directory / "verdicts.jsonl")
-        errors = store.read_jsonl(directory / "errors.jsonl")
+        try:
+            measurement = Measurement.from_json(document)
+        except (KeyError, TypeError, ValueError) as exc:
+            missing = isinstance(exc, KeyError)
+            reason = f"no {exc} key" if missing else f"{type(exc).__name__}: {exc}"
+            raise MalformedFile(path, reason) from exc
+        traces = store.read_models(directory / "traces.jsonl", Trace)
+        rows = _measured_rows(store, directory / "verdicts.jsonl", _MeasuredVerdict)
+        errors = _measured_rows(store, directory / "errors.jsonl", _MeasuredRow)
         problem = _inconsistency(measurement, mode, batch, traces, rows, errors)
     except (KeyError, TypeError, ValueError, OSError) as exc:
-        # The first line only: a pydantic error runs to several.
+        # The first line only: a pydantic error runs to several. A MalformedFile already
+        # names its file and needs no exception name in front.
         detail = (str(exc).splitlines() or [""])[0]
-        raise AxialError(
-            f"{directory} is not a readable measurement ({type(exc).__name__}: {detail}). "
-            f"{redo}"
-        ) from exc
+        if not isinstance(exc, MalformedFile):
+            detail = f"{type(exc).__name__}: {detail}"
+        raise AxialError(f"{directory} is not a readable measurement ({detail}). {redo}") from exc
     if problem:
         raise AxialError(
             f"measurement {batch!r} for {mode} {problem}; it was edited by hand. {redo}"

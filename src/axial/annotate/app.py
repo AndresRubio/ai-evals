@@ -32,7 +32,7 @@ def create_app(store: Store, session: str, annotator: str) -> FastAPI:
 
     @app.get("/", response_class=HTMLResponse)
     def index() -> str:
-        return (STATIC / "index.html").read_text()
+        return (STATIC / "index.html").read_text(encoding="utf-8")
 
     @app.get("/api/session")
     def get_session() -> dict[str, Any]:

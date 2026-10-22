@@ -52,7 +52,7 @@ def load_env(repo: str | Path = ".") -> Path | None:
     if not path.is_file():
         return None
 
-    for line in path.read_text().splitlines():
+    for line in path.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
             continue
@@ -89,7 +89,7 @@ class Config:
 
 def write_default_config(store: Store) -> None:
     store.config_path.parent.mkdir(parents=True, exist_ok=True)
-    store.config_path.write_text(DEFAULT_CONFIG)
+    store.config_path.write_text(DEFAULT_CONFIG, encoding="utf-8")
 
 
 def _number[T](table: dict[str, Any], key: str, default: T, cast: Callable[[Any], T]) -> T:
@@ -119,7 +119,7 @@ def load_config(store: Store) -> Config:
     if not path.exists():
         return Config()
     try:
-        raw = tomllib.loads(path.read_text())
+        raw = tomllib.loads(path.read_text(encoding="utf-8"))
     except tomllib.TOMLDecodeError as exc:
         raise AxialError(f"{path} is not valid TOML: {exc}") from exc
     except (OSError, UnicodeDecodeError) as exc:

@@ -14,10 +14,11 @@ import json
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from axial.dataset import Label, Splits, read_labels
 from axial.errors import AxialError, InvariantViolation, MalformedFile
@@ -77,7 +78,9 @@ class JudgeSpec(BaseModel):
     def save(self, store: Store) -> None:
         directory = store.judge_dir(self.mode, self.version)
         directory.mkdir(parents=True, exist_ok=True)
-        (directory / "judge.yaml").write_text(yaml.safe_dump(self.model_dump(), sort_keys=False))
+        (directory / "judge.yaml").write_text(
+            yaml.safe_dump(self.model_dump(), sort_keys=False), encoding="utf-8"
+        )
 
     @classmethod
     def load(cls, store: Store, mode: str, version: int) -> JudgeSpec:
@@ -187,6 +190,53 @@ def parse_verdict(text: str) -> bool:
 class RunResult:
     verdicts: list[dict[str, Any]] = field(default_factory=list)
     errors: list[dict[str, Any]] = field(default_factory=list)
+
+
+class VerdictRow(BaseModel):
+    """The fields of a verdicts.jsonl row that axial reads by name. Every other field is
+    kept as it is."""
+
+    model_config = ConfigDict(extra="allow")
+
+    trace_id: str
+    verdict: bool
+    split: str | None = None
+    truth: bool | None = None
+
+
+class ErrorRow(BaseModel):
+    """The fields of an errors.jsonl row that axial reads by name."""
+
+    model_config = ConfigDict(extra="allow")
+
+    trace_id: str
+    failure_class: str
+    split: str | None = None
+
+
+def read_verdicts(store: Store, path: Path) -> list[dict[str, Any]]:
+    """The rows of a judge's verdicts.jsonl, each checked for the fields read by name.
+
+    A hand-edited row without `verdict` used to end in a KeyError far from the file; it
+    is now a MalformedFile naming the file, the line and the field.
+    """
+    return [row.model_dump(exclude_unset=True) for row in store.read_models(path, VerdictRow)]
+
+
+def read_errors(store: Store, path: Path) -> list[dict[str, Any]]:
+    """The rows of a judge's errors.jsonl, checked the same way."""
+    return [row.model_dump(exclude_unset=True) for row in store.read_models(path, ErrorRow)]
+
+
+def kept_rows(store: Store, mode: str, version: int, split: str) -> dict[str, list[dict[str, Any]]]:
+    """The verdict and error rows a run of `split` leaves in place: every other split's."""
+    directory = store.judge_dir(mode, version)
+    verdicts = read_verdicts(store, directory / "verdicts.jsonl")
+    errors = read_errors(store, directory / "errors.jsonl")
+    return {
+        "verdicts.jsonl": [r for r in verdicts if r.get("split") != split],
+        "errors.jsonl": [r for r in errors if r.get("split") != split],
+    }
 
 
 @dataclass(frozen=True)
@@ -339,6 +389,12 @@ def run_judge(
     which has nothing to check when its input list is empty) — pass the whole
     corpus explicitly.
     """
+    # Merge by split rather than overwrite, so running dev and then test leaves both
+    # on disk. Re-running one split replaces only that split's rows. The rows kept are
+    # read first, so a damaged file is refused before a call is paid for or PROMOTED
+    # is deleted.
+    directory = store.judge_dir(spec.mode, spec.version)
+    kept = kept_rows(store, spec.mode, spec.version, split)
     few_shot = resolve_few_shot(spec, traces if corpus is None else corpus, labels)
     fingerprint = prompt_sha256(spec, few_shot)
     label_by_id = {lbl.trace_id: lbl for lbl in labels}
@@ -387,9 +443,6 @@ def run_judge(
             }
         )
 
-    # Merge by split rather than overwrite, so running dev and then test leaves both
-    # on disk. Re-running one split replaces only that split's rows.
-    directory = store.judge_dir(spec.mode, spec.version)
     directory.mkdir(parents=True, exist_ok=True)
 
     # A PROMOTED marker binds specific hashes of judge.yaml and verdicts.jsonl
@@ -402,7 +455,5 @@ def run_judge(
         marker.unlink()
 
     for filename, fresh in (("verdicts.jsonl", result.verdicts), ("errors.jsonl", result.errors)):
-        path = directory / filename
-        kept = [r for r in store.read_jsonl(path) if r.get("split") != split]
-        store.write_jsonl(path, kept + fresh)
+        store.write_jsonl(directory / filename, kept[filename] + fresh)
     return result

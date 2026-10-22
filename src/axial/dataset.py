@@ -24,7 +24,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import numpy as np
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from axial.errors import InvariantViolation
 from axial.sample import Review
@@ -283,6 +283,9 @@ def labels_from_reviews(reviews: list[Review]) -> tuple[list[Label], int]:
 
 
 class Splits(BaseModel):
+    # Every field has a default, so a misspelt key would otherwise read as an empty split.
+    model_config = ConfigDict(extra="forbid")
+
     train: list[str] = Field(default_factory=list)
     dev: list[str] = Field(default_factory=list)
     test: list[str] = Field(default_factory=list)
