@@ -214,6 +214,19 @@ def _require_bound_hash(
     return value
 
 
+def _hash_bound_file(store: Store, path: Path, mode: str, version: int) -> str:
+    """`store.hash_file`, with a file it cannot read (a directory in its place, say)
+    refused like every other broken binding."""
+    try:
+        return store.hash_file(path)
+    except OSError as exc:
+        raise InvariantViolation(
+            f"judge {mode} v{version}'s {path.name} cannot be read ({exc.strerror}), so it "
+            "cannot be checked against its PROMOTED marker. Restore the file, or run `axial "
+            "judge --new` to score a fresh version."
+        ) from exc
+
+
 def _load_spec(store: Store, mode: str, version: int) -> JudgeSpec:
     if not (store.judge_dir(mode, version) / "judge.yaml").exists():
         raise InvariantViolation(
@@ -228,13 +241,16 @@ def _load_spec(store: Store, mode: str, version: int) -> JudgeSpec:
         # `JudgeSpec.load` reports malformed YAML, and a value the spec rejects such as
         # `decision_threshold: high`, as a MalformedFile whose detail is one line. Both
         # would otherwise reach the CLI as a traceback.
+        # Both a MalformedFile and an OSError name the path this message names already.
         if isinstance(exc, MalformedFile):
             detail = exc.detail
+        elif isinstance(exc, OSError) and exc.strerror:
+            detail = exc.strerror
         else:
             lines = str(exc).strip().splitlines()
             detail = lines[0] if lines else type(exc).__name__
         raise InvariantViolation(
-            f"judge {mode} v{version}'s judge.yaml at {path} cannot be loaded: {detail}. "
+            f"judge {mode} v{version} ({path}) cannot be loaded: {detail}. "
             "Fix the file, or run `axial judge --new` to score a fresh version."
         ) from exc
 
@@ -287,7 +303,7 @@ def require_promoted(store: Store, mode: str, version: int) -> PromotedHashes:
         ) from exc
     recorded = parse_promoted_marker(text)
     recorded_judge_hash = _require_bound_hash(recorded, JUDGE_YAML_HASH_KEY, mode, version)
-    if store.hash_file(directory / "judge.yaml") != recorded_judge_hash:
+    if _hash_bound_file(store, directory / "judge.yaml", mode, version) != recorded_judge_hash:
         raise InvariantViolation(
             f"judge {mode} v{version}'s judge.yaml has changed since it was promoted — "
             "the judge that earned PROMOTED is not the judge on disk. Re-run `axial "
@@ -295,7 +311,8 @@ def require_promoted(store: Store, mode: str, version: int) -> PromotedHashes:
             "changed prompt as a fresh version."
         )
     recorded_verdicts_hash = _require_bound_hash(recorded, VERDICTS_HASH_KEY, mode, version)
-    if store.hash_file(directory / "verdicts.jsonl") != recorded_verdicts_hash:
+    verdicts_hash = _hash_bound_file(store, directory / "verdicts.jsonl", mode, version)
+    if verdicts_hash != recorded_verdicts_hash:
         raise InvariantViolation(
             f"judge {mode} v{version}'s verdicts.jsonl has changed since it was promoted — "
             "the verdicts that earned PROMOTED are not the verdicts on disk. Re-run `axial "

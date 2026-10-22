@@ -62,7 +62,7 @@ def _trace_from_row(row: object, *, where: str) -> Trace:
 
 def ingest_jsonl(path: Path) -> list[Trace]:
     traces: list[Trace] = []
-    with Path(path).open() as fh:
+    with Path(path).open(encoding="utf-8") as fh:
         for n, line in enumerate(fh, start=1):
             if not line.strip():
                 continue
@@ -77,7 +77,7 @@ def ingest_jsonl(path: Path) -> list[Trace]:
 
 
 def ingest_csv(path: Path) -> list[Trace]:
-    with Path(path).open(newline="") as fh:
+    with Path(path).open(encoding="utf-8", newline="") as fh:
         try:
             rows = list(csv.DictReader(fh))
         except csv.Error as exc:  # not a ValueError, so callers catching ValueError would miss it

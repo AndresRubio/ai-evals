@@ -413,6 +413,10 @@ def judge(
         # would silently starve few-shot resolution.
         corpus = store.read_traces()
         labels = read_labels(store, mode)
+        # run_judge merges its rows into these after grading; a damaged one is refused
+        # here, before judge.yaml is written or a single call is paid for.
+        for name in ("verdicts.jsonl", "errors.jsonl"):
+            store.read_jsonl(store.judge_dir(mode, version) / name)
     except (OSError, ValueError) as exc:
         _fail(f"could not judge {mode}: {_one_line(exc)}")
     entry = taxonomy_modes.get(mode)

@@ -161,7 +161,7 @@ class Store:
     # the locale's own encoding (ASCII under a bare C locale) would refuse.
     def append_jsonl(self, path: Path, row: dict[str, Any]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a") as fh:
+        with path.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(row, sort_keys=True) + "\n")
 
     def _numbered_rows(self, path: Path) -> Iterator[tuple[int, Any]]:

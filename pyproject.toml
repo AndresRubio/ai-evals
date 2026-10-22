@@ -32,6 +32,21 @@ packages = ["src/axial"]
 [tool.ruff]
 line-length = 100
 
+[tool.ruff.lint]
+# PLW1514 (a file opened, read or written with no explicit encoding) is a preview rule,
+# and `preview = true` here would also change how stable rules behave, so CI runs it as
+# its own step: `ruff check --preview --select PLW1514 src scripts`.
+extend-select = ["TID251"]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"yaml.safe_load".msg = "read YAML through Store.read_yaml, so a bad file is refused in one line naming it"
+
+[tool.ruff.lint.per-file-ignores]
+"src/axial/store.py" = ["TID251"]
+# The ban is about .axial/ state; these read their own files directly.
+"scripts/**" = ["TID251"]
+"tests/**" = ["TID251"]
+
 [tool.mypy]
 python_version = "3.14"
 strict = true

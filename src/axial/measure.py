@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from axial.align import ConfusionMatrix, CorrectedRate, confusion_matrix, corrected_rate
-from axial.errors import AxialError, InvariantViolation
+from axial.errors import AxialError, InvariantViolation, MalformedFile
 from axial.judge import Graded, JudgeSpec, grade_trace, load_few_shot, prompt_sha256
 from axial.model import Model
 from axial.report import SATURATION_WARNING, require_promoted
@@ -468,7 +468,10 @@ def load_measurement(
                 f"or edited by hand. {redo}"
             )
     try:
-        measurement = Measurement.from_json(store.read_json(path))
+        document = store.read_json(path)
+        if not isinstance(document, dict):
+            raise MalformedFile(path, f"expected a JSON object, got {type(document).__name__}")
+        measurement = Measurement.from_json(document)
         traces = [Trace.model_validate(r) for r in store.read_jsonl(directory / "traces.jsonl")]
         rows = store.read_jsonl(directory / "verdicts.jsonl")
         errors = store.read_jsonl(directory / "errors.jsonl")
