@@ -7,6 +7,7 @@ defect: they state the behaviour a user would expect, and will start failing
 
 import hashlib
 import os
+import re
 import stat
 import tomllib
 from pathlib import Path
@@ -302,22 +303,42 @@ def test_a_negative_split_fraction_is_refused(tmp_path: Path):
         load_config(store)
 
 
-def test_a_misspelt_config_key_is_silently_ignored(tmp_path: Path):
-    """Limit: unknown keys are not errors, so a typo'd `judge_modle` leaves the default in force."""
+@pytest.mark.parametrize(
+    ("toml", "complaint"),
+    [
+        ('judge_modle = "claude-sonnet-5"\n', "judge_modle: unknown key"),
+        ("[thresholds]\nmin_tpp = 0.5\n", "thresholds.min_tpp: unknown key"),
+    ],
+)
+def test_a_misspelt_config_key_is_refused_naming_it(tmp_path: Path, toml: str, complaint: str):
+    """Every key has a default, so a typo'd `judge_modle` would leave the default in force."""
     store = Store(tmp_path)
     store.config_path.parent.mkdir(parents=True)
-    store.config_path.write_text('judge_modle = "claude-sonnet-5"\n[thresholds]\nmin_tpp = 0.5\n')
-    cfg = load_config(store)
-    assert cfg.judge_model == "claude-opus-5"
-    assert cfg.thresholds.min_tpr == 0.85
+    store.config_path.write_text(toml)
+    with pytest.raises(AxialError, match=rf"config\.toml: {re.escape(complaint)}$"):
+        load_config(store)
 
 
-def test_a_threshold_written_outside_the_thresholds_table_is_silently_ignored(tmp_path: Path):
-    """Limit: `min_tpr = 0.5` at the top level is a different key from `[thresholds] min_tpr`."""
+@pytest.mark.parametrize(
+    ("toml", "complaint"),
+    [
+        ("min_tpr = 0.5\n", "min_tpr: unknown key; it belongs under [thresholds]"),
+        (
+            '[thresholds]\nmin_tpr = 0.9\nannotator = "ana"\n',
+            "thresholds.annotator: unknown key; it belongs above [thresholds]",
+        ),
+    ],
+)
+def test_a_key_on_the_wrong_side_of_the_thresholds_line_is_refused_saying_where_it_goes(
+    tmp_path: Path, toml: str, complaint: str
+):
+    """TOML puts every key after `[thresholds]` in that table, so an `annotator` appended
+    to the end of the file lands there, and a `min_tpr` written above it does not."""
     store = Store(tmp_path)
     store.config_path.parent.mkdir(parents=True)
-    store.config_path.write_text("min_tpr = 0.5\n")
-    assert load_config(store).thresholds.min_tpr == 0.85
+    store.config_path.write_text(toml)
+    with pytest.raises(AxialError, match=rf"config\.toml: {re.escape(complaint)}$"):
+        load_config(store)
 
 
 def test_integer_toml_thresholds_are_read_as_floats(tmp_path: Path):

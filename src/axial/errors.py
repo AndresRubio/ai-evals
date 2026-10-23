@@ -34,10 +34,13 @@ def validation_message(exc: ValidationError) -> str:
 
     Pydantic's own message runs to four lines, names no file or row and ends in a URL.
     A missing field names no type, because the input pydantic reports for it is the
-    whole row.
+    whole row. A key the model does not know is called that, the way config.toml
+    words it; pydantic's "Extra inputs are not permitted, got str" reads as a wrong type.
     """
     error = exc.errors()[0]
     field = ".".join(str(part) for part in error["loc"])
+    if error["type"] == "extra_forbidden":
+        return f"{field}: unknown key"
     detail = error["msg"]
     if error["type"] != "missing":
         detail = f"{detail}, got {type(error['input']).__name__}"

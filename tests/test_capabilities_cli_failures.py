@@ -289,6 +289,13 @@ def test_malformed_config_toml_fails_cleanly(tmp_path: Path) -> None:
     assert_one_line_refusal(run("split", "m"), "config.toml is not valid TOML")
 
 
+def test_a_misspelt_config_key_fails_cleanly(tmp_path: Path) -> None:
+    """A typo'd key in config.toml is refused, so the default it shadows is not used."""
+    run("init")
+    (tmp_path / ".axial" / "config.toml").write_text('judge_modle = "claude-sonnet-5"\n')
+    assert_one_line_refusal(run("split", "m"), "config.toml: judge_modle: unknown key")
+
+
 @pytest.mark.parametrize(
     "command",
     [

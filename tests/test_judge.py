@@ -213,7 +213,7 @@ def test_a_misspelt_key_in_judge_yaml_is_refused_naming_the_file_and_key(tmp_pat
     path.write_text(
         path.read_text(encoding="utf-8") + "prompt_templte: Judge it.\n", encoding="utf-8"
     )
-    with pytest.raises(MalformedFile, match=r"judge\.yaml: prompt_templte: Extra inputs"):
+    with pytest.raises(MalformedFile, match=r"judge\.yaml: prompt_templte: unknown key$"):
         JudgeSpec.load(store, "merged", 1)
 
 

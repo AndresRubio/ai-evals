@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 import tomllib
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Any
 
@@ -87,6 +87,10 @@ class Config:
     thresholds: Thresholds = Thresholds()
 
 
+_CONFIG_KEYS = {f.name for f in fields(Config)}
+_THRESHOLD_KEYS = {f.name for f in fields(Thresholds)}
+
+
 def write_default_config(store: Store) -> None:
     store.config_path.parent.mkdir(parents=True, exist_ok=True)
     store.config_path.write_text(DEFAULT_CONFIG, encoding="utf-8")
@@ -130,10 +134,29 @@ def load_config(store: Store) -> Config:
         raise AxialError(f"{path}: {exc}") from exc
 
 
+def _refuse_unknown_keys(raw: dict[str, Any], thresholds_raw: dict[str, Any]) -> None:
+    """Refuse a key no setting reads.
+
+    Every setting has a default, so a misspelt `judge_modle` would otherwise leave the
+    default in force without a word. TOML puts every key after `[thresholds]` in that
+    table, so an `annotator` appended to the end of the file lands there; a key on the
+    wrong side of that line is named as such.
+    """
+    for key in raw:
+        if key not in _CONFIG_KEYS:
+            hint = "; it belongs under [thresholds]" if key in _THRESHOLD_KEYS else ""
+            raise AxialError(f"{key}: unknown key{hint}")
+    for key in thresholds_raw:
+        if key not in _THRESHOLD_KEYS:
+            hint = "; it belongs above [thresholds]" if key in _CONFIG_KEYS else ""
+            raise AxialError(f"thresholds.{key}: unknown key{hint}")
+
+
 def _config_from(raw: dict[str, Any]) -> Config:
     thresholds_raw = raw.get("thresholds", {})
     if not isinstance(thresholds_raw, dict):
         raise AxialError(f"thresholds must be a [thresholds] table, got {thresholds_raw!r}")
+    _refuse_unknown_keys(raw, thresholds_raw)
     thresholds = Thresholds(
         min_tpr=_number(thresholds_raw, "min_tpr", 0.85, float),
         min_tnr=_number(thresholds_raw, "min_tnr", 0.85, float),
