@@ -204,6 +204,19 @@ def test_spec_round_trips(tmp_path: Path):
     assert JudgeSpec.load(store, "merged", 1) == s
 
 
+def test_a_misspelt_key_in_judge_yaml_is_refused_naming_the_file_and_key(tmp_path: Path):
+    """Every field but `mode` has a default, so a hand-edited `prompt_templte:` would
+    otherwise read as the default prompt and be dropped on the next save."""
+    store = Store(tmp_path)
+    spec().save(store)
+    path = store.judge_dir("merged", 1) / "judge.yaml"
+    path.write_text(
+        path.read_text(encoding="utf-8") + "prompt_templte: Judge it.\n", encoding="utf-8"
+    )
+    with pytest.raises(MalformedFile, match=r"judge\.yaml: prompt_templte: Extra inputs"):
+        JudgeSpec.load(store, "merged", 1)
+
+
 # --- Fix 1: few-shot resolution must use the full corpus, not the judged split ---
 
 

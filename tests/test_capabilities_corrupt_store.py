@@ -228,6 +228,7 @@ DAMAGE: dict[str, dict[str, Callable[[Path], None]]] = {
         "not-utf-8": appending(b"\xff\n"),
         "a-directory": a_directory,
         "wrong-fields": overwriting(b"unexpected: 1\n"),
+        "an-unknown-key": appending(b"unexpected: 1\n"),
     },
 }
 

@@ -62,6 +62,10 @@ class Verdict(BaseModel):
 
 
 class JudgeSpec(BaseModel):
+    # Every field but `mode` has a default, so a misspelt key in a hand-edited
+    # judge.yaml would otherwise read as the default and vanish on the next save.
+    model_config = ConfigDict(extra="forbid")
+
     mode: str
     prompt_template: str = DEFAULT_TEMPLATE
     model: str = "claude-opus-5"
