@@ -18,5 +18,5 @@ def stamp_run(store: Store, mode: str, version: int) -> None:
         path = directory / name
         if path.exists():
             store.write_jsonl(
-                path, [{**row, "prompt_sha256": fingerprint} for row in store.read_jsonl(path)]
+                path, [{**row, "prompt_sha256": fingerprint} for row in store._read_jsonl(path)]
             )

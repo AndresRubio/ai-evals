@@ -75,7 +75,7 @@ def test_the_labels_file_is_sorted_by_trace_id_whatever_order_they_arrive_in(tmp
     """labels.jsonl is deterministic, so re-importing the same labels never makes a noisy diff."""
     store = Store(tmp_path)
     add_labels(store, "m", [label_row_to_label(i) for i in ("c", "a", "b")])
-    ids = [r["trace_id"] for r in store.read_jsonl(store.dataset_dir("m") / "labels.jsonl")]
+    ids = [r["trace_id"] for r in store._read_jsonl(store.dataset_dir("m") / "labels.jsonl")]
     assert ids == ["a", "b", "c"]
 
 

@@ -143,7 +143,7 @@ def test_an_existing_name_is_refused_unless_replaced(store: Store):
     replaced = measure(store, batch_traces(["BAD"] * 5), replace=True)
     assert replaced.n_traces == 5
     directory = store.measurement_dir(MEASURE_MODE, "rel-1")
-    assert len(store.read_jsonl(directory / "traces.jsonl")) == 5
+    assert len(store._read_jsonl(directory / "traces.jsonl")) == 5
     assert sorted(p.name for p in directory.parent.iterdir()) == ["rel-1"]
 
 
@@ -187,7 +187,7 @@ def test_a_file_where_the_measurement_goes_is_refused_before_grading(store: Stor
 
 def test_a_test_split_missing_a_class_is_refused(store: Store):
     path = store.judge_dir(MEASURE_MODE, 1) / "verdicts.jsonl"
-    rows = [r for r in store.read_jsonl(path) if not (r["split"] == "test" and r["truth"])]
+    rows = [r for r in store._read_jsonl(path) if not (r["split"] == "test" and r["truth"])]
     store.write_jsonl(path, rows)
     marker = store.judge_dir(MEASURE_MODE, 1) / "PROMOTED"
     text = marker.read_text().splitlines()
@@ -219,7 +219,7 @@ def test_it_writes_four_files_and_every_measurement_field(store: Store):
     assert sorted(p.name for p in directory.iterdir()) == [
         "errors.jsonl", "measurement.json", "traces.jsonl", "verdicts.jsonl",
     ]
-    assert [Trace.model_validate(r) for r in store.read_jsonl(directory / "traces.jsonl")] == traces
+    assert [Trace.model_validate(r) for r in store._read_jsonl(directory / "traces.jsonl")] == traces
     data = json.loads((directory / "measurement.json").read_text())
     assert set(data) == MEASUREMENT_FIELDS
     assert data["test_matrix"] == {"tp": 28, "fn": 2, "tn": 66, "fp": 4}
@@ -234,7 +234,7 @@ def test_it_writes_four_files_and_every_measurement_field(store: Store):
 def test_verdict_rows_carry_the_input_hash_and_no_truth(store: Store):
     traces = batch_traces(["BAD", "GOOD"])
     measure(store, traces)
-    rows = store.read_jsonl(store.measurement_dir(MEASURE_MODE, "rel-1") / "verdicts.jsonl")
+    rows = store._read_jsonl(store.measurement_dir(MEASURE_MODE, "rel-1") / "verdicts.jsonl")
     assert [r["input_sha256"] for r in rows] == [input_sha256(t.input) for t in traces]
     assert [r["verdict"] for r in rows] == [True, False]
     assert all("truth" not in r for r in rows)
@@ -256,7 +256,7 @@ def test_prompts_use_the_promoted_judge_yaml_and_its_train_examples(tmp_path: Pa
     assert len(prompts) == 1
     assert "EXAMPLE\nINPUT:\nquestion train-0\nOUTPUT:\nBAD\n" in prompts[0]
     assert prompts[0].endswith("INPUT: case 0\nOUTPUT: GOOD")
-    raw = store.read_jsonl(store.measurement_dir(MEASURE_MODE, "rel-1") / "verdicts.jsonl")
+    raw = store._read_jsonl(store.measurement_dir(MEASURE_MODE, "rel-1") / "verdicts.jsonl")
     assert raw[0]["model"] == "fake-judge"
 
 
@@ -268,7 +268,7 @@ def test_a_few_shot_example_in_the_batch_is_set_aside(tmp_path: Path):
     result = measure_batch(
         store, MEASURE_MODE, 1, "rel-1", traces, fake_judge_builder(), draws=2000
     )
-    errors = store.read_jsonl(store.measurement_dir(MEASURE_MODE, "rel-1") / "errors.jsonl")
+    errors = store._read_jsonl(store.measurement_dir(MEASURE_MODE, "rel-1") / "errors.jsonl")
     assert [(e["trace_id"], e["failure_class"]) for e in errors] == [("train-0", "few_shot_example")]
     assert (result.n_graded, result.n_set_aside, result.flagged) == (9, 1, 0)
 
@@ -277,7 +277,7 @@ def test_set_aside_traces_stay_out_of_the_rate_and_are_noted_above_five_percent(
     result = measure(store, batch_traces(["GARBLED"] * 2 + ["BAD"] * 6 + ["GOOD"] * 12))
     assert (result.n_traces, result.n_graded, result.n_set_aside, result.flagged) == (20, 18, 2, 6)
     assert result.rate is not None and result.rate.observed == pytest.approx(6 / 18)
-    errors = store.read_jsonl(store.measurement_dir(MEASURE_MODE, "rel-1") / "errors.jsonl")
+    errors = store._read_jsonl(store.measurement_dir(MEASURE_MODE, "rel-1") / "errors.jsonl")
     assert {e["failure_class"] for e in errors} == {"unparseable"}
     assert all("input_sha256" in e for e in errors)
     assert any("2 of 20 traces (10.0%) were set aside" in n for n in result.notes)
@@ -312,7 +312,7 @@ def test_a_judge_exactly_at_the_chance_cut_off_measures_no_rate(store: Store):
     # Test split tp 10, fn 10, tn 11, fp 9: J = 10/20 + 11/20 - 1 = 0.05 exactly, which the
     # rule calls no better than chance, though the float sum is 0.050000000000000044.
     path = store.judge_dir(MEASURE_MODE, 1) / "verdicts.jsonl"
-    rows = store.read_jsonl(path)
+    rows = store._read_jsonl(path)
     test_rows = [r for r in rows if r["split"] == "test"][:40]
     cells = [(True, True)] * 10 + [(True, False)] * 10 + [(False, False)] * 11 + [(False, True)] * 9
     for r, (truth, verdict) in zip(test_rows, cells, strict=True):
@@ -374,7 +374,7 @@ def test_reading_a_missing_measurement_names_the_command_to_run(store: Store):
 def test_a_hand_edited_measurement_is_refused(store: Store):
     measure(store, batch_traces(["BAD", "GOOD"]))
     path = store.measurement_dir(MEASURE_MODE, "rel-1") / "verdicts.jsonl"
-    rows = store.read_jsonl(path)
+    rows = store._read_jsonl(path)
     rows[1]["verdict"] = True
     store.write_jsonl(path, rows)
     with pytest.raises(AxialError, match="edited by hand"):

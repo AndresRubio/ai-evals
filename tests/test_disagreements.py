@@ -306,7 +306,7 @@ def test_axial_align_prints_the_counts_and_writes_the_listing(
     store = Store(tmp_path)
     build_promoted_judge(store)
     path = store.judge_dir(MEASURE_MODE, 1) / "verdicts.jsonl"
-    rows = store.read_jsonl(path)
+    rows = store._read_jsonl(path)
     dev = [r for r in rows if r["split"] == "dev"]
     dev[0]["verdict"] = not dev[0]["verdict"]  # dev-00 is a real failure: now missed
     dev[1]["verdict"] = not dev[1]["verdict"]  # dev-01 is a real pass: now a false alarm
@@ -329,7 +329,7 @@ def test_axial_align_writes_a_lone_surrogate_as_an_escape(
     store = Store(tmp_path)
     build_promoted_judge(store)
     path = store.judge_dir(MEASURE_MODE, 1) / "verdicts.jsonl"
-    rows = store.read_jsonl(path)
+    rows = store._read_jsonl(path)
     dev = next(r for r in rows if r["split"] == "dev")
     dev["verdict"] = not dev["verdict"]
     store.write_jsonl(path, rows)

@@ -97,7 +97,7 @@ def test_full_pipeline_offline(tmp_path: Path):
             store, spec, subset, read_labels(store, "merged_stories"), splits,
             FakeModel(judge_response), split=split_name,
         )
-    all_rows = store.read_jsonl(store.judge_dir("merged_stories", 1) / "verdicts.jsonl")
+    all_rows = store._read_jsonl(store.judge_dir("merged_stories", 1) / "verdicts.jsonl")
     assert {r["split"] for r in all_rows} == {"dev", "test"}
 
     # 5. Align and promote.

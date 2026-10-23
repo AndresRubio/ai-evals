@@ -49,7 +49,7 @@ def test_repromoting_after_a_dev_only_rerun_binds_test_rows_from_another_prompt(
     store = Store(tmp_path)
     build_promoted_judge(store)
     vpath = store.judge_dir(MEASURE_MODE, 1) / "verdicts.jsonl"
-    test_rows_before = [r for r in store.read_jsonl(vpath) if r["split"] == "test"]
+    test_rows_before = [r for r in store._read_jsonl(vpath) if r["split"] == "test"]
     spec = JudgeSpec.load(store, MEASURE_MODE, 1)
     spec.prompt_template = "A DIFFERENT JUDGE\n" + spec.prompt_template
     spec.save(store)
@@ -61,8 +61,8 @@ def test_repromoting_after_a_dev_only_rerun_binds_test_rows_from_another_prompt(
         FakeModel(judge_reply, model="fake-judge"), split="dev", corpus=corpus,
     )
     # The premise: the edited prompt re-graded dev only, and the test rows are untouched.
-    assert [r for r in store.read_jsonl(vpath) if r["split"] == "test"] == test_rows_before
-    verdicts = store.read_jsonl(vpath)
+    assert [r for r in store._read_jsonl(vpath) if r["split"] == "test"] == test_rows_before
+    verdicts = store._read_jsonl(vpath)
     # promote refuses test rows that do not come from the prompt on disk.
     with pytest.raises(AxialError):
         promote(

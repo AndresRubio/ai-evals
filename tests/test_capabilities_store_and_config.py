@@ -91,8 +91,8 @@ def test_read_jsonl_skips_blank_lines_and_returns_empty_for_a_missing_file(tmp_p
     p = s.root / "x.jsonl"
     p.parent.mkdir(parents=True)
     p.write_text('\n{"a": 1}\n  \n{"a": 2}\n\n')
-    assert s.read_jsonl(p) == [{"a": 1}, {"a": 2}]
-    assert s.read_jsonl(s.root / "absent.jsonl") == []
+    assert s._read_jsonl(p) == [{"a": 1}, {"a": 2}]
+    assert s._read_jsonl(s.root / "absent.jsonl") == []
 
 
 def test_read_json_of_a_missing_file_raises_rather_than_returning_a_default(tmp_path: Path):
@@ -145,7 +145,7 @@ def test_an_unserialisable_row_fails_before_the_existing_file_is_touched(tmp_pat
     s.write_jsonl(p, [{"a": 1}])
     with pytest.raises(TypeError):
         s.write_jsonl(p, [{"a": 2}, {"a": object()}])
-    assert s.read_jsonl(p) == [{"a": 1}]
+    assert s._read_jsonl(p) == [{"a": 1}]
     assert list(p.parent.iterdir()) == [p]
 
 
@@ -161,7 +161,7 @@ def test_a_row_generator_that_dies_midway_leaves_the_original_intact(tmp_path: P
 
     with pytest.raises(RuntimeError, match="source died"):
         s.write_jsonl(p, rows())
-    assert s.read_jsonl(p) == [{"a": "original"}]
+    assert s._read_jsonl(p) == [{"a": "original"}]
     assert list(p.parent.iterdir()) == [p]
 
 

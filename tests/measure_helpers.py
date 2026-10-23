@@ -14,7 +14,7 @@ from pathlib import Path
 
 from axial.config import Thresholds
 from axial.dataset import Label, Splits, add_labels
-from axial.judge import JudgeSpec, run_judge
+from axial.judge import JudgeSpec, read_verdicts, run_judge
 from axial.model import FakeModel
 from axial.report import alignment_from_verdicts, promote
 from axial.store import Store
@@ -82,7 +82,7 @@ def build_promoted_judge(
             store, spec, [by_id[t] for t in getattr(splits, split)], labels, splits, model,
             split=split, corpus=corpus,
         )
-    verdicts = store.read_jsonl(store.judge_dir(MEASURE_MODE, version) / "verdicts.jsonl")
+    verdicts = read_verdicts(store, store.judge_dir(MEASURE_MODE, version) / "verdicts.jsonl")
     promote(
         store, MEASURE_MODE, version,
         alignment_from_verdicts(verdicts, "dev"),

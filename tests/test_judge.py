@@ -153,7 +153,7 @@ def test_running_a_second_split_keeps_the_first(tmp_path: Path):
     labels = [label(1, False), label(2, False)]
     run_judge(store, spec(), [trace(1)], labels, splits, model, split="dev")
     run_judge(store, spec(), [trace(2)], labels, splits, model, split="test")
-    rows = store.read_jsonl(store.judge_dir("merged", 1) / "verdicts.jsonl")
+    rows = store._read_jsonl(store.judge_dir("merged", 1) / "verdicts.jsonl")
     assert {r["split"] for r in rows} == {"dev", "test"}
 
 
@@ -192,7 +192,7 @@ def test_rerunning_a_split_replaces_only_that_split(tmp_path: Path):
               FakeModel(lambda _p: '{"verdict": "pass"}'), split="test")
     run_judge(store, spec(), [trace(1)], labels, splits,
               FakeModel(lambda _p: '{"verdict": "fail"}'), split="dev")
-    rows = store.read_jsonl(store.judge_dir("merged", 1) / "verdicts.jsonl")
+    rows = store._read_jsonl(store.judge_dir("merged", 1) / "verdicts.jsonl")
     assert len(rows) == 2
     assert next(r for r in rows if r["split"] == "dev")["verdict"] is True
 

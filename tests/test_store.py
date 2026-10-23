@@ -36,7 +36,7 @@ def test_append_jsonl_accumulates_rows(tmp_path: Path):
     p = s.root / "x.jsonl"
     s.append_jsonl(p, {"a": 1})
     s.append_jsonl(p, {"a": 2})
-    assert s.read_jsonl(p) == [{"a": 1}, {"a": 2}]
+    assert s._read_jsonl(p) == [{"a": 1}, {"a": 2}]
 
 
 def test_hash_ids_is_order_independent(tmp_path: Path):
@@ -111,7 +111,7 @@ def test_write_jsonl_replaces_the_target_leaving_no_temp_file_behind(tmp_path: P
     path = s.root / "x.jsonl"
     s.write_jsonl(path, [{"a": 1}])
     s.write_jsonl(path, [{"a": 2}])
-    assert s.read_jsonl(path) == [{"a": 2}]
+    assert s._read_jsonl(path) == [{"a": 2}]
     assert list(path.parent.iterdir()) == [path]
 
 
@@ -179,7 +179,7 @@ def test_write_jsonl_preserves_the_existing_files_mode_across_a_rewrite(tmp_path
     s.write_jsonl(path, [{"a": 2}])
 
     assert stat.S_IMODE(path.stat().st_mode) == 0o644
-    assert s.read_jsonl(path) == [{"a": 2}]
+    assert s._read_jsonl(path) == [{"a": 2}]
 
 
 def test_read_jsonl_reports_the_file_and_line_number_on_corrupt_json(tmp_path: Path):
@@ -188,7 +188,7 @@ def test_read_jsonl_reports_the_file_and_line_number_on_corrupt_json(tmp_path: P
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text('{"a": 1}\nnot json\n{"a": 3}\n')
     with pytest.raises(ValueError, match=r"bad\.jsonl.*line 2"):
-        s.read_jsonl(path)
+        s._read_jsonl(path)
 
 
 def test_read_jsonl_gives_only_the_column_of_jsons_own_position(tmp_path: Path):
@@ -198,7 +198,7 @@ def test_read_jsonl_gives_only_the_column_of_jsons_own_position(tmp_path: Path):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text('{"a": 1}\n{oops\n')
     with pytest.raises(MalformedFile) as caught:
-        s.read_jsonl(path)
+        s._read_jsonl(path)
     detail = "invalid JSON on line 2, column 2: Expecting property name enclosed in double quotes"
     assert caught.value.detail == detail
     assert str(caught.value) == f"{path}: {detail}"
@@ -214,7 +214,7 @@ def test_read_jsonl_refuses_a_line_that_is_not_an_object(tmp_path: Path, line: s
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(f'{{"a": 1}}\n{line}\n')
     with pytest.raises(MalformedFile) as caught:
-        s.read_jsonl(path)
+        s._read_jsonl(path)
     assert str(caught.value) == f"{path}: line 2: expected a JSON object, got {kind}"
 
 
@@ -239,7 +239,7 @@ def test_read_json_model_names_the_field_a_document_gets_wrong(tmp_path: Path):
     assert str(caught.value) == f"{path}: train: Input should be a valid list, got int"
 
 
-@pytest.mark.parametrize("reader", ["read_jsonl", "read_json", "read_yaml"])
+@pytest.mark.parametrize("reader", ["_read_jsonl", "read_json", "read_yaml"])
 def test_a_reader_refuses_bytes_that_are_not_utf8_in_one_line(tmp_path: Path, reader: str):
     s = Store(tmp_path)
     path = s.root / "bad.txt"
@@ -258,7 +258,7 @@ from axial.store import Store
 print(locale.getencoding(), flush=True)
 store, root = Store(sys.argv[1]), Path(sys.argv[1])
 texts = [
-    store.read_jsonl(root / "rows.jsonl")[0]["text"],
+    store._read_jsonl(root / "rows.jsonl")[0]["text"],
     store.read_json(root / "doc.json")["text"],
     store.read_yaml(root / "doc.yaml")["text"],
 ]

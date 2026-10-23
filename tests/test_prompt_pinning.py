@@ -157,8 +157,8 @@ def test_run_judge_stamps_every_verdict_and_error_row(tmp_path: Path):
     )
     expected = prompt_sha256(judge, [(corpus[0], labels[0])])
     directory = store.judge_dir("merged", 1)
-    verdicts = store.read_jsonl(directory / "verdicts.jsonl")
-    errors = store.read_jsonl(directory / "errors.jsonl")
+    verdicts = store._read_jsonl(directory / "verdicts.jsonl")
+    errors = store._read_jsonl(directory / "errors.jsonl")
     assert [r["trace_id"] for r in verdicts] == ["t2"]
     assert sorted((e["trace_id"], e["failure_class"]) for e in errors) == [
         ("t3", "unlabelled"), ("t4", "unparseable")
@@ -174,7 +174,7 @@ def judge_dir(store: Store) -> Path:
 
 
 def promote_again(store: Store) -> None:
-    verdicts = store.read_jsonl(judge_dir(store) / "verdicts.jsonl")
+    verdicts = store._read_jsonl(judge_dir(store) / "verdicts.jsonl")
     promote(
         store, MEASURE_MODE, 1,
         alignment_from_verdicts(verdicts, "dev"), alignment_from_verdicts(verdicts, "test"),
@@ -214,7 +214,7 @@ def test_promote_records_the_fingerprint_its_rows_carry(tmp_path: Path):
     marker = parse_promoted_marker((judge_dir(store) / "PROMOTED").read_text())
     expected = current_prompt_sha256(store, JudgeSpec.load(store, MEASURE_MODE, 1))
     assert marker[PROMPT_HASH_KEY] == expected
-    rows = store.read_jsonl(judge_dir(store) / "verdicts.jsonl")
+    rows = store._read_jsonl(judge_dir(store) / "verdicts.jsonl")
     assert {r["prompt_sha256"] for r in rows} == {expected}
     assert require_promoted(store, MEASURE_MODE, 1).prompt_sha256 == expected
 
@@ -257,7 +257,7 @@ def test_promote_refuses_a_stale_row_with_no_split(tmp_path: Path):
     path = judge_dir(store) / "verdicts.jsonl"
     store.write_jsonl(
         path,
-        store.read_jsonl(path)
+        store._read_jsonl(path)
         + [{"trace_id": "x", "verdict": True, "truth": True, "prompt_sha256": "0" * 64}],
     )
     with pytest.raises(InvariantViolation, match="no split") as caught:
@@ -281,7 +281,7 @@ def test_promote_refuses_rows_with_no_fingerprint(tmp_path: Path):
     build_promoted_judge(store)
     for name in ("verdicts.jsonl", "errors.jsonl"):
         path = judge_dir(store) / name
-        rows = store.read_jsonl(path)
+        rows = store._read_jsonl(path)
         store.write_jsonl(path, [{k: v for k, v in r.items() if k != "prompt_sha256"} for r in rows])
     with pytest.raises(InvariantViolation, match="dev and test"):
         promote_again(store)
@@ -293,7 +293,7 @@ def test_promote_refuses_a_stale_error_row(tmp_path: Path):
     path = judge_dir(store) / "errors.jsonl"
     store.write_jsonl(
         path,
-        store.read_jsonl(path)
+        store._read_jsonl(path)
         + [{"trace_id": "test-000", "split": "test", "failure_class": "harness",
             "detail": "x", "prompt_sha256": "0" * 64}],
     )
@@ -479,8 +479,8 @@ def measured_rows(
 ) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
     directory = store.measurement_dir(MEASURE_MODE, name)
     return (
-        store.read_jsonl(directory / "verdicts.jsonl"),
-        store.read_jsonl(directory / "errors.jsonl"),
+        store._read_jsonl(directory / "verdicts.jsonl"),
+        store._read_jsonl(directory / "errors.jsonl"),
     )
 
 
@@ -530,7 +530,7 @@ def test_promote_stale_message_names_an_axial_upgrade(tmp_path: Path):
     build_promoted_judge(store)
     path = judge_dir(store) / "verdicts.jsonl"
     store.write_jsonl(
-        path, [{**row, "prompt_sha256": "0" * 64} for row in store.read_jsonl(path)]
+        path, [{**row, "prompt_sha256": "0" * 64} for row in store._read_jsonl(path)]
     )
     with pytest.raises(InvariantViolation) as caught:
         promote_again(store)
@@ -543,6 +543,6 @@ def test_promote_stale_message_names_an_axial_upgrade(tmp_path: Path):
 def test_promote_without_train_rows_is_not_refused_for_them(tmp_path: Path):
     store = Store(tmp_path)
     build_promoted_judge(store)
-    rows = store.read_jsonl(judge_dir(store) / "verdicts.jsonl")
+    rows = store._read_jsonl(judge_dir(store) / "verdicts.jsonl")
     assert not any(row.get("split") == "train" for row in rows)
     promote_again(store)

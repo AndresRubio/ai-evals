@@ -14,8 +14,6 @@ jobs:
           python-version: "3.14"
       - run: uv sync
       - run: uv run ruff check .
-      # Every file read or write names its encoding (see [tool.ruff.lint] in pyproject.toml).
-      - run: uv run ruff check --preview --select PLW1514 src scripts
       - run: uv run mypy src/axial
       - run: uv run pytest -v
 

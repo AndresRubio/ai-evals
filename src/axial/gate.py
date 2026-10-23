@@ -23,6 +23,7 @@ from axial.align import (
     paired_bootstrap_ci,
 )
 from axial.errors import AxialError, InvariantViolation
+from axial.judge import read_verdicts
 from axial.measure import (
     Measurement,
     judge_test_matrix,
@@ -66,7 +67,7 @@ def compare(
 
 def _load(store: Store, mode: str, version: int) -> list[dict[str, Any]]:
     require_promoted(store, mode, version)
-    rows = store.read_jsonl(store.judge_dir(mode, version) / "verdicts.jsonl")
+    rows = read_verdicts(store, store.judge_dir(mode, version) / "verdicts.jsonl")
     if not rows:
         raise InvariantViolation(
             f"judge {mode} v{version} has no verdict rows. A gate cannot pass on no evidence. "

@@ -185,9 +185,10 @@ class Store:
                 # The file is decoded a block at a time, so the bad byte's line is unknown.
                 raise MalformedFile(path, f"not {exc.encoding} text: {exc.reason}") from exc
 
-    def read_jsonl(self, path: Path) -> list[dict[str, Any]]:
-        """Every row of `path`, each a JSON object. A line holding any other JSON value
-        is a MalformedFile naming the line; callers index rows by key."""
+    def _read_jsonl(self, path: Path) -> list[dict[str, Any]]:
+        """Every row of `path`, each a JSON object whose fields nothing has checked. A line
+        holding any other JSON value is a MalformedFile naming the line. Other modules read
+        rows through `read_models`, which checks them."""
         if not path.exists():
             return []
         return [row for _, row in self._object_rows(path)]
@@ -203,7 +204,7 @@ class Store:
     def read_models[M: BaseModel](
         self, path: Path, model: type[M], *, missing_ok: bool = True
     ) -> list[M]:
-        """`read_jsonl` with each row validated as `model`.
+        """Every row of `path`, each a JSON object validated as `model`.
 
         A row that does not validate is a MalformedFile naming the file and the line,
         as corrupt JSON already is. A missing file reads as no rows unless

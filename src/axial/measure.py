@@ -23,7 +23,14 @@ from pydantic import BaseModel, ConfigDict
 
 from axial.align import ConfusionMatrix, CorrectedRate, confusion_matrix, corrected_rate
 from axial.errors import AxialError, InvariantViolation, MalformedFile
-from axial.judge import Graded, JudgeSpec, grade_trace, load_few_shot, prompt_sha256
+from axial.judge import (
+    Graded,
+    JudgeSpec,
+    grade_trace,
+    load_few_shot,
+    prompt_sha256,
+    read_verdicts,
+)
 from axial.model import Model
 from axial.report import SATURATION_WARNING, require_promoted
 from axial.store import Store, json_text, jsonl_text, refuse_non_directory
@@ -220,7 +227,7 @@ def _refuse_case_variant(directory: Path, mode: str, batch: str) -> None:
 def judge_test_matrix(store: Store, mode: str, version: int) -> ConfusionMatrix:
     """The judge's test-split confusion matrix, which every corrected rate it gives uses."""
     rows = [
-        r for r in store.read_jsonl(store.judge_dir(mode, version) / "verdicts.jsonl")
+        r for r in read_verdicts(store, store.judge_dir(mode, version) / "verdicts.jsonl")
         if r.get("split") == "test"
     ]
     matrix = confusion_matrix([bool(r["truth"]) for r in rows], [bool(r["verdict"]) for r in rows])

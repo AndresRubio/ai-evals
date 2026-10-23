@@ -316,7 +316,7 @@ def reword_and_repromote(store: Store) -> None:
     path = store.judge_dir(MEASURE_MODE, 1) / "judge.yaml"
     path.write_text(path.read_text() + "\n# reworded\n")
     rejudge(store)
-    verdicts = store.read_jsonl(store.judge_dir(MEASURE_MODE, 1) / "verdicts.jsonl")
+    verdicts = store._read_jsonl(store.judge_dir(MEASURE_MODE, 1) / "verdicts.jsonl")
     promote(
         store, MEASURE_MODE, 1, alignment_from_verdicts(verdicts, "dev"),
         alignment_from_verdicts(verdicts, "test"), Thresholds(),
@@ -347,7 +347,7 @@ def test_a_judge_whose_verdicts_were_edited_under_its_marker_fails_the_gate(stor
     """Only the reason text changes, so the test matrix and the measurement's numbers still
     agree: the verdicts hash in PROMOTED is the one check that catches it."""
     measure(store, "rel-1", flags(60))
-    rows = store.read_jsonl(judge_verdicts_path(store))
+    rows = store._read_jsonl(judge_verdicts_path(store))
     row = next(r for r in rows if r["split"] == "test")
     row["raw"] = row["raw"].replace("the output was", "the output, edited, was")
     store.write_jsonl(judge_verdicts_path(store), rows)
@@ -362,7 +362,7 @@ def test_a_judge_whose_verdicts_were_edited_under_its_marker_fails_the_gate(stor
 def test_measure_refuses_a_judge_whose_verdicts_were_edited_under_its_marker(store: Store):
     """A missed failure flipped to caught raises the judge's test TPR, which would shrink
     every corrected rate measured with it."""
-    rows = store.read_jsonl(judge_verdicts_path(store))
+    rows = store._read_jsonl(judge_verdicts_path(store))
     missed = next(r for r in rows if r["split"] == "test" and r["truth"] and not r["verdict"])
     missed["verdict"] = True
     store.write_jsonl(judge_verdicts_path(store), rows)
@@ -569,7 +569,7 @@ def test_rewritten_input_hashes_do_not_turn_a_paired_regression_into_a_pass(stor
     measure(store, "cand", flags(80))
     assert not run(store, "cand", baseline_batch="base").passed
     path = store.measurement_dir(MEASURE_MODE, "cand") / "verdicts.jsonl"
-    rows = store.read_jsonl(path)
+    rows = store._read_jsonl(path)
     store.write_jsonl(
         path,
         [r | {"input_sha256": hashlib.sha256(r["input_sha256"].encode()).hexdigest()} for r in rows],

@@ -540,7 +540,7 @@ def _fake_run_judge_writing_verdicts(store_arg, spec, traces_arg, labels_arg, sp
         for t in traces_arg
     ]
     path = directory / "verdicts.jsonl"
-    kept = [row for row in store_arg.read_jsonl(path) if row.get("split") != split]
+    kept = [row for row in store_arg._read_jsonl(path) if row.get("split") != split]
     store_arg.write_jsonl(path, kept + fresh)
     return RunResult(verdicts=fresh, errors=[])
 
@@ -584,7 +584,7 @@ def test_default_version_keeps_dev_and_test_verdicts_in_the_same_judge_directory
     assert not store.judge_dir("m", 2).exists()
 
     directory = store.judge_dir("m", 1)
-    verdicts = store.read_jsonl(directory / "verdicts.jsonl")
+    verdicts = store._read_jsonl(directory / "verdicts.jsonl")
     assert {(row["trace_id"], row["split"]) for row in verdicts} == {
         ("t2", "dev"), ("t3", "dev"), ("t4", "test"), ("t5", "test"),
     }
@@ -620,7 +620,7 @@ def test_new_flag_starts_a_fresh_version_that_does_not_inherit_the_previous_one(
         app, ["judge", "m", "--split", "dev", "--few-shot", "t0", "--repo", str(tmp_path)]
     )
     assert result.exit_code == 0, result.stdout
-    v1_verdicts = store.read_jsonl(store.judge_dir("m", 1) / "verdicts.jsonl")
+    v1_verdicts = store._read_jsonl(store.judge_dir("m", 1) / "verdicts.jsonl")
     assert {row["trace_id"] for row in v1_verdicts} == {"t2", "t3"}
 
     result2 = runner.invoke(app, ["judge", "m", "--split", "dev", "--new", "--repo", str(tmp_path)])
@@ -632,10 +632,10 @@ def test_new_flag_starts_a_fresh_version_that_does_not_inherit_the_previous_one(
     assert spec_data["few_shot_ids"] == []
     assert spec_data["prompt_template"] == DEFAULT_TEMPLATE
 
-    v2_verdicts = store.read_jsonl(v2_dir / "verdicts.jsonl")
+    v2_verdicts = store._read_jsonl(v2_dir / "verdicts.jsonl")
     assert {row["trace_id"] for row in v2_verdicts} == {"t2", "t3"}
     # v1's own verdicts are untouched and still live only under v1.
-    assert store.read_jsonl(store.judge_dir("m", 1) / "verdicts.jsonl") == v1_verdicts
+    assert store._read_jsonl(store.judge_dir("m", 1) / "verdicts.jsonl") == v1_verdicts
 
 
 def test_taxonomy_refuses_a_decision_model(tmp_path: Path):
