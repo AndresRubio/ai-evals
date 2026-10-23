@@ -1,6 +1,7 @@
 __pycache__/
 *.pyc
 .venv/
+.venv-3.13/
 .axial/
 .env
 .pytest_cache/
