@@ -74,12 +74,21 @@ class Taxonomy(BaseModel):
             )
 
 
-class _TaxonomyFile(Taxonomy):
-    """taxonomy.yaml as read back. `modes` has a default, so a misspelt key would read as
-    an empty taxonomy; the file is refused instead. A model's reply is validated against
-    the lenient `Taxonomy`, so the schema sent to the model is unchanged."""
+class _FailureModeFile(FailureMode):
+    """One mode of taxonomy.yaml as read back. `examples` and `prevalence` have defaults,
+    so a misspelt key under a mode would read as the default and vanish on the next save."""
 
     model_config = ConfigDict(extra="forbid")
+
+
+class _TaxonomyFile(BaseModel):
+    """taxonomy.yaml as read back. `modes` has a default, so a misspelt key would read as
+    an empty taxonomy; the file is refused instead, as is a misspelt key under a mode. A
+    model's reply is validated against the lenient `Taxonomy`, so the schema sent to the
+    model is unchanged."""
+
+    model_config = ConfigDict(extra="forbid")
+    modes: list[_FailureModeFile] = Field(default_factory=list)
 
 
 def count_open_codes(reviews: list[Review]) -> int:

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from axial.errors import InvariantViolation
+from axial.errors import InvariantViolation, MalformedFile
 from axial.sample import Review
 from axial.store import Store, validate_name
 from axial.taxonomy import (
@@ -88,6 +88,28 @@ def test_taxonomy_round_trips_through_yaml(tmp_path: Path):
 
 def test_load_is_empty_when_no_taxonomy_exists(tmp_path: Path):
     assert Taxonomy.load(Store(tmp_path)).modes == []
+
+
+def test_a_misspelt_key_under_a_mode_in_taxonomy_yaml_is_refused_naming_the_file_and_key(
+    tmp_path: Path,
+):
+    """`examples` and `prevalence` have defaults, so a hand-edited `exmaples:` would
+    otherwise read as no examples and be dropped on the next save."""
+    store = Store(tmp_path)
+    Taxonomy(modes=[FailureMode(id="a", name="A", definition="d")]).save(store)
+    store.taxonomy_path.write_text(
+        store.taxonomy_path.read_text(encoding="utf-8") + "  exmaples: [t1]\n", encoding="utf-8"
+    )
+    with pytest.raises(MalformedFile, match=r"taxonomy\.yaml: modes\.0\.exmaples: unknown key$"):
+        Taxonomy.load(store)
+
+
+def test_a_model_reply_with_a_key_no_mode_has_is_still_accepted():
+    """Only the file is strict: a model that adds a field nobody asked for has not
+    misspelt anything."""
+    reply = {"modes": [{"id": "a", "name": "A", "definition": "d", "severity": "high"}]}
+    taxonomy = propose_taxonomy(coded(30), lambda _prompt: json.dumps(reply))
+    assert [m.id for m in taxonomy.modes] == ["a"]
 
 
 def test_prevalence_counts_reviews_whose_open_code_mentions_the_mode():

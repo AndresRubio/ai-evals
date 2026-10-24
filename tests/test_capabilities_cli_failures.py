@@ -547,8 +547,13 @@ def test_judge_and_align_over_a_corrupt_store_fail_cleanly_and_write_nothing(
         ("judge", "mode: [1]\n", "judge.yaml: mode: Input should be a valid string, got list"),
         ("taxonomy", "modes: [\n", "taxonomy.yaml: invalid YAML on line 2, column 1"),
         ("taxonomy", "modes:\n  - id: x\n", "taxonomy.yaml: modes.0.name: Field required"),
+        (
+            "taxonomy",
+            "modes:\n  - id: x\n    name: X\n    definition: d\n    exmaples: []\n",
+            "taxonomy.yaml: modes.0.exmaples: unknown key",
+        ),
     ],
-    ids=["judge-syntax", "judge-shape", "taxonomy-syntax", "taxonomy-shape"],
+    ids=["judge-syntax", "judge-shape", "taxonomy-syntax", "taxonomy-shape", "taxonomy-mode-key"],
 )
 def test_judge_over_a_corrupt_yaml_file_fails_cleanly_and_writes_nothing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, file: str, text: str, expected: str
