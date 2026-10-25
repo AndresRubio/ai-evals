@@ -178,6 +178,33 @@ def test_label_import_tolerates_extra_keys_and_a_missing_timestamp(tmp_path: Pat
     assert read_labels(Store(tmp_path), "m")[0].trace_id == "a"
 
 
+@pytest.mark.parametrize(
+    ("extras", "line"),
+    [
+        ([{}, {}], "2 labels recorded for m"),
+        (
+            [{"timestamp": "2026-01-05T10:00:00Z"}, {"source": "sheet", "timestamp": "x"}],
+            "2 labels recorded for m; ignored columns: source, timestamp",
+        ),
+    ],
+    ids=["none-ignored", "two-ignored"],
+)
+def test_label_import_names_the_columns_it_ignored(
+    tmp_path: Path, extras: list[dict], line: str
+):
+    """A misspelt `ts` would otherwise go unnoticed: the label imports with the import
+    time as its timestamp. The ignored columns are named, and not stored."""
+    rows = [label_row(f"t{i}", **extra) for i, extra in enumerate(extras)]
+    src = write_labels_file(tmp_path / "l.jsonl", rows)
+    result = run_cli(tmp_path, "label-import", "m", "--path", str(src))
+    assert result.exit_code == 0, result.output
+    assert result.stdout.strip() == line
+    stored = (Store(tmp_path).dataset_dir("m") / "labels.jsonl").read_text().splitlines()
+    assert [sorted(json.loads(row)) for row in stored] == [
+        ["annotator", "critique", "label", "trace_id", "ts"]
+    ] * 2
+
+
 def test_label_import_reads_boolean_like_strings_and_numbers(tmp_path: Path):
     """`"label": "true"` and `1` are read as failures, `"false"` and `0` as passes."""
     src = write_labels_file(

@@ -12,11 +12,11 @@ from pydantic import ValidationError
 
 from axial.config import Config, load_config, load_env, write_default_config
 from axial.dataset import (
-    Label,
     add_labels,
     class_balance_report,
     labels_from_reviews,
     make_splits,
+    read_label_file,
     read_labels,
 )
 from axial.errors import AxialError, MalformedFile, validation_message
@@ -289,13 +289,14 @@ def label_import(
     """Import human labels you made elsewhere."""
     store = Store(repo)
     try:
-        labels = store.read_models(path, Label, missing_ok=False)
+        labels, ignored = read_label_file(store, path)
         add_labels(store, mode, labels)
     except AxialError as exc:
         _fail(str(exc))
     except (OSError, ValueError) as exc:
         _fail(f"could not import labels: {_one_line(exc)}")
-    typer.echo(f"{len(labels)} labels recorded for {mode}")
+    note = f"; ignored columns: {', '.join(ignored)}" if ignored else ""
+    typer.echo(f"{len(labels)} labels recorded for {mode}{note}")
 
 
 @app.command("label-from-reviews")

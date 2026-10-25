@@ -249,6 +249,24 @@ def read_labels(store: Store, mode: str) -> list[Label]:
     return store.read_models(_labels_path(store, mode), Label)
 
 
+class _ImportedLabel(Label):
+    # Keeps the columns no label field reads, only so `read_label_file` can name them.
+    model_config = ConfigDict(extra="allow")
+
+
+def read_label_file(store: Store, path: Path) -> tuple[list[Label], list[str]]:
+    """The labels in a file the user made, and the columns no label field reads, sorted.
+
+    Those columns are accepted, because labels exported from another tool carry its own,
+    and named, so a misspelt `ts` is seen at import instead of turning into the import
+    time without a word.
+    """
+    rows = store.read_models(path, _ImportedLabel, missing_ok=False)
+    ignored = sorted({column for row in rows for column in row.model_extra or {}})
+    fields = set(Label.model_fields)
+    return [Label.model_validate(row.model_dump(include=fields)) for row in rows], ignored
+
+
 def labels_from_reviews(reviews: list[Review]) -> tuple[list[Label], int]:
     """Convert completed annotate-app reviews into labels for one failure mode.
 
