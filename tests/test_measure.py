@@ -412,6 +412,28 @@ def test_rewritten_input_hashes_are_refused(store: Store):
         load_measurement(store, MEASURE_MODE, "rel-1")
 
 
+@pytest.mark.parametrize(
+    ("trace_id", "verdict"),
+    [("new-0", "false"), ("new-0", 1), ("new-1", 0), ("new-1", None)],
+    ids=["string", "one", "zero", "null"],
+)
+def test_a_verdict_that_is_not_true_or_false_is_refused(
+    store: Store, trace_id: str, verdict: object
+):
+    """`pair_batches` reads each verdict with `bool()`, so a `"false"` typed over `true`
+    would still count as flagged. Each edit keeps the flagged count, so only the type
+    check can catch it."""
+    measure(store, batch_traces(["BAD", "GOOD"]))
+    rewrite_jsonl(
+        directory(store) / "verdicts.jsonl",
+        lambda r: r | {"verdict": verdict} if r["trace_id"] == trace_id else r,
+    )
+    with pytest.raises(
+        AxialError, match=f"verdict for trace '{trace_id}' that is not true or false"
+    ):
+        load_measurement(store, MEASURE_MODE, "rel-1")
+
+
 @pytest.mark.parametrize("name", ["traces.jsonl", "errors.jsonl", "verdicts.jsonl"])
 def test_a_measurement_missing_one_of_its_files_is_refused(store: Store, name: str):
     measure(store, batch_traces(["GARBLED", "BAD", "GOOD"]))

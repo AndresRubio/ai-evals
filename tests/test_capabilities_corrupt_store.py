@@ -22,7 +22,7 @@ from typing import Any, get_args
 
 import pytest
 from measure_helpers import MEASURE_MODE, build_promoted_judge, fake_judge_builder, write_batch
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, create_model
 from typer.testing import CliRunner, Result
 
 from axial import cli
@@ -247,6 +247,37 @@ def test_every_model_a_document_is_read_as_refuses_unknown_keys_at_every_level(
     assert {"JudgeSpec", "Splits", "_TaxonomyFile"} <= names, names
     found = [where for model in models for where in lenient(model)]
     assert not found, f"give these model_config = ConfigDict(extra='forbid'): {sorted(found)}"
+
+
+class _Loose(BaseModel):
+    """No `extra` setting, so an unknown key is dropped."""
+
+
+class _Strict(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+@pytest.mark.parametrize(
+    "shape",
+    [
+        lambda m: m,
+        lambda m: list[m],
+        lambda m: m | None,
+        lambda m: dict[str, m],
+        lambda m: list[dict[str, m | None]],
+    ],
+    ids=["bare", "list", "optional", "dict", "nested"],
+)
+def test_lenient_finds_a_model_however_a_field_holds_it(shape: Callable[[type], object]) -> None:
+    """The test above checks only the models this walk opens, so a shape it skipped would
+    hide a lenient model and pass."""
+
+    def holder(inner: type[BaseModel]) -> type[BaseModel]:
+        strict = ConfigDict(extra="forbid")
+        return create_model("Holder", __config__=strict, inner=(shape(inner), None))
+
+    assert lenient(holder(_Loose)) == ["Holder.inner"]
+    assert lenient(holder(_Strict)) == []
 
 
 def appending(data: bytes) -> Callable[[Path], None]:
