@@ -18,10 +18,11 @@ import socket
 import traceback
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
 import pytest
 from measure_helpers import MEASURE_MODE, build_promoted_judge, fake_judge_builder, write_batch
+from pydantic import BaseModel
 from typer.testing import CliRunner, Result
 
 from axial import cli
@@ -192,6 +193,60 @@ def test_reads_names_every_file_each_command_reads(
     assert result.exit_code == 0, result.output
     reads = sorted({p for p in seen if p.startswith(".axial/")})
     assert reads == sorted(READS[command]), f"READS[{command!r}] should be {reads}"
+
+
+def record_document_models(monkeypatch: pytest.MonkeyPatch) -> set[type[BaseModel]]:
+    """Every model the store's document readers validate against from here on."""
+    seen: set[type[BaseModel]] = set()
+    for name in ("read_json_model", "read_yaml_model"):
+        original = getattr(Store, name)
+
+        def recording(
+            self: Store, path: Path, model: type[BaseModel], *args: Any,
+            _original: Any = original, **kwargs: Any,
+        ) -> Any:
+            seen.add(model)
+            return _original(self, path, model, *args, **kwargs)
+
+        monkeypatch.setattr(Store, name, recording)
+    return seen
+
+
+def nested_models(annotation: object) -> list[type[BaseModel]]:
+    """The models a field's type holds, however deep: `list[M]`, `M | None`, `dict[str, M]`."""
+    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+        return [annotation]
+    return [model for arg in get_args(annotation) for model in nested_models(arg)]
+
+
+def lenient(model: type[BaseModel], where: str = "") -> list[str]:
+    """Where `model`, or a model one of its fields holds, would drop an unknown key."""
+    where = where or model.__name__
+    found = [] if model.model_config.get("extra") == "forbid" else [where]
+    for name, field in model.model_fields.items():
+        for inner in nested_models(field.annotation):
+            found += lenient(inner, f"{where}.{name}")
+    return found
+
+
+def test_every_model_a_document_is_read_as_refuses_unknown_keys_at_every_level(
+    case: Path, template: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """judge.yaml, taxonomy.yaml and splits.json are edited by hand, and a key the model
+    ignores reads as the field's default and vanishes on the next save. Pydantic does not
+    pass `extra="forbid"` down to the models a field holds, so each one must set it too.
+    The models come from every command's real reads, so a new one is checked unlisted."""
+    models = record_document_models(monkeypatch)
+    for i, (command, argv) in enumerate(COMMANDS.items()):
+        root = case / f"run-{i}"
+        shutil.copytree(template, root)
+        monkeypatch.chdir(root)
+        result = run(argv)
+        assert result.exit_code == 0, f"{command}: {result.output}"
+    names = {model.__name__ for model in models}
+    assert {"JudgeSpec", "Splits", "_TaxonomyFile"} <= names, names
+    found = [where for model in models for where in lenient(model)]
+    assert not found, f"give these model_config = ConfigDict(extra='forbid'): {sorted(found)}"
 
 
 def appending(data: bytes) -> Callable[[Path], None]:
