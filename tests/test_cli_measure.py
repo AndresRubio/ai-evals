@@ -8,6 +8,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
+from cli_helpers import plain_output
 from measure_helpers import MEASURE_MODE, build_promoted_judge, fake_judge_builder, write_batch
 from typer.testing import CliRunner, Result
 
@@ -32,8 +33,9 @@ def axial(*args: str) -> Result:
 def assert_clean(result: Result, code: int, *fragments: str) -> None:
     assert result.exit_code == code, result.output
     assert result.exception is None or isinstance(result.exception, SystemExit), result.exception
+    output = plain_output(result)
     for fragment in fragments:
-        assert fragment in result.output, (fragment, result.output)
+        assert fragment in output, (fragment, output)
 
 
 def measure(repo: Path, name: str, n_bad: int, n: int = 500, *more: str) -> Result:

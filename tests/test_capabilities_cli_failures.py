@@ -19,6 +19,7 @@ import socket
 from pathlib import Path
 
 import pytest
+from cli_helpers import plain_output
 from measure_helpers import MEASURE_MODE, build_promoted_judge, fake_judge_builder
 from skip_helpers import skip_off_ci
 from typer.testing import CliRunner, Result
@@ -53,8 +54,9 @@ def assert_clean_failure(result: Result, *fragments: str) -> None:
     assert result.exception is None or isinstance(result.exception, SystemExit), (
         f"uncaught {type(result.exception).__name__}: {result.exception}"
     )
+    output = plain_output(result)
     for fragment in fragments:
-        assert fragment.lower() in result.output.lower(), (fragment, result.output)
+        assert fragment.lower() in output.lower(), (fragment, output)
 
 
 def assert_one_line_refusal(result: Result, *fragments: str, after: int = 0) -> None:
