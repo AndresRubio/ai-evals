@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 from measure_helpers import MEASURE_MODE, build_promoted_judge
+from skip_helpers import skip_off_ci
 from typer.testing import CliRunner
 
 from axial import cli, report
@@ -273,7 +274,7 @@ def test_alignment_md_is_utf8_whatever_the_locale(tmp_path: Path):
     )
     encoding = result.stdout.split()[0] if result.stdout else ""
     if encoding.lower().replace("-", "") == "utf8":
-        pytest.skip("this platform's C locale is UTF-8, so the default encoding is not tested")
+        skip_off_ci("this platform's C locale is UTF-8, so the default encoding is not tested")
     assert result.returncode == 0, result.stderr
     md = (tmp_path / ".axial" / "judges" / "merged" / "v1" / "alignment.md").read_bytes()
     text = md.decode("utf-8")

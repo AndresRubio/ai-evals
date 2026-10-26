@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from skip_helpers import skip_off_ci
 
 from axial.dataset import Splits
 from axial.errors import AxialError, MalformedFile
@@ -280,7 +281,7 @@ def test_the_store_reads_utf8_whatever_the_locale(tmp_path: Path):
     )
     encoding = result.stdout.split()[0] if result.stdout else ""
     if encoding.lower().replace("-", "") == "utf8":
-        pytest.skip("this platform's C locale is UTF-8, so the default encoding is not tested")
+        skip_off_ci("this platform's C locale is UTF-8, so the default encoding is not tested")
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout.splitlines()[1]) == [text] * 3
 

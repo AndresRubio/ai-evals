@@ -20,6 +20,7 @@ from pathlib import Path
 
 import pytest
 from measure_helpers import MEASURE_MODE, build_promoted_judge, fake_judge_builder
+from skip_helpers import skip_off_ci
 from typer.testing import CliRunner, Result
 
 from axial.cli import app
@@ -514,7 +515,7 @@ def corrupt(store: Store, kind: str) -> str:
         return "labels.jsonl: line 131: critique: Field required"
     assert kind == "labels-unreadable"
     if os.geteuid() == 0:
-        pytest.skip("root reads a file whatever its mode")
+        skip_off_ci("root reads a file whatever its mode")
     labels.chmod(0)
     return "Permission denied"
 
@@ -580,7 +581,7 @@ def test_checks_over_a_corrupt_store_fails_cleanly(tmp_path: Path, damaged: str)
     verdicts = store.judge_dir(MEASURE_MODE, 1) / "verdicts.jsonl"
     if damaged == "verdicts-unreadable":
         if os.geteuid() == 0:
-            pytest.skip("root reads a file whatever its mode")
+            skip_off_ci("root reads a file whatever its mode")
         verdicts.chmod(0)
         expected = "Permission denied"
     else:

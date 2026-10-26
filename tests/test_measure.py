@@ -418,7 +418,7 @@ def test_rewritten_input_hashes_are_refused(store: Store):
     ids=["string", "one", "zero", "null"],
 )
 def test_a_verdict_that_is_not_true_or_false_is_refused(
-    store: Store, trace_id: str, verdict: object
+    store: Store, trace_id: str, verdict: str | int | None
 ):
     """`pair_batches` reads each verdict with `bool()`, so a `"false"` typed over `true`
     would still count as flagged. Each edit keeps the flagged count, so only the type

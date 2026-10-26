@@ -18,7 +18,7 @@ import socket
 import traceback
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, get_args
+from typing import Any, ForwardRef, Literal, get_args, get_origin
 
 import pytest
 from measure_helpers import MEASURE_MODE, build_promoted_judge, fake_judge_builder, write_batch
@@ -213,19 +213,28 @@ def record_document_models(monkeypatch: pytest.MonkeyPatch) -> set[type[BaseMode
 
 
 def nested_models(annotation: object) -> list[type[BaseModel]]:
-    """The models a field's type holds, however deep: `list[M]`, `M | None`, `dict[str, M]`."""
+    """The models a field's type holds, however deep: `list[M]`, `M | None`, `dict[str, M]`.
+    A type pydantic has not resolved hides the models in it, so it fails the walk."""
     if isinstance(annotation, type) and issubclass(annotation, BaseModel):
         return [annotation]
+    if get_origin(annotation) is Literal:
+        return []  # its arguments are values, not types
+    assert not isinstance(annotation, str | ForwardRef), f"unresolved type {annotation!r}"
     return [model for arg in get_args(annotation) for model in nested_models(arg)]
 
 
-def lenient(model: type[BaseModel], where: str = "") -> list[str]:
-    """Where `model`, or a model one of its fields holds, would drop an unknown key."""
+def lenient(
+    model: type[BaseModel], where: str = "", inside: frozenset[type[BaseModel]] = frozenset()
+) -> list[str]:
+    """Where `model`, or a model one of its fields holds, would drop an unknown key. A model
+    met again inside itself was checked where it was first met, so the walk stops there."""
     where = where or model.__name__
     found = [] if model.model_config.get("extra") == "forbid" else [where]
+    inside = inside | {model}
     for name, field in model.model_fields.items():
         for inner in nested_models(field.annotation):
-            found += lenient(inner, f"{where}.{name}")
+            if inner not in inside:
+                found += lenient(inner, f"{where}.{name}", inside)
     return found
 
 
@@ -257,6 +266,9 @@ class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+STRICT = ConfigDict(extra="forbid")
+
+
 @pytest.mark.parametrize(
     "shape",
     [
@@ -268,16 +280,43 @@ class _Strict(BaseModel):
     ],
     ids=["bare", "list", "optional", "dict", "nested"],
 )
-def test_lenient_finds_a_model_however_a_field_holds_it(shape: Callable[[type], object]) -> None:
-    """The test above checks only the models this walk opens, so a shape it skipped would
-    hide a lenient model and pass."""
+def test_lenient_finds_a_model_however_a_field_holds_it(
+    shape: Callable[[type[BaseModel]], object],
+) -> None:
+    """The test of every document model checks only the models this walk opens, so a shape
+    it skipped would hide a lenient model and pass."""
 
     def holder(inner: type[BaseModel]) -> type[BaseModel]:
-        strict = ConfigDict(extra="forbid")
-        return create_model("Holder", __config__=strict, inner=(shape(inner), None))
+        return create_model("Holder", __config__=STRICT, inner=(shape(inner), None))
 
     assert lenient(holder(_Loose)) == ["Holder.inner"]
     assert lenient(holder(_Strict)) == []
+
+
+class _Tree(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    children: list[_Tree] = []
+
+
+class _LooseTree(BaseModel):
+    children: list[_LooseTree] = []
+
+
+def test_lenient_walks_a_model_that_holds_itself_once() -> None:
+    assert lenient(_Tree) == []
+    assert lenient(_LooseTree) == ["_LooseTree"]
+
+
+def test_lenient_fails_on_a_type_pydantic_has_not_resolved() -> None:
+    """Such a type holds no model the walk can see, so a lenient one inside would pass."""
+    holder = create_model("Holder", __config__=STRICT, inner=("Missing", None))
+    with pytest.raises(AssertionError, match="unresolved type"):
+        lenient(holder)
+
+
+def test_lenient_reads_a_literals_strings_as_values() -> None:
+    holder = create_model("Holder", __config__=STRICT, kind=(Literal["a", "b"], "a"))
+    assert lenient(holder) == []
 
 
 def appending(data: bytes) -> Callable[[Path], None]:
