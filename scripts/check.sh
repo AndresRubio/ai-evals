@@ -5,6 +5,11 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
+# GitHub Actions sets GITHUB_ACTIONS=true, and Typer then renders CLI output in color,
+# so a test can pass here and fail there. CI=true stays unset: it turns a skipped root
+# or locale test into a failure, and those skip on a laptop.
+export GITHUB_ACTIONS=true
+
 failed=()
 step() {
   echo "==> $*"
