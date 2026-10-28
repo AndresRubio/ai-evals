@@ -97,12 +97,17 @@ def gate(
 
     if baseline_version is not None:
         base_rows = _load(store, mode, baseline_version)
-        if [r["trace_id"] for r in base_rows] != [r["trace_id"] for r in rows]:
+        # Paired by trace id, in the candidate's order. Row order in verdicts.jsonl says
+        # nothing about which case is which: re-running a split appends it after the
+        # others. A repeated id on either side is refused with the rest.
+        base_by_id = {r["trace_id"]: r for r in base_rows}
+        ids = [r["trace_id"] for r in rows]
+        if len(base_by_id) != len(base_rows) or sorted(ids) != sorted(base_by_id):
             raise InvariantViolation(
-                "baseline and candidate must cover the same cases in the same order; "
+                "baseline and candidate must cover the same cases; "
                 "comparing different case sets measures the case set, not the change"
             )
-        baseline = [bool(r["verdict"]) for r in base_rows]
+        baseline = [bool(base_by_id[trace_id]["verdict"]) for trace_id in ids]
         delta, (low, high) = compare(baseline, candidate, seed=seed)
         messages.append(
             f"delta vs v{baseline_version}: {delta:+.3f} failure rate "

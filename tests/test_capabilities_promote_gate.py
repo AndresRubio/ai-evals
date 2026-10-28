@@ -261,13 +261,6 @@ def test_gate_cli_exit_code_is_nonzero_only_for_a_regression_or_a_refusal(
     assert says in result.stdout
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=InvariantViolation,
-    reason="gate pairs baseline and candidate by row position (gate.py:133), and run_judge "
-    "appends a re-run split after the others, so the same cases with identical verdicts are "
-    "refused as 'different case sets' once either version re-ran a split",
-)
 def test_the_gate_pairs_cases_by_id_not_by_their_order_in_verdicts_jsonl(tmp_path: Path):
     """v2 re-ran dev after test; it covers the same cases as v1 and must still be comparable."""
     store = Store(tmp_path)

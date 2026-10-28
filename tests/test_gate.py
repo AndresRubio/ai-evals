@@ -20,19 +20,23 @@ from axial.store import Store
 from axial.traces import Trace
 
 
-def write_verdicts(store: Store, mode: str, version: int, verdicts: list[bool]) -> None:
+def write_verdicts(
+    store: Store, mode: str, version: int, verdicts: list[bool], ids: list[str] | None = None
+) -> None:
     """A hand-made PROMOTED marker for tests that exercise `gate`'s own
     comparison logic rather than the promotion-binding invariant. A
     default judge.yaml is saved for these fixtures, so the marker can carry the
-    hash of the prompt it gives, as a real one always does.
+    hash of the prompt it gives, as a real one always does. The trace ids are
+    t0, t1, ... unless `ids` names them.
     """
     directory = store.judge_dir(mode, version)
     directory.mkdir(parents=True, exist_ok=True)
+    trace_ids = ids if ids is not None else [f"t{i}" for i in range(len(verdicts))]
     store.write_jsonl(
         directory / "verdicts.jsonl",
         [
-            {"trace_id": f"t{i}", "split": "gate", "verdict": v, "truth": None}
-            for i, v in enumerate(verdicts)
+            {"trace_id": t, "split": "gate", "verdict": v, "truth": None}
+            for t, v in zip(trace_ids, verdicts, strict=True)
         ],
     )
     JudgeSpec(mode=mode, model="fake", version=version).save(store)
@@ -122,6 +126,29 @@ def test_mismatched_case_sets_are_refused(tmp_path: Path):
     store = Store(tmp_path)
     write_verdicts(store, "merged", 1, [False] * 10)
     write_verdicts(store, "merged", 2, [False] * 9)
+    with pytest.raises(InvariantViolation, match="same cases"):
+        gate(store, "merged", 2, baseline_version=1, seed=1)
+
+
+def test_case_sets_of_the_same_size_with_different_ids_are_refused(tmp_path: Path):
+    store = Store(tmp_path)
+    write_verdicts(store, "merged", 1, [False] * 3, ids=["a", "b", "c"])
+    write_verdicts(store, "merged", 2, [False] * 3, ids=["a", "b", "d"])
+    with pytest.raises(InvariantViolation, match="same cases"):
+        gate(store, "merged", 2, baseline_version=1, seed=1)
+
+
+@pytest.mark.parametrize(
+    ("baseline_ids", "candidate_ids"),
+    [(["a", "b"], ["a", "a"]), (["a", "a"], ["a", "b"]), (["a", "a"], ["a", "a"])],
+)
+def test_a_repeated_trace_id_on_either_side_is_refused(
+    tmp_path: Path, baseline_ids: list[str], candidate_ids: list[str]
+):
+    """Pairing is by trace id, so an id that appears twice cannot be paired."""
+    store = Store(tmp_path)
+    write_verdicts(store, "merged", 1, [False, True], ids=baseline_ids)
+    write_verdicts(store, "merged", 2, [False, True], ids=candidate_ids)
     with pytest.raises(InvariantViolation, match="same cases"):
         gate(store, "merged", 2, baseline_version=1, seed=1)
 
