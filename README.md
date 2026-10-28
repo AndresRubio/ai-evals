@@ -319,10 +319,11 @@ Two properties worth understanding before trusting a batch:
 - **Harbor** (from the creators of Terminal-Bench): runs agents on tasks in fresh
   sandboxes and scores what they leave behind with a verifier written with each task,
   Apache-2.0. Its Rewardkit judges, LLM or agent, report how often they agree with
-  themselves across samples, and its oracle checks that a verifier passes a correct
-  solution. Neither measures a judge against human labels, so a judge that passes wrong
-  answers goes unnoticed. `axial` sits upstream of a Rewardkit judge as it does of an
-  Inspect scorer.
+  themselves across samples. Its `oracle` agent checks that a verifier passes a correct
+  solution, and running its `nop` agent, which does nothing, shows whether the verifier
+  fails an untouched environment. Neither tests a judge on a plausible wrong answer, and
+  its judge and verifier docs describe no way to compare a judge with human labels.
+  `axial` sits upstream of a Rewardkit judge as it does of an Inspect scorer.
 - **lm-evaluation-harness** — foundation-model benchmarking, where the taxonomy is the
   benchmark and is given to you. Different problem.
 - **Langfuse, Opik, LangSmith, Braintrust, Phoenix** — trace storage and judge running;
