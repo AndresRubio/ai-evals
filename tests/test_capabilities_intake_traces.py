@@ -61,8 +61,8 @@ def test_csv_quoted_fields_may_contain_commas_and_newlines(tmp_path: Path):
     assert trace.output == "yes, really"
 
 
-def test_ingest_picks_csv_only_for_a_lowercase_csv_suffix(tmp_path: Path):
-    """Anything that is not `.csv` is parsed as JSONL, whatever it is called."""
+def test_ingest_parses_any_suffix_other_than_csv_as_jsonl(tmp_path: Path):
+    """A file whose suffix is not `.csv`, in any case, is parsed as JSONL."""
     write_jsonl(tmp_path / "traces.txt", [{"input": "i", "output": "o"}])
     assert ingest(tmp_path / "traces.txt")[0].output == "o"
 
