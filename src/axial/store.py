@@ -165,7 +165,8 @@ class Store:
             fh.write(json.dumps(row, sort_keys=True) + "\n")
 
     def _numbered_rows(self, path: Path) -> Iterator[tuple[int, Any]]:
-        with path.open(encoding="utf-8") as fh:
+        # utf-8-sig drops a leading byte-order mark, which PowerShell 5 writes and json refuses.
+        with path.open(encoding="utf-8-sig") as fh:
             try:
                 for lineno, line in enumerate(fh, start=1):
                     if not line.strip():
