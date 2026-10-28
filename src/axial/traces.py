@@ -109,4 +109,5 @@ def ingest(path: Path, *, adapter: str | None = None) -> list[Trace]:
         if adapter not in _ADAPTERS:
             raise ValueError(f"no adapter registered under {adapter!r}")
         return _ADAPTERS[adapter](path)
-    return ingest_csv(path) if path.suffix == ".csv" else ingest_jsonl(path)
+    # Windows and Excel often write the suffix in capitals: TRACES.CSV is a CSV too.
+    return ingest_csv(path) if path.suffix.lower() == ".csv" else ingest_jsonl(path)

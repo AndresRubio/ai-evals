@@ -67,8 +67,6 @@ def test_ingest_picks_csv_only_for_a_lowercase_csv_suffix(tmp_path: Path):
     assert ingest(tmp_path / "traces.txt")[0].output == "o"
 
 
-@pytest.mark.xfail(strict=True, reason="traces.py:78 compares path.suffix case-sensitively, so a "
-                   "Windows/Excel-style TRACES.CSV is parsed as JSONL and crashes")
 def test_ingest_treats_an_uppercase_csv_suffix_as_csv(tmp_path: Path):
     """A `.CSV` file should be read as CSV."""
     (tmp_path / "TRACES.CSV").write_text("input,output\ni,o\n")
