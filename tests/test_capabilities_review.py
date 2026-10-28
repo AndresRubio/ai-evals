@@ -640,11 +640,6 @@ def test_opening_a_session_that_does_not_exist_is_an_error(tmp_path: Path):
     assert response.status_code >= 400
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="app.py routes /api/review/{trace_id}, which cannot match an id containing '/', so the "
-    "page's encodeURIComponent'd request 404s and such a trace can never be annotated",
-)
 def test_a_trace_id_containing_a_slash_can_be_annotated(tmp_path: Path):
     """Ids from adapters are often paths or URLs (`run/123`); they should be reviewable."""
     store = Store(tmp_path)
@@ -656,6 +651,7 @@ def test_a_trace_id_containing_a_slash_can_be_annotated(tmp_path: Path):
     response = client.post(f"/api/review/{quote('run/123', safe='')}", json={"verdict": "fail"})
 
     assert response.status_code == 200
+    assert read_session(store, "s1")[0].status == "done"
 
 
 def test_trace_ids_with_spaces_and_punctuation_can_be_annotated(tmp_path: Path):
