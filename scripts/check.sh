@@ -17,7 +17,7 @@ step() {
 }
 
 step uv run ruff check .
-step uv run mypy src/axial
+step uv run mypy src/axial scripts
 step uv run pytest -q
 step env UV_PROJECT_ENVIRONMENT=.venv-3.13 uv run --python 3.13 pytest -q
 step uv run python scripts/knowledge_index.py --check

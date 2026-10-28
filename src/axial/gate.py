@@ -13,6 +13,7 @@ corrected difference between two batches, paired by input where they share input
 from __future__ import annotations
 
 import dataclasses
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -97,12 +98,26 @@ def gate(
 
     if baseline_version is not None:
         base_rows = _load(store, mode, baseline_version)
-        if [r["trace_id"] for r in base_rows] != [r["trace_id"] for r in rows]:
+        # Paired by trace id, in the candidate's order. Row order in verdicts.jsonl says
+        # nothing about which case is which: re-running a split appends it after the
+        # others. An id repeated on either side cannot be paired, so it is refused.
+        for checked_version, checked_rows in ((baseline_version, base_rows), (version, rows)):
+            repeated = _repeated_ids(checked_rows)
+            if repeated:
+                shown = ", ".join(repr(trace_id) for trace_id in repeated[:5])
+                more = f" and {len(repeated) - 5} more" if len(repeated) > 5 else ""
+                raise InvariantViolation(
+                    f"{mode} v{checked_version} has more than one verdict row for "
+                    f"{shown}{more}; the gate pairs cases by trace id, so each must appear once"
+                )
+        ids = [r["trace_id"] for r in rows]
+        if sorted(ids) != sorted(r["trace_id"] for r in base_rows):
             raise InvariantViolation(
-                "baseline and candidate must cover the same cases in the same order; "
+                "baseline and candidate must cover the same cases; "
                 "comparing different case sets measures the case set, not the change"
             )
-        baseline = [bool(r["verdict"]) for r in base_rows]
+        base_by_id = {r["trace_id"]: r for r in base_rows}
+        baseline = [bool(base_by_id[trace_id]["verdict"]) for trace_id in ids]
         delta, (low, high) = compare(baseline, candidate, seed=seed)
         messages.append(
             f"delta vs v{baseline_version}: {delta:+.3f} failure rate "
@@ -119,6 +134,12 @@ def gate(
             messages.append("no change detectable above the noise floor")
 
     return GateResult(passed=passed, messages=messages)
+
+
+def _repeated_ids(rows: list[dict[str, Any]]) -> list[str]:
+    """The trace ids that more than one row carries, sorted."""
+    counts = Counter(r["trace_id"] for r in rows)
+    return sorted(trace_id for trace_id, n in counts.items() if n > 1)
 
 
 def _bounds_agree(stored: list[float] | None, recomputed: list[float] | None) -> bool:

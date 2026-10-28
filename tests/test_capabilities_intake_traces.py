@@ -61,14 +61,12 @@ def test_csv_quoted_fields_may_contain_commas_and_newlines(tmp_path: Path):
     assert trace.output == "yes, really"
 
 
-def test_ingest_picks_csv_only_for_a_lowercase_csv_suffix(tmp_path: Path):
-    """Anything that is not `.csv` is parsed as JSONL, whatever it is called."""
+def test_ingest_parses_any_suffix_other_than_csv_as_jsonl(tmp_path: Path):
+    """A file whose suffix is not `.csv`, in any case, is parsed as JSONL."""
     write_jsonl(tmp_path / "traces.txt", [{"input": "i", "output": "o"}])
     assert ingest(tmp_path / "traces.txt")[0].output == "o"
 
 
-@pytest.mark.xfail(strict=True, reason="traces.py:78 compares path.suffix case-sensitively, so a "
-                   "Windows/Excel-style TRACES.CSV is parsed as JSONL and crashes")
 def test_ingest_treats_an_uppercase_csv_suffix_as_csv(tmp_path: Path):
     """A `.CSV` file should be read as CSV."""
     (tmp_path / "TRACES.CSV").write_text("input,output\ni,o\n")
@@ -108,8 +106,6 @@ def test_a_csv_row_with_extra_cells_is_rejected(tmp_path: Path):
         ingest_csv(tmp_path / "t.csv")
 
 
-@pytest.mark.xfail(strict=True, reason="traces.py:55 opens the CSV as plain utf-8, so the BOM Excel "
-                   "prepends glues onto the first header and 'input' is reported missing")
 def test_a_csv_saved_by_excel_with_a_utf8_bom_is_readable(tmp_path: Path):
     """A BOM-prefixed CSV should ingest like any other."""
     (tmp_path / "t.csv").write_bytes(b"\xef\xbb\xbfinput,output\ni,o\n")

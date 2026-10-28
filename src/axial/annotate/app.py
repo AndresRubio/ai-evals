@@ -62,7 +62,9 @@ def create_app(store: Store, session: str, annotator: str) -> FastAPI:
             "items": items,
         }
 
-    @app.post("/api/review/{trace_id}")
+    # `:path`, because the server decodes the page's %2F before routing, and a plain
+    # parameter stops at "/": an id such as "run/123" from an adapter would never match.
+    @app.post("/api/review/{trace_id:path}")
     def post_review(trace_id: str, body: ReviewIn) -> dict[str, Any]:
         reviews = read_session(store, session)
         for review in reviews:

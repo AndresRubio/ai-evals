@@ -27,6 +27,16 @@ def test_init_writes_a_config(tmp_path: Path):
     assert Store(tmp_path).config_path.exists()
 
 
+def test_init_again_keeps_the_existing_config_and_says_so(tmp_path: Path):
+    config_path = Store(tmp_path).config_path
+    runner.invoke(app, ["init", "--repo", str(tmp_path)])
+    config_path.write_text('annotator = "andres"\n')
+    result = runner.invoke(app, ["init", "--repo", str(tmp_path)])
+    assert result.exit_code == 0
+    assert "already exists; left it unchanged" in result.stdout
+    assert config_path.read_text() == 'annotator = "andres"\n'
+
+
 def test_ingest_loads_traces(tmp_path: Path):
     src = write_traces_file(tmp_path, 5)
     result = runner.invoke(app, ["ingest", str(src), "--repo", str(tmp_path)])
@@ -141,7 +151,7 @@ def test_checks_reports_rows_with_no_usage_as_unknown_not_zero(tmp_path: Path):
     assert result.exit_code == 0, result.stdout
     assert "2 row(s) unknown" in result.stdout
     assert "$0.0000" not in result.stdout  # the priced row's $5.00 must still show
-    assert "$5.0000" in result.stdout
+    assert "cost of the test split: $5.0000 known, 2 row(s) unknown" in result.stdout
 
 
 def test_label_from_reviews_converts_completed_reviews_across_sessions(tmp_path: Path):

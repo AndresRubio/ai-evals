@@ -418,7 +418,7 @@ def test_capability_tour_runs_the_whole_pipeline_through_the_cli(
     out = axial("checks", MODE, "1", "--slice-by", "planted_mode").output
     assert f"noise floor at n={len(splits['test'])}" in out
     assert "verbosity bias" in out
-    assert re.search(r"^cost: \$\d+\.\d{4}$", out, re.MULTILINE)  # priced, no unknown rows
+    assert re.search(r"^cost of the test split: \$\d+\.\d{4}$", out, re.MULTILINE)  # priced, no unknown rows
     assert "planted_mode=merged_stories: n=" in out
     assert "planted_mode=clean: n=" in out
 

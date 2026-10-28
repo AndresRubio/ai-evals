@@ -131,8 +131,13 @@ SessionsArgument = typer.Argument(
 def init(repo: str = RepoOption) -> None:
     """Create .axial/ and a default config."""
     store = Store(repo)
-    write_default_config(store)
-    typer.echo(f"initialised {store.root}")
+    if write_default_config(store):
+        typer.echo(f"initialised {store.root}")
+    else:
+        typer.echo(
+            f"{store.config_path} already exists; left it unchanged "
+            "(delete it and run init again for the defaults)"
+        )
 
 
 @app.command()
@@ -525,7 +530,9 @@ def checks(
         _fail(f"no {split_name} verdicts for {mode} v{version}")
     typer.echo(f"noise floor at n={len(rows)}: +/-{ci_half_width(len(rows)):.3f}")
 
-    bias = verbosity_bias(verdicts, traces)
+    # Bias and cost describe the same split as the noise floor, so all three are read
+    # from `rows`; the other splits' verdicts would pool into numbers nobody asked for.
+    bias = verbosity_bias(rows, traces)
     typer.echo(
         f"verbosity bias (length vs fail): {bias:.3f}"
         if not math.isnan(bias)
@@ -541,7 +548,7 @@ def checks(
     known_cost = 0.0
     unknown_rows = 0
     unpriced_models: set[str] = set()
-    for row in verdicts:
+    for row in rows:
         usage = row.get("usage", {})
         model_name = str(row.get("model", "unknown"))
         priced = cost_usd(usage, model_name)
@@ -552,11 +559,13 @@ def checks(
                 unpriced_models.add(model_name)
         else:
             known_cost += priced
+    # The line names the split: the cost of one split is easily read as the whole run's.
+    label = f"cost of the {split_name} split"
     if unknown_rows:
         detail = f"; unpriced model(s): {', '.join(sorted(unpriced_models))}" if unpriced_models else ""
-        typer.echo(f"cost: ${known_cost:.4f} known, {unknown_rows} row(s) unknown{detail}")
+        typer.echo(f"{label}: ${known_cost:.4f} known, {unknown_rows} row(s) unknown{detail}")
     else:
-        typer.echo(f"cost: ${known_cost:.4f}")
+        typer.echo(f"{label}: ${known_cost:.4f}")
 
     if key:
         for value, result in sorted(slice_alignment(verdicts, traces, key, split=split_name).items()):

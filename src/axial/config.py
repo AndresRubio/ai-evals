@@ -91,9 +91,20 @@ _CONFIG_KEYS = {f.name for f in fields(Config)}
 _THRESHOLD_KEYS = {f.name for f in fields(Thresholds)}
 
 
-def write_default_config(store: Store) -> None:
+def write_default_config(store: Store) -> bool:
+    """Write the default config.toml, unless one exists. Returns whether it wrote one.
+
+    An existing file holds the annotator and thresholds someone set, so running
+    `axial init` again leaves it alone. Mode "x" refuses to open an existing file,
+    so nothing can appear between a check and the write.
+    """
     store.config_path.parent.mkdir(parents=True, exist_ok=True)
-    store.config_path.write_text(DEFAULT_CONFIG, encoding="utf-8")
+    try:
+        with store.config_path.open("x", encoding="utf-8") as fh:
+            fh.write(DEFAULT_CONFIG)
+    except FileExistsError:
+        return False
+    return True
 
 
 def _number[T](table: dict[str, Any], key: str, default: T, cast: Callable[[Any], T]) -> T:

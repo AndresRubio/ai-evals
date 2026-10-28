@@ -276,7 +276,9 @@ def labels_from_reviews(reviews: list[Review]) -> tuple[list[Label], int]:
     `label=True`; `"pass"` becomes `label=False`. A `pending` review carries no
     verdict yet and is skipped rather than defaulted to a pass, and the skip
     count is returned so a caller can report it instead of silently losing
-    rows.
+    rows. A `done` review whose verdict is anything but "pass" or "fail" (none,
+    "unsure", "FAIL") is refused: only a session file edited by hand or written
+    by another tool holds one, and reading it as a pass would invert a failure.
 
     This does not itself enforce the human-annotator or non-blank-critique
     rules -- the labels it returns still go through `add_labels`, so every
@@ -289,6 +291,12 @@ def labels_from_reviews(reviews: list[Review]) -> tuple[list[Label], int]:
         if review.status != "done":
             skipped += 1
             continue
+        if review.verdict not in ("pass", "fail"):
+            raise InvariantViolation(
+                f"the review of {review.trace_id!r} is done but its verdict is "
+                f"{review.verdict!r}; only 'pass' or 'fail' can become a label. Set it in "
+                "the session file, or review the trace again in `axial annotate`."
+            )
         labels.append(
             Label(
                 trace_id=review.trace_id,

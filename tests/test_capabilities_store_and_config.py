@@ -380,8 +380,6 @@ def test_a_wrongly_typed_config_value_is_refused_naming_the_file_and_key(
         load_config(store)
 
 
-@pytest.mark.xfail(strict=True, reason="config.py:90 write_text() overwrites unconditionally, so "
-                   "running `axial init` again wipes a configured annotator and thresholds")
 def test_writing_the_default_config_does_not_clobber_an_existing_one(tmp_path: Path):
     """Re-running init on a configured project should keep the user's settings."""
     store = Store(tmp_path)

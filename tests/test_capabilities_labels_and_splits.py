@@ -335,6 +335,15 @@ def test_label_from_reviews_refuses_a_review_finished_without_an_annotator(tmp_p
     assert read_labels(Store(tmp_path), "m") == []
 
 
+def test_label_from_reviews_refuses_a_done_review_with_an_unknown_verdict(tmp_path: Path):
+    """A hand-edited 'FAIL' is not read as a pass; the import stops and records nothing."""
+    write_session(Store(tmp_path), "s1", [done("a", "fail"), done("b", "FAIL")])
+    result = run_cli(tmp_path, "label-from-reviews", "m", "s1")
+    assert result.exit_code == 1
+    assert "'b' is done but its verdict is 'FAIL'" in result.stdout
+    assert read_labels(Store(tmp_path), "m") == []
+
+
 def test_label_from_reviews_keeps_open_codes_out_of_the_labels(tmp_path: Path):
     """Only verdict, critique and annotator cross over; the open code stays in the session."""
     write_session(Store(tmp_path), "s1", [done("a", "fail", open_code="two stories fused")])
@@ -349,8 +358,6 @@ def test_label_from_reviews_fails_for_a_session_that_does_not_exist(tmp_path: Pa
     assert run_cli(tmp_path, "label-from-reviews", "m", "no-such-session").exit_code != 0
 
 
-@pytest.mark.xfail(strict=True, reason="dataset.py:267 sets label = (verdict == 'fail'), so a done "
-                   "review whose verdict is missing or unrecognised silently becomes a PASS label")
 @pytest.mark.parametrize("verdict", [None, "unsure"])
 def test_a_done_review_without_a_pass_or_fail_verdict_does_not_become_a_pass(verdict):
     """Anything other than 'pass'/'fail' should be skipped or refused, never defaulted to pass."""
