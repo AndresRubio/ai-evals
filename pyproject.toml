@@ -34,7 +34,8 @@ line-length = 100
 
 [tool.ruff.lint]
 # SLF001 keeps Store._read_jsonl, whose rows nothing has checked, inside the store.
-extend-select = ["TID251", "SLF001"]
+# RUF100 flags a noqa that suppresses nothing, such as one for a rule that is not enabled.
+extend-select = ["TID251", "SLF001", "RUF100"]
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 "yaml.safe_load".msg = "read YAML through Store.read_yaml, so a bad file is refused in one line naming it"
