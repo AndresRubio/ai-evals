@@ -81,8 +81,14 @@ def ingest_csv(path: Path) -> list[Trace]:
     # utf-8-sig drops the byte-order mark Excel writes at the start of "CSV UTF-8", which
     # would otherwise glue onto the first header; a file without one reads as plain utf-8.
     with Path(path).open(encoding="utf-8-sig", newline="") as fh:
+        # Excel in locales with a decimal comma (Spanish, German, ...) saves "CSV UTF-8" with
+        # `;` between fields. Only the header decides, so a file always parses the same way:
+        # one with `;` and no `,` cannot be a valid comma CSV, as it would have one column.
+        header = fh.readline()
+        delimiter = ";" if ";" in header and "," not in header else ","
+        fh.seek(0)
         try:
-            rows = list(csv.DictReader(fh))
+            rows = list(csv.DictReader(fh, delimiter=delimiter))
         except csv.Error as exc:  # not a ValueError, so callers catching ValueError would miss it
             raise ValueError(f"{path}: {exc}") from exc
     for n, row in enumerate(rows, start=1):

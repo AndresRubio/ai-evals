@@ -112,6 +112,31 @@ def test_a_csv_saved_by_excel_with_a_utf8_bom_is_readable(tmp_path: Path):
     assert ingest_csv(tmp_path / "t.csv")[0].input == "i"
 
 
+def test_a_csv_saved_by_excel_in_a_semicolon_locale_is_readable(tmp_path: Path):
+    """Excel in decimal-comma locales separates fields with `;`; commas stay in their cells."""
+    (tmp_path / "t.csv").write_bytes(
+        "﻿input;output;latency_s\r\nhola, ¿qué tal?;bien;1,5\r\n".encode()
+    )
+    trace = ingest(tmp_path / "t.csv")[0]
+    assert (trace.input, trace.output) == ("hola, ¿qué tal?", "bien")
+    assert trace.metadata == {"latency_s": "1,5"}
+
+
+def test_a_comma_in_the_csv_header_keeps_semicolons_as_text(tmp_path: Path):
+    """A header with a comma is a comma CSV, even if a column name or a cell holds a `;`."""
+    (tmp_path / "t.csv").write_text("input,output,score; 1-5\na;b,c,4\n")
+    trace = ingest_csv(tmp_path / "t.csv")[0]
+    assert (trace.input, trace.output) == ("a;b", "c")
+    assert trace.metadata == {"score; 1-5": "4"}
+
+
+def test_a_semicolon_csv_is_refused_for_the_column_it_lacks(tmp_path: Path):
+    """A `;` header without `output` is refused for `output`, not for the `input` it has."""
+    (tmp_path / "t.csv").write_text("input;answer\ni;o\n")
+    with pytest.raises(ValueError, match="row 1: missing required field 'output'"):
+        ingest_csv(tmp_path / "t.csv")
+
+
 # --- ids -------------------------------------------------------------------------
 
 
