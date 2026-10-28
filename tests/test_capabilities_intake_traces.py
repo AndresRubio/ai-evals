@@ -6,9 +6,12 @@ expect, and will start failing (loudly) the day the defect is fixed.
 """
 
 import json
+import os
+import threading
 from pathlib import Path
 
 import pytest
+from skip_helpers import skip_off_ci
 from typer.testing import CliRunner
 
 from axial.cli import app
@@ -135,6 +138,19 @@ def test_a_semicolon_csv_is_refused_for_the_column_it_lacks(tmp_path: Path):
     (tmp_path / "t.csv").write_text("input;answer\ni;o\n")
     with pytest.raises(ValueError, match="row 1: missing required field 'output'"):
         ingest_csv(tmp_path / "t.csv")
+
+
+def test_a_csv_that_cannot_rewind_such_as_a_named_pipe_is_readable(tmp_path: Path):
+    """The header line is read once to pick the separator; a pipe cannot seek back to it."""
+    if not hasattr(os, "mkfifo"):
+        skip_off_ci("named pipes need os.mkfifo, which Windows lacks")
+    pipe = tmp_path / "t.csv"
+    os.mkfifo(pipe)
+    # Opening a pipe to write blocks until ingest opens it to read, so a thread writes it.
+    writer = threading.Thread(target=pipe.write_text, args=("input;output\ni;o\n",), daemon=True)
+    writer.start()
+    assert ingest(pipe)[0].output == "o"
+    writer.join(timeout=5)
 
 
 # --- ids -------------------------------------------------------------------------

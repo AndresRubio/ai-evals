@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import itertools
 import json
 from collections.abc import Callable
 from pathlib import Path
@@ -86,9 +87,9 @@ def ingest_csv(path: Path) -> list[Trace]:
         # one with `;` and no `,` cannot be a valid comma CSV, as it would have one column.
         header = fh.readline()
         delimiter = ";" if ";" in header and "," not in header else ","
-        fh.seek(0)
         try:
-            rows = list(csv.DictReader(fh, delimiter=delimiter))
+            # The header goes back in front of the rest, as a pipe cannot seek back to it.
+            rows = list(csv.DictReader(itertools.chain([header], fh), delimiter=delimiter))
         except csv.Error as exc:  # not a ValueError, so callers catching ValueError would miss it
             raise ValueError(f"{path}: {exc}") from exc
     for n, row in enumerate(rows, start=1):
