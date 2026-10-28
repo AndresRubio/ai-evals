@@ -11,6 +11,8 @@ from skip_helpers import skip_off_ci
 
 from axial.dataset import Splits
 from axial.errors import AxialError, MalformedFile
+from axial.judge import read_verdicts
+from axial.sample import read_session
 from axial.store import Store
 from axial.traces import Trace
 
@@ -249,6 +251,23 @@ def test_a_reader_refuses_bytes_that_are_not_utf8_in_one_line(tmp_path: Path, re
     with pytest.raises(MalformedFile) as caught:
         getattr(s, reader)(path)
     assert str(caught.value) == f"{path}: not utf-8 text: invalid start byte"
+
+
+def test_a_hand_edited_review_session_that_starts_with_a_byte_order_mark_loads(tmp_path: Path):
+    """An editor saving "UTF-8 with BOM" leaves a mark at the start that json alone refuses."""
+    s = Store(tmp_path)
+    s.reviews_dir.mkdir(parents=True)
+    row = {"trace_id": "a", "verdict": "fail", "critique": "c", "annotator": "x", "status": "done"}
+    (s.reviews_dir / "s.jsonl").write_bytes(b"\xef\xbb\xbf" + json.dumps(row).encode() + b"\n")
+    assert [review.trace_id for review in read_session(s, "s")] == ["a"]
+
+
+def test_a_hand_edited_verdicts_file_that_starts_with_a_byte_order_mark_loads(tmp_path: Path):
+    s = Store(tmp_path)
+    path = s.judge_dir("m", 1) / "verdicts.jsonl"
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b'\xef\xbb\xbf{"trace_id": "a", "verdict": true}\n')
+    assert read_verdicts(s, path) == [{"trace_id": "a", "verdict": True}]
 
 
 READ_UNDER_ANY_LOCALE = r"""
