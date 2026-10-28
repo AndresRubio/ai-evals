@@ -108,8 +108,6 @@ def test_a_csv_row_with_extra_cells_is_rejected(tmp_path: Path):
         ingest_csv(tmp_path / "t.csv")
 
 
-@pytest.mark.xfail(strict=True, reason="traces.py:55 opens the CSV as plain utf-8, so the BOM Excel "
-                   "prepends glues onto the first header and 'input' is reported missing")
 def test_a_csv_saved_by_excel_with_a_utf8_bom_is_readable(tmp_path: Path):
     """A BOM-prefixed CSV should ingest like any other."""
     (tmp_path / "t.csv").write_bytes(b"\xef\xbb\xbfinput,output\ni,o\n")

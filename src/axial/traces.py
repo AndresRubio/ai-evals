@@ -77,7 +77,9 @@ def ingest_jsonl(path: Path) -> list[Trace]:
 
 
 def ingest_csv(path: Path) -> list[Trace]:
-    with Path(path).open(encoding="utf-8", newline="") as fh:
+    # utf-8-sig drops the byte-order mark Excel writes at the start of "CSV UTF-8", which
+    # would otherwise glue onto the first header; a file without one reads as plain utf-8.
+    with Path(path).open(encoding="utf-8-sig", newline="") as fh:
         try:
             rows = list(csv.DictReader(fh))
         except csv.Error as exc:  # not a ValueError, so callers catching ValueError would miss it
