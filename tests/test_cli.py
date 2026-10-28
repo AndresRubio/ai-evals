@@ -27,6 +27,16 @@ def test_init_writes_a_config(tmp_path: Path):
     assert Store(tmp_path).config_path.exists()
 
 
+def test_init_again_keeps_the_existing_config_and_says_so(tmp_path: Path):
+    config_path = Store(tmp_path).config_path
+    runner.invoke(app, ["init", "--repo", str(tmp_path)])
+    config_path.write_text('annotator = "andres"\n')
+    result = runner.invoke(app, ["init", "--repo", str(tmp_path)])
+    assert result.exit_code == 0
+    assert "already exists; left it unchanged" in result.stdout
+    assert config_path.read_text() == 'annotator = "andres"\n'
+
+
 def test_ingest_loads_traces(tmp_path: Path):
     src = write_traces_file(tmp_path, 5)
     result = runner.invoke(app, ["ingest", str(src), "--repo", str(tmp_path)])

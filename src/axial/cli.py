@@ -131,8 +131,13 @@ SessionsArgument = typer.Argument(
 def init(repo: str = RepoOption) -> None:
     """Create .axial/ and a default config."""
     store = Store(repo)
-    write_default_config(store)
-    typer.echo(f"initialised {store.root}")
+    if write_default_config(store):
+        typer.echo(f"initialised {store.root}")
+    else:
+        typer.echo(
+            f"{store.config_path} already exists; left it unchanged "
+            "(delete it and run init again for the defaults)"
+        )
 
 
 @app.command()
