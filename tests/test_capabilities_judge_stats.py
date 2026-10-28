@@ -409,13 +409,6 @@ def _checks_fixture(tmp_path: Path) -> Store:
     return store
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="`axial checks --split test` passes every split's verdicts to verbosity_bias "
-    "(cli.py:376), so the printed bias pools dev and test while the noise floor above it "
-    "is for the test split alone",
-)
 def test_checks_cli_reports_verbosity_bias_for_the_requested_split_only(tmp_path: Path):
     """`--split test` should report the test split's length/fail correlation, here +1.0."""
     _checks_fixture(tmp_path)
@@ -425,12 +418,6 @@ def test_checks_cli_reports_verbosity_bias_for_the_requested_split_only(tmp_path
     assert "verbosity bias (length vs fail): 1.000" in result.stdout
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="`axial checks --split test` sums cost over every split's verdicts (cli.py:392), "
-    "so the judged cost reported for the test split includes dev calls",
-)
 def test_checks_cli_reports_judged_cost_for_the_requested_split_only(tmp_path: Path):
     """Two test rows at 1M opus input tokens each cost 2 x $5.00 = $10.00, not $20.00."""
     _checks_fixture(tmp_path)

@@ -525,7 +525,9 @@ def checks(
         _fail(f"no {split_name} verdicts for {mode} v{version}")
     typer.echo(f"noise floor at n={len(rows)}: +/-{ci_half_width(len(rows)):.3f}")
 
-    bias = verbosity_bias(verdicts, traces)
+    # Bias and cost describe the same split as the noise floor, so all three are read
+    # from `rows`; the other splits' verdicts would pool into numbers nobody asked for.
+    bias = verbosity_bias(rows, traces)
     typer.echo(
         f"verbosity bias (length vs fail): {bias:.3f}"
         if not math.isnan(bias)
@@ -541,7 +543,7 @@ def checks(
     known_cost = 0.0
     unknown_rows = 0
     unpriced_models: set[str] = set()
-    for row in verdicts:
+    for row in rows:
         usage = row.get("usage", {})
         model_name = str(row.get("model", "unknown"))
         priced = cost_usd(usage, model_name)
