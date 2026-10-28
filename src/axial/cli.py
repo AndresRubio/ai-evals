@@ -559,11 +559,13 @@ def checks(
                 unpriced_models.add(model_name)
         else:
             known_cost += priced
+    # The line names the split: the cost of one split is easily read as the whole run's.
+    label = f"cost of the {split_name} split"
     if unknown_rows:
         detail = f"; unpriced model(s): {', '.join(sorted(unpriced_models))}" if unpriced_models else ""
-        typer.echo(f"cost: ${known_cost:.4f} known, {unknown_rows} row(s) unknown{detail}")
+        typer.echo(f"{label}: ${known_cost:.4f} known, {unknown_rows} row(s) unknown{detail}")
     else:
-        typer.echo(f"cost: ${known_cost:.4f}")
+        typer.echo(f"{label}: ${known_cost:.4f}")
 
     if key:
         for value, result in sorted(slice_alignment(verdicts, traces, key, split=split_name).items()):

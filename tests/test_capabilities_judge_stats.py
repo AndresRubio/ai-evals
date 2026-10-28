@@ -423,4 +423,4 @@ def test_checks_cli_reports_judged_cost_for_the_requested_split_only(tmp_path: P
     _checks_fixture(tmp_path)
     result = CliRunner().invoke(app, ["checks", "m", "1", "--split", "test", "--repo", str(tmp_path)])
     assert result.exit_code == 0, result.stdout
-    assert "cost: $10.0000" in result.stdout
+    assert "cost of the test split: $10.0000" in result.stdout

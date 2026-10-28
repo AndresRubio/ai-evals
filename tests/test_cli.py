@@ -151,7 +151,7 @@ def test_checks_reports_rows_with_no_usage_as_unknown_not_zero(tmp_path: Path):
     assert result.exit_code == 0, result.stdout
     assert "2 row(s) unknown" in result.stdout
     assert "$0.0000" not in result.stdout  # the priced row's $5.00 must still show
-    assert "$5.0000" in result.stdout
+    assert "cost of the test split: $5.0000 known, 2 row(s) unknown" in result.stdout
 
 
 def test_label_from_reviews_converts_completed_reviews_across_sessions(tmp_path: Path):
