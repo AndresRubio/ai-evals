@@ -62,7 +62,8 @@ def _trace_from_row(row: object, *, where: str) -> Trace:
 
 def ingest_jsonl(path: Path) -> list[Trace]:
     traces: list[Trace] = []
-    with Path(path).open(encoding="utf-8") as fh:
+    # utf-8-sig drops a leading byte-order mark, which PowerShell 5 writes and json refuses.
+    with Path(path).open(encoding="utf-8-sig") as fh:
         for n, line in enumerate(fh, start=1):
             if not line.strip():
                 continue

@@ -180,6 +180,12 @@ def test_blank_and_whitespace_only_jsonl_lines_are_skipped(tmp_path: Path):
     assert [t.input for t in ingest_jsonl(tmp_path / "t.jsonl")] == ["i1", "i2"]
 
 
+def test_a_jsonl_file_with_a_utf8_bom_is_readable(tmp_path: Path):
+    """PowerShell 5's `Set-Content -Encoding UTF8` starts the file with a BOM; it should ingest."""
+    (tmp_path / "t.jsonl").write_bytes(b'\xef\xbb\xbf{"input": "i", "output": "o"}\n')
+    assert ingest(tmp_path / "t.jsonl")[0].input == "i"
+
+
 def test_jsonl_row_numbers_in_errors_count_blank_lines(tmp_path: Path):
     """An error's 'row N' is the physical line number, so it matches what an editor shows."""
     (tmp_path / "t.jsonl").write_text('\n\n{"input": "i"}\n')
