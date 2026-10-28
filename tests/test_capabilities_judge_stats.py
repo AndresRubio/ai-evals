@@ -257,7 +257,7 @@ def test_train_split_verdicts_never_enter_dev_or_test_alignment():
 
 
 @pytest.mark.xfail(
-    strict=False,
+    strict=True,
     raises=AssertionError,
     reason="Design question, not a confirmed defect: run_judge trusts its `split` argument and never checks that `traces` belong to "
     "it, so a train trace used as a few-shot example can be scored as dev and inflate dev "

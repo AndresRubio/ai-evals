@@ -31,6 +31,7 @@ from typing import ClassVar
 
 import pytest
 import yaml
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from typer.testing import CliRunner, Result
 
@@ -118,7 +119,9 @@ def open_annotate_app(session: str) -> TestClient:
         mp.setattr("uvicorn.run", fake_run)
         axial("annotate", "--name", session)
     assert captured["host"] == "127.0.0.1"
-    return TestClient(captured["app"])  # type: ignore[arg-type]
+    served = captured["app"]
+    assert isinstance(served, FastAPI)
+    return TestClient(served)
 
 
 def annotate_via_app(session: str, verdict_for: Callable[[str], str]) -> int:

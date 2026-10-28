@@ -916,7 +916,7 @@ def test_a_mode_name_ending_in_punctuation_is_still_counted():
 
 
 @pytest.mark.xfail(
-    strict=False,
+    strict=True,
     reason="Design question, not a confirmed defect: taxonomy.py Taxonomy.recount counts review rows, while count_open_codes deliberately "
     "counts distinct traces; two sessions coding one trace inflate its mode's prevalence to 2",
 )

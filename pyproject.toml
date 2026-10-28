@@ -51,3 +51,6 @@ strict = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# An xfail whose test starts passing fails the run, so a fixed defect or a changed
+# design question gets looked at.
+xfail_strict = true

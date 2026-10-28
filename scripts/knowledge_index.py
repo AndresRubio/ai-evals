@@ -17,7 +17,7 @@ import tomllib
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeGuard
 
 import yaml
 
@@ -76,7 +76,7 @@ def split_frontmatter(text: str) -> tuple[dict[str, Any], str]:
     return data, body
 
 
-def _is_date(value: object) -> bool:
+def _is_date(value: object) -> TypeGuard[date]:
     return isinstance(value, date) and not isinstance(value, datetime)
 
 
@@ -91,18 +91,14 @@ def _check_sources(raw: object, out: list[str]) -> tuple[Source, ...]:
             continue
         url = item.get("url")
         read = item.get("read")
-        ok = True
         if not isinstance(url, str) or not url:
             out.append(f"sources[{i}].url: missing")
-            ok = False
         if read is None:
             out.append(f"sources[{i}].read: missing")
-            ok = False
         elif not _is_date(read):
             out.append(f"sources[{i}].read: not an ISO date")
-            ok = False
-        if ok:
-            sources.append(Source(str(url), read))  # type: ignore[arg-type]
+        if isinstance(url, str) and url and _is_date(read):
+            sources.append(Source(url, read))
     return tuple(sources)
 
 
@@ -180,12 +176,13 @@ def parse_entry(path: Path, root: Path) -> Entry:
 
     if problems:
         raise KnowledgeError([f"{rel}: {p}" for p in problems])
+    assert _is_date(updated)  # a required key, and anything else was a problem above
 
     return Entry(
         name=str(name),
         description=str(description).strip(),
         shelf=str(shelf),
-        updated=updated,  # type: ignore[arg-type]
+        updated=updated,
         sources=sources,
         related=tuple(related_raw),
         extra=extra,

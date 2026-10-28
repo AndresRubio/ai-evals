@@ -229,10 +229,11 @@ def test_a_missing_source_file_fails_the_cli_without_creating_artifacts(tmp_path
     assert not (tmp_path / ".axial").exists()
 
 
-def test_a_json_line_that_is_not_an_object_is_rejected(tmp_path: Path):
+@pytest.mark.parametrize(("line", "kind"), [("[1, 2]", "list"), ("7", "int")])
+def test_a_json_line_that_is_not_an_object_is_rejected(tmp_path: Path, line: str, kind: str):
     """Limit: each JSONL line must be an object; a bare array or number is refused."""
-    (tmp_path / "t.jsonl").write_text("[1, 2]\n")
-    with pytest.raises(Exception):  # noqa: B017 - the exact type is the defect below
+    (tmp_path / "t.jsonl").write_text(f"{line}\n")
+    with pytest.raises(ValueError, match=f"expected a JSON object, got {kind}"):
         ingest_jsonl(tmp_path / "t.jsonl")
 
 

@@ -324,7 +324,7 @@ def test_every_command_that_reads_the_config_refuses_a_bad_one_in_one_line(
 
 
 @pytest.mark.xfail(
-    strict=False,
+    strict=True,
     reason="Design question, not a confirmed defect: sample before ingest writes an empty review session and exits 0 "
     "('session s: 0 traces ready to annotate'); nothing says to run ingest first",
 )

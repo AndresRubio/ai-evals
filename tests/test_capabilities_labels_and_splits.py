@@ -289,7 +289,7 @@ def test_label_import_fails_when_the_labels_file_does_not_exist(tmp_path: Path):
     assert result.exit_code != 0
 
 
-@pytest.mark.xfail(strict=False, reason="Design question, not a confirmed defect: add_labels (dataset.py:226) never checks trace ids against "
+@pytest.mark.xfail(strict=True, reason="Design question, not a confirmed defect: add_labels (dataset.py:226) never checks trace ids against "
                    "the ingested corpus, so labels for traces that do not exist are recorded")
 def test_label_import_rejects_a_trace_id_that_is_not_in_the_ingested_corpus(tmp_path: Path):
     """Once traces are ingested, a label for an unknown trace id should be refused."""
