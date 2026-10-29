@@ -225,8 +225,8 @@ read those verdicts like any other judge's, and refuse a recorded probability th
 a number between 0 and 1. The threshold is `decision_threshold` in `judge.yaml`, which
 `promote` hashes, because it changes every verdict.
 
-Its default of `0.5` is a guess, and often a bad one. In Husain and Saha's comparison of
-six decision models, one caught 21% of failures at 0.5 and tunes to 0.055
+Its default of `0.5` is untested. In Husain and Saha's comparison of six decision
+models, one caught 21% of failures at 0.5 and tunes to 0.055
 ([knowledge/methodology/decision-model-thresholds.md](knowledge/methodology/decision-model-thresholds.md)).
 `run_judge` records each probability in `verdicts.jsonl`, so the threshold can be chosen
 from a dev run without calling the model again:
@@ -246,7 +246,9 @@ judge version and no verdicts, so the new version gets its own dev run before te
 
 `axial align` prints a decision model's Brier score beside the score of always predicting
 the split's failure rate. A Brier score at or above that reference means the
-probabilities carry nothing the base rate doesn't.
+probabilities are badly calibrated and should not be read as failure rates. They can
+still rank traces well enough for a threshold to separate them, which is what TPR and TNR
+measure.
 
 Two things it cannot do:
 

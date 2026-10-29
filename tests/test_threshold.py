@@ -434,3 +434,30 @@ def test_the_rerun_advice_warns_that_it_drops_a_promoted_marker():
     del rows[0]["probability"]
     with pytest.raises(AxialError, match="PROMOTED"):
         tune_from_verdicts(rows, _jev_spec(), Thresholds())
+
+
+def test_cross_validation_on_scores_that_are_all_equal_flags_nothing_and_counts_every_fold():
+    # Guard: a training part with one distinct score has no threshold, and a judge with
+    # no threshold flags nothing.
+    cv = cross_validate([True, False] * 5, [0.4] * 10, min_tpr=0.5, min_tnr=0.5, folds=2, seed=0)
+    assert cv.infeasible_folds == 2
+    assert (cv.held_out.matrix.tp, cv.held_out.matrix.fp) == (0, 0)
+
+
+def test_tuning_refuses_scores_that_are_all_the_same():
+    # Guard: without this refusal the caller gets an AttributeError on `None`.
+    rows = _rows("dev", [(True, 0.4)] * 5 + [(False, 0.4)] * 5)
+    with pytest.raises(InvariantViolation, match="same probability"):
+        tune_from_verdicts(rows, _jev_spec(), Thresholds())
+
+
+def test_tuning_refuses_dev_rows_stamped_with_another_prompt():
+    rows = _rows("dev", _separable())
+    for row in rows:
+        row["prompt_sha256"] = "new"
+    rows[0]["prompt_sha256"] = "old"
+    del rows[1]["prompt_sha256"]
+    with pytest.raises(AxialError, match="2 dev verdict row"):
+        tune_from_verdicts(rows, _jev_spec(), Thresholds(), prompt_sha256="new")
+    rows[0]["prompt_sha256"] = rows[1]["prompt_sha256"] = "new"
+    assert tune_from_verdicts(rows, _jev_spec(), Thresholds(), prompt_sha256="new").choice.feasible

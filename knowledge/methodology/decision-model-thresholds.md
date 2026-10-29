@@ -2,7 +2,7 @@
 name: decision-model-thresholds
 description: Tune a decision model's threshold on held-out folds and check its calibration before it judges, per Husain and Saha (2026-10), and how axial does it
 shelf: methodology
-updated: 2026-10-22
+updated: 2026-10-30
 sources:
   - url: https://hamel.dev/blog/posts/decision-model-evals/
     read: 2026-10-21
@@ -67,9 +67,9 @@ the published scores; the post's text gives the Jev and OpenAI values and they m
 
 What the numbers show:
 
-- The default threshold is the largest single error. Clef Flash catches 21% of failures
-  at 0.50 and its tuned threshold is 0.055. Liquid d1 catches 46% at 0.50 and tunes to
-  about 0.10.
+- Leaving the default threshold in place costs two models much of their recall. Clef
+  Flash catches 21% of failures at 0.50 and its tuned threshold is 0.055. Liquid d1
+  catches 46% at 0.50 and tunes to about 0.10.
 - "Met 80/80" was decided on thresholds fitted to all 98 traces. On held-out folds,
   Perplexity and d1-ultra fall below 80% precision (0.754 and 0.759), and their
   training splits were infeasible in 36 and 29 of 100. Only OpenAI met both minimums in
@@ -84,7 +84,9 @@ What the numbers show:
   OpenAI slightly worse (0.159 to 0.164).
 - Always predicting this set's failure rate (61 of 98) scores a Brier of 0.235. Liquid d1
   (0.282) and Clef Flash (0.383) score worse than that before calibration, so their raw
-  probabilities carry less information than the base rate.
+  probabilities should not be read as failure rates. They still rank traces: computed
+  from the same published scores, their AUC is 0.715 and 0.709, where 0.5 is chance.
+  The Brier score mixes calibration with how well the scores separate the classes.
 
 ## Caveats the authors give
 
@@ -106,7 +108,9 @@ weighting of precision and recall through F1 is a simplification they name.
 - `axial tune-threshold` reads only dev verdicts and picks the threshold whose weaker rate
   clears its floor by the widest margin, where the post maximises F1. It cross-validates
   the choice on stratified dev folds, and when no threshold clears both floors it exits
-  with an error and writes nothing. It never falls back to a relaxed optimum. With
+  with an error and writes nothing, so it never saves a relaxed choice. Its
+  cross-validated estimate does score a fold with no feasible threshold at the closest
+  one, and says how many folds that was. With
   `--write` it saves the threshold as a new judge version, which still needs a real
   `axial judge` run on dev and then on test.
 - `run_judge` records each decision model's probability in `verdicts.jsonl`, so tuning

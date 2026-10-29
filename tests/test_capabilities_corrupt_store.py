@@ -29,7 +29,7 @@ from axial import cli
 from axial.cli import app
 from axial.config import write_default_config
 from axial.dataset import Label, add_labels
-from axial.judge import JudgeSpec
+from axial.judge import JudgeSpec, current_prompt_sha256
 from axial.model import FakeModel
 from axial.sample import Review, write_session
 from axial.store import Store
@@ -91,7 +91,8 @@ READS: dict[str, list[str]] = {
     "gate": [JUDGE, VERDICTS, *FEW_SHOT],
     "gate --batch": [JUDGE, VERDICTS, *FEW_SHOT, *BATCH],
     "tune-threshold": [
-        f".axial/judges/{SCORED}/v1/judge.yaml", f".axial/judges/{SCORED}/v1/verdicts.jsonl"
+        f".axial/judges/{SCORED}/v1/{name}"
+        for name in ("judge.yaml", "verdicts.jsonl", "errors.jsonl")
     ],
 }
 
@@ -141,14 +142,20 @@ def template(tmp_path_factory: pytest.TempPathFactory) -> Path:
         json.dumps({"trace_id": "dev-00", "label": True, "critique": "c", "annotator": "andres"}) + "\n"
     )
     write_batch(root / "batch.jsonl", ["BAD"] * 5 + ["GOOD"] * 15)
-    JudgeSpec(mode=SCORED, model="typesafe/jev-1.13", version=1).save(store)
+    scored = JudgeSpec(mode=SCORED, model="typesafe/jev-1.13", version=1)
+    scored.save(store)
     store.write_jsonl(
         store.judge_dir(SCORED, 1) / "verdicts.jsonl",
         [
             {"trace_id": f"s{i}", "split": "dev", "verdict": failed, "truth": failed,
-             "probability": 0.8 if failed else 0.2}
+             "probability": 0.8 if failed else 0.2,
+             "prompt_sha256": current_prompt_sha256(store, scored)}
             for i, failed in enumerate([True, False] * 5)
         ],
+    )
+    store.write_jsonl(
+        store.judge_dir(SCORED, 1) / "errors.jsonl",
+        [{"trace_id": "s-err", "split": "dev", "failure_class": "harness"}],
     )
     with pytest.MonkeyPatch.context() as mp:
         mp.chdir(root)

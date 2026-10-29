@@ -224,8 +224,14 @@ def tune_from_verdicts(
     *,
     folds: int = 5,
     seed: int = 0,
+    prompt_sha256: str | None = None,
 ) -> Tuning:
-    """Choose `spec`'s threshold from its dev verdicts, and say how far to trust it."""
+    """Choose `spec`'s threshold from its dev verdicts, and say how far to trust it.
+
+    With `prompt_sha256`, the fingerprint of the prompt the judge sends now, a dev row
+    stamped with any other (or with none) is refused: its probability answers a
+    prompt the saved threshold would never be used with.
+    """
     if not is_decision_model(spec.model):
         raise AxialError(
             f"{spec.model!r} is a text model: its verdicts carry no probability to "
@@ -238,6 +244,17 @@ def tune_from_verdicts(
     rows = [v for v in verdicts if v.get("split") == "dev"]
     if not rows:
         raise AxialError(f"no dev verdicts for {spec.mode} v{spec.version}; run `{rerun}` first")
+    if prompt_sha256 is not None:
+        stale = [v.get("trace_id") for v in rows if v.get("prompt_sha256") != prompt_sha256]
+        if stale:
+            raise AxialError(
+                f"{len(stale)} dev verdict row(s) were not produced by the prompt judge "
+                f"{spec.mode} v{spec.version} sends now ({stale[:3]}): judge.yaml was "
+                "edited, a few-shot example was relabelled or re-ingested, or an axial "
+                f"upgrade changed how the prompt is built. Run `{rerun}` again. The re-run "
+                "replaces this version's dev verdicts and drops its PROMOTED marker, so it "
+                "must be promoted again."
+            )
     try:
         require_human_labels(rows)
         recorded = [row_probability(v) for v in rows]

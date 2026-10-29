@@ -6,7 +6,7 @@ from promotion_helpers import stamp_run
 from typer.testing import CliRunner
 
 from axial.cli import app
-from axial.judge import JudgeSpec, current_prompt_sha256
+from axial.judge import JudgeSpec, current_prompt_sha256, read_verdicts
 from axial.report import format_promoted_marker
 from axial.store import Store
 
@@ -799,13 +799,17 @@ def test_promote_exits_1_with_a_message_on_a_recorded_nan_probability(tmp_path: 
     assert "not a number between 0 and 1" in result.stdout
 
 
-def _seed_jev_judge(store: Store, scored: list[tuple[bool, float]]) -> None:
-    from axial.judge import JudgeSpec
-
-    JudgeSpec(mode="m", model="typesafe/jev-1.13", version=1).save(store)
+def _seed_jev_judge(
+    store: Store, scored: list[tuple[bool, float]], *, prompt_sha256: str | None = None
+) -> None:
+    """A Jev judge v1 with dev verdicts stamped with the prompt it sends now, unless
+    `prompt_sha256` names another."""
+    spec = JudgeSpec(mode="m", model="typesafe/jev-1.13", version=1)
+    spec.save(store)
+    stamp = prompt_sha256 or current_prompt_sha256(store, spec)
     _write_dev_verdicts(store, [
         {"trace_id": f"d{i}", "split": "dev", "verdict": p >= 0.5, "truth": truth,
-         "model": "typesafe/jev-1.13", "probability": p}
+         "model": "typesafe/jev-1.13", "probability": p, "prompt_sha256": stamp}
         for i, (truth, p) in enumerate(scored)
     ])
 
@@ -837,6 +841,8 @@ def test_tune_threshold_write_saves_the_next_judge_version(tmp_path: Path):
 
     assert result.exit_code == 0, result.stdout
     assert JudgeSpec.load(store, "m", 2).decision_threshold == 0.22
+    # Guard: re-thresholding v1's run would record verdicts nobody produced.
+    assert not (store.judge_dir("m", 2) / "verdicts.jsonl").exists()
     assert "axial judge m --split dev --version 2" in result.stdout
 
 
@@ -851,6 +857,7 @@ def test_tune_threshold_exits_1_and_writes_nothing_when_no_threshold_clears_the_
 
     assert result.exit_code == 1
     assert "closest threshold" in result.stdout
+    assert "no threshold cleared the floors in 5 of 5 training folds" in result.stdout
     assert "will not lower them" in result.stdout
     assert store.latest_judge_version("m") == 1
 
@@ -859,3 +866,125 @@ def test_tune_threshold_names_a_judge_that_does_not_exist(tmp_path: Path):
     result = runner.invoke(app, ["tune-threshold", "m", "3", "--repo", str(tmp_path)])
     assert result.exit_code == 1
     assert "no judge m v3" in result.stdout
+    assert "axial judge m --split dev --version 3" in result.stdout
+
+
+def test_tune_threshold_refuses_dev_rows_from_another_prompt(tmp_path: Path):
+    store = Store(tmp_path)
+    _seed_jev_judge(store, _SEPARABLE, prompt_sha256="0" * 64)
+
+    result = runner.invoke(app, ["tune-threshold", "m", "1", "--repo", str(tmp_path)])
+
+    assert result.exit_code == 1
+    assert "20 dev verdict row(s) were not produced by the prompt" in result.stdout
+    assert "axial judge m --split dev --version 1" in result.stdout
+
+
+def test_tune_threshold_says_how_many_dev_calls_were_quarantined(tmp_path: Path):
+    store = Store(tmp_path)
+    _seed_jev_judge(store, _SEPARABLE)
+    store.write_jsonl(store.judge_dir("m", 1) / "errors.jsonl", [
+        {"trace_id": "e1", "split": "dev", "failure_class": "harness"},
+        {"trace_id": "e2", "split": "dev", "failure_class": "harness"},
+        {"trace_id": "e3", "split": "test", "failure_class": "harness"},
+    ])
+
+    result = runner.invoke(app, ["tune-threshold", "m", "1", "--repo", str(tmp_path)])
+
+    assert result.exit_code == 0, result.stdout
+    assert "2 dev call(s) quarantined in errors.jsonl are not in these numbers" in result.stdout
+
+
+def test_tune_threshold_passes_its_seed_to_the_cross_validation(tmp_path: Path):
+    # Guard: the folds, and so the held-out line, depend on --seed.
+    import numpy as np
+
+    from axial.config import Thresholds
+    from axial.threshold import tune_from_verdicts
+
+    rng = np.random.default_rng(3)
+    scored = [(True, round(float(x), 2)) for x in rng.beta(3, 2, 15)] + [
+        (False, round(float(x), 2)) for x in rng.beta(2, 3, 15)
+    ]
+    store = Store(tmp_path)
+    _seed_jev_judge(store, scored)
+    rows = read_verdicts(store, store.judge_dir("m", 1) / "verdicts.jsonl")
+    spec = JudgeSpec.load(store, "m", 1)
+    floors = Thresholds(min_tpr=0.6, min_tnr=0.6)
+    store.config_path.write_text("[thresholds]\nmin_tpr = 0.6\nmin_tnr = 0.6\n")
+
+    def held_out(seed: int) -> str:
+        cv = tune_from_verdicts(rows, spec, floors, seed=seed).cv.held_out
+        return f"TPR {cv.fmt('tpr')}  TNR {cv.fmt('tnr')}"
+
+    assert held_out(0) != held_out(1)  # the data separates the two seeds
+
+    result = runner.invoke(app, ["tune-threshold", "m", "1", "--seed", "1", "--repo", str(tmp_path)])
+
+    assert result.exit_code == 0, result.stdout
+    assert held_out(1) in result.stdout
+    assert held_out(0) not in result.stdout
+
+
+def test_tune_threshold_refuses_fewer_than_two_folds(tmp_path: Path):
+    # Guard: the refusal names the flag, not some later failure.
+    store = Store(tmp_path)
+    _seed_jev_judge(store, _SEPARABLE)
+    result = runner.invoke(app, ["tune-threshold", "m", "1", "--folds", "1", "--repo", str(tmp_path)])
+    assert result.exit_code == 1
+    assert "--folds must be at least 2" in result.stdout
+
+
+def test_align_on_a_text_model_judge_adds_no_brier_note_section_or_key(tmp_path: Path):
+    # Guard: a text model's verdicts carry no probability, and its report says nothing of it.
+    store = Store(tmp_path)
+    JudgeSpec(mode="m", model="claude-opus-5", version=1).save(store)
+    directory = _write_dev_verdicts(store, [
+        {"trace_id": f"d{i}", "split": "dev", "verdict": truth, "truth": truth, "model": "claude-opus-5"}
+        for i, truth in enumerate([True, False, True, False])
+    ])
+
+    result = runner.invoke(app, ["align", "m", "1", "--repo", str(tmp_path)])
+
+    assert result.exit_code == 0, result.stdout
+    report = (directory / "alignment.md").read_text()
+    assert "no Brier score" not in report
+    assert "Calibration" not in report
+    assert "brier" not in (directory / "alignment.json").read_text()
+
+
+def test_align_reports_brier_for_dev_and_test_in_output_and_json(tmp_path: Path):
+    # Guard: both splits' scores reach the terminal and alignment.json.
+    store = Store(tmp_path)
+    JudgeSpec(mode="m", model="typesafe/jev-1.13", version=1).save(store)
+    directory = _write_dev_verdicts(store, [
+        {"trace_id": f"{split}{i}", "split": split, "verdict": p >= 0.5, "truth": truth,
+         "model": "typesafe/jev-1.13", "probability": p}
+        for split in ("dev", "test")
+        for i, (truth, p) in enumerate([(True, 0.9), (False, 0.2), (True, 0.6), (False, 0.3)])
+    ])
+
+    result = runner.invoke(app, ["align", "m", "1", "--repo", str(tmp_path)])
+
+    assert result.exit_code == 0, result.stdout
+    assert "dev  Brier" in result.stdout
+    assert "test Brier" in result.stdout
+    saved = json.loads((directory / "alignment.json").read_text())
+    assert saved["dev"]["brier"] == pytest.approx(0.075)  # (0.01 + 0.04 + 0.16 + 0.09) / 4
+    assert saved["test"]["brier"] == pytest.approx(0.075)
+
+
+def test_align_notes_missing_probabilities_when_test_rows_exist_too(tmp_path: Path):
+    # Guard: the note does not depend on whether test has been run.
+    store = Store(tmp_path)
+    JudgeSpec(mode="m", model="typesafe/jev-1.13", version=1).save(store)
+    directory = _write_dev_verdicts(store, [
+        {"trace_id": f"{split}{i}", "split": split, "verdict": truth, "truth": truth,
+         "model": "typesafe/jev-1.13"}
+        for split in ("dev", "test") for i, truth in enumerate([True, False])
+    ])
+
+    result = runner.invoke(app, ["align", "m", "1", "--repo", str(tmp_path)])
+
+    assert result.exit_code == 0, result.stdout
+    assert "no Brier score" in (directory / "alignment.md").read_text()

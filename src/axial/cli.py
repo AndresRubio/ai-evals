@@ -25,6 +25,7 @@ from axial.gate import gate_batches
 from axial.judge import (
     JudgeSpec,
     build_judge_model,
+    current_prompt_sha256,
     kept_rows,
     read_errors,
     read_verdicts,
@@ -547,14 +548,23 @@ def tune_threshold(
     config = _config(store)
     directory = store.judge_dir(mode, version)
     if not (directory / "judge.yaml").exists():
-        _fail(f"no judge {mode} v{version}")
+        _fail(
+            f"no judge {mode} v{version}; run `axial judge {mode} --split dev --version "
+            f"{version}` first"
+        )
     try:
         spec = JudgeSpec.load(store, mode, version)
         verdicts = read_verdicts(store, directory / "verdicts.jsonl")
+        errors = read_errors(store, directory / "errors.jsonl")
+        fingerprint = current_prompt_sha256(store, spec)
     except (OSError, ValueError) as exc:
         _fail(f"could not tune {mode} v{version}: {_one_line(exc)}")
+    except AxialError as exc:  # a few-shot example's file could not be read
+        _fail(str(exc))
     try:
-        tuning = tune_from_verdicts(verdicts, spec, config.thresholds, folds=folds, seed=seed)
+        tuning = tune_from_verdicts(
+            verdicts, spec, config.thresholds, folds=folds, seed=seed, prompt_sha256=fingerprint
+        )
     except AxialError as exc:
         _fail(str(exc))
 
@@ -564,6 +574,11 @@ def tune_threshold(
         f"dev: {tuning.n_failures} real failures, {tuning.n_passes} real passes, "
         f"scored by {spec.model}; floors TPR >= {floors.min_tpr:.2f}, TNR >= {floors.min_tnr:.2f}"
     )
+    quarantined = sum(1 for e in errors if e.get("split") == "dev")
+    if quarantined:
+        typer.echo(
+            f"  {quarantined} dev call(s) quarantined in errors.jsonl are not in these numbers"
+        )
     typer.echo(
         f"current threshold {tuning.current_threshold}: "
         f"TPR {tuning.current_tpr:.3f}  TNR {tuning.current_tnr:.3f}"
