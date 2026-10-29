@@ -316,6 +316,14 @@ Two properties worth understanding before trusting a batch:
   scoring-workflow docs say nothing about deriving a scorer from your own failures or
   measuring its agreement with human labels. `axial` sits upstream of it: the judge
   Inspect would run is the thing `axial` builds and validates.
+- **Harbor** (from the creators of Terminal-Bench): runs agents on tasks in fresh
+  sandboxes and scores what they leave behind with a verifier written with each task,
+  Apache-2.0. Run with several `samples`, its Rewardkit judges (LLM or agent) report how
+  often they agree with themselves. Its `oracle` agent checks that a verifier passes a
+  correct solution, running its `nop` agent shows whether the verifier fails an
+  untouched environment, and its docs recommend unit tests for the verifier itself.
+  None of its 79 docs pages describes measuring a judge against human labels. `axial`
+  sits upstream of a Rewardkit judge as it does of an Inspect scorer.
 - **lm-evaluation-harness** — foundation-model benchmarking, where the taxonomy is the
   benchmark and is given to you. Different problem.
 - **Langfuse, Opik, LangSmith, Braintrust, Phoenix** — trace storage and judge running;
