@@ -49,6 +49,10 @@ def test_parse_verdict_reads_fail_and_pass():
     assert parse_verdict('{"verdict": "pass"}') is False
 
 
+def test_parse_verdict_reads_an_answer_that_gives_the_reason_first():
+    assert parse_verdict('{"reason": "two stories merged", "verdict": "fail"}') is True
+
+
 def test_parse_verdict_tolerates_surrounding_prose():
     assert parse_verdict('Sure.\n{"verdict": "fail", "reason": "merged"}\n') is True
 
@@ -101,6 +105,29 @@ def test_a_few_shot_critique_with_quotes_renders_as_json_that_reads_back():
 
 def test_a_few_shot_critique_keeps_its_accents_as_written():
     assert "«El País»" in few_shot_answer("Cita «El País» sin enlace.")
+
+
+def test_a_few_shot_answer_gives_the_reason_before_the_verdict():
+    assert list(json.loads(few_shot_answer("because"))) == ["reason", "verdict"]
+
+
+def test_the_default_template_asks_for_the_reason_before_the_verdict():
+    prompt = assemble_prompt(JudgeSpec(mode="merged", model="fake"), trace(1), few_shot=[])
+    lead = "Answer with JSON only: "
+    line = next(text for text in prompt.splitlines() if text.startswith(lead))
+    assert list(json.loads(line.removeprefix(lead))) == ["reason", "verdict"]
+
+
+def test_the_verdict_schema_puts_the_reason_first():
+    # A model filling in a schema writes the fields in order, so this is what makes the
+    # judge reason before it commits to a verdict.
+    assert list(Verdict.model_json_schema()["properties"]) == ["reason", "verdict"]
+
+
+def test_the_verdict_schema_requires_the_reason():
+    # An optional field may be left out, and a judge that skips the reason has not
+    # reasoned at all.
+    assert Verdict.model_json_schema()["required"] == ["reason", "verdict"]
 
 
 def test_few_shot_from_dev_is_refused():

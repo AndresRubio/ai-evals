@@ -17,7 +17,9 @@ from measure_helpers import (
     fake_judge_builder,
     judge_reply,
 )
+from pydantic import BaseModel, ConfigDict
 
+import axial.judge
 import axial.measure
 from axial.config import Thresholds
 from axial.dataset import Label, Splits, add_labels, read_labels
@@ -114,6 +116,46 @@ def test_the_fingerprint_changes_with_the_order_of_the_examples():
 
 def test_the_fingerprint_survives_a_lone_surrogate_in_a_critique():
     assert len(prompt_sha256(spec(), [example(critique="cut \ud83d")])) == 64
+
+
+# Two answer schemas that differ only in the order of their fields. They share a title,
+# which pydantic would otherwise take from the class name, and both fields have a
+# default, so neither schema lists a required field.
+class ReasonFirst(BaseModel):
+    model_config = ConfigDict(title="Verdict")
+    reason: str = ""
+    verdict: str = ""
+
+
+class VerdictFirst(BaseModel):
+    model_config = ConfigDict(title="Verdict")
+    verdict: str = ""
+    reason: str = ""
+
+
+def fingerprint_with_schema(
+    monkeypatch: pytest.MonkeyPatch, schema: type[BaseModel], judge: JudgeSpec
+) -> str:
+    monkeypatch.setattr(axial.judge, "Verdict", schema)
+    return prompt_sha256(judge, [example()])
+
+
+def test_the_fingerprint_changes_with_the_order_of_the_answer_schema(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    # The schema is sent with every request to a text model, and the field order decides
+    # whether the judge reasons before its verdict.
+    reason_first = fingerprint_with_schema(monkeypatch, ReasonFirst, spec())
+    assert fingerprint_with_schema(monkeypatch, VerdictFirst, spec()) != reason_first
+
+
+def test_a_decision_models_fingerprint_ignores_the_answer_schema(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    # Jev is sent no schema, so a change to it leaves a Jev judge's prompt as it was.
+    jev = spec(model="typesafe/jev-1.13")
+    reason_first = fingerprint_with_schema(monkeypatch, ReasonFirst, jev)
+    assert fingerprint_with_schema(monkeypatch, VerdictFirst, jev) == reason_first
 
 
 # --- resolving from the store ------------------------------------------------------

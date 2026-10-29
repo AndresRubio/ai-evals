@@ -99,7 +99,8 @@ The refusals are the product.
   the new batch as it did on test. A measurement taken by a judge that has since
   been re-judged or edited fails the gate until it is re-measured. Every verdict and
   error row records a fingerprint of the full prompt: `judge.yaml` plus the few-shot
-  examples as resolved from the current traces and labels. `axial promote` refuses a
+  examples as resolved from the current traces and labels, and for a text model the
+  answer schema sent with every request. `axial promote` refuses a
   judge with no `judge.yaml`, and refuses unless every row in `verdicts.jsonl` and
   `errors.jsonl`, whatever its split, carries the current fingerprint. It then writes
   the fingerprint as the third `key=value` line of `PROMOTED`, `prompt_sha256=<hex>`,
@@ -107,7 +108,13 @@ The refusals are the product.
   been relabelled or re-ingested, until dev and test are re-run and the judge is
   promoted again. A judge promoted before this
   change has to re-run every split it has rows for, train included, and be promoted
-  again, and batches measured before it need `--replace` to be measured again:
+  again, and batches measured before it need `--replace` to be measured again. The
+  same goes for a judge promoted before the judge was asked for its reason ahead of
+  its verdict, unless it is a decision model with no few-shot examples. A text-model
+  judge of that age keeps the old template in its `judge.yaml`, which asks for the
+  verdict first. Replace its answer instructions with the ones in `DEFAULT_TEMPLATE`
+  in `src/axial/judge.py` before re-running, or the prompt and the schema ask for
+  opposite orders:
 
   ```bash
   axial judge <mode> --version N --split dev

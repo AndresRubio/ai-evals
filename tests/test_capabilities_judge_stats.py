@@ -220,7 +220,7 @@ def test_a_few_shot_example_carries_its_human_label_and_critique_into_the_prompt
         splits=splits,
     )
     assert "two stories merged" in prompt
-    assert 'ANSWER: {"verdict": "fail", "reason": "mixes two events"}' in prompt
+    assert 'ANSWER: {"reason": "mixes two events", "verdict": "fail"}' in prompt
 
 
 def test_a_few_shot_answer_line_is_valid_json_even_when_the_critique_quotes_the_output():

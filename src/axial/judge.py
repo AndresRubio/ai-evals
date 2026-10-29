@@ -44,8 +44,10 @@ INPUT:
 OUTPUT:
 {output}
 
-Answer with JSON only: {{"verdict": "fail", "reason": "one sentence"}}
-where "fail" means the failure mode IS present and "pass" means it is not.
+Answer with JSON only: {{"reason": "two or three sentences", "verdict": "fail"}}
+Write the reason first: what in the output shows the failure mode is present or absent.
+Then give the verdict, where "fail" means the failure mode IS present and "pass" means
+it is not.
 """
 
 
@@ -55,10 +57,13 @@ class Verdict(BaseModel):
     Asking for this rather than parsing free text is what keeps a well-formed answer
     out of the `unparseable` error bucket. The text parse below remains for providers
     that cannot enforce a schema.
+
+    The reason comes first and is required. A model writes a schema's fields in order,
+    and a reason written after the verdict only justifies a decision already made.
     """
 
+    reason: str
     verdict: Literal["pass", "fail"]
-    reason: str = ""
 
 
 class JudgeSpec(BaseModel):
@@ -121,7 +126,7 @@ def render_few_shot(few_shot: list[tuple[Trace, Label]]) -> str:
         # A critique pasted between quotes ends the JSON string at its first quote, so the
         # answer is serialised. Accented text stays as written rather than as \u escapes.
         answer = json.dumps(
-            {"verdict": "fail" if label.label else "pass", "reason": label.critique},
+            {"reason": label.critique, "verdict": "fail" if label.label else "pass"},
             ensure_ascii=False,
         )
         blocks.append(
@@ -137,8 +142,18 @@ def prompt_sha256(spec: JudgeSpec, few_shot: list[tuple[Trace, Label]]) -> str:
     leaves it alone, and the rendered few-shot block, so a relabelled or re-ingested
     example changes it. `ensure_ascii` writes a lone surrogate as an escape, which keeps
     the document encodable.
+
+    A text model is also sent the answer schema with every request, so it is covered
+    too. It goes in as text: the sorted dump below would put its fields in alphabetical
+    order, and their order is what makes the judge reason before its verdict. A decision
+    model is sent no schema, and its fingerprint leaves the schema out.
     """
-    document = {"spec": spec.model_dump(), "few_shot": render_few_shot(few_shot)}
+    document: dict[str, object] = {
+        "spec": spec.model_dump(),
+        "few_shot": render_few_shot(few_shot),
+    }
+    if not is_decision_model(spec.model):
+        document["answer_schema"] = json.dumps(Verdict.model_json_schema())
     text = json.dumps(document, sort_keys=True, ensure_ascii=True)
     return hashlib.sha256(text.encode("ascii")).hexdigest()
 
