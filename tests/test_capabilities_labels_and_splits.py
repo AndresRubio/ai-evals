@@ -246,6 +246,15 @@ def test_label_import_names_the_line_of_a_corrupt_labels_file(tmp_path: Path):
     assert "l.jsonl: invalid JSON on line 2" in result.output
 
 
+def test_label_import_reads_a_labels_file_that_starts_with_a_byte_order_mark(tmp_path: Path):
+    """PowerShell 5's `Set-Content -Encoding UTF8` starts the file with a mark; it should import."""
+    src = tmp_path / "l.jsonl"
+    src.write_bytes(b"\xef\xbb\xbf" + (json.dumps(label_row("a")) + "\n").encode())
+    result = run_cli(tmp_path, "label-import", "m", "--path", str(src))
+    assert result.exit_code == 0, result.output
+    assert [lbl.trace_id for lbl in read_labels(Store(tmp_path), "m")] == ["a"]
+
+
 def test_label_import_keeps_an_integer_trace_id_as_its_decimal_string(tmp_path: Path):
     """`"trace_id": 123` names the trace `ingest` stored as "123", so the two still match."""
     traces = tmp_path / "t.jsonl"

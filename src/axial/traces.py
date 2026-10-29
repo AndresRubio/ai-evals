@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import itertools
 import json
 from collections.abc import Callable
 from pathlib import Path
@@ -62,7 +63,8 @@ def _trace_from_row(row: object, *, where: str) -> Trace:
 
 def ingest_jsonl(path: Path) -> list[Trace]:
     traces: list[Trace] = []
-    with Path(path).open(encoding="utf-8") as fh:
+    # utf-8-sig drops a leading byte-order mark, which PowerShell 5 writes and json refuses.
+    with Path(path).open(encoding="utf-8-sig") as fh:
         for n, line in enumerate(fh, start=1):
             if not line.strip():
                 continue
@@ -80,8 +82,14 @@ def ingest_csv(path: Path) -> list[Trace]:
     # utf-8-sig drops the byte-order mark Excel writes at the start of "CSV UTF-8", which
     # would otherwise glue onto the first header; a file without one reads as plain utf-8.
     with Path(path).open(encoding="utf-8-sig", newline="") as fh:
+        # Excel in locales with a decimal comma (Spanish, German, ...) saves "CSV UTF-8" with
+        # `;` between fields. Only the header decides, so a file always parses the same way:
+        # one with `;` and no `,` cannot be a valid comma CSV, as it would have one column.
+        header = fh.readline()
+        delimiter = ";" if ";" in header and "," not in header else ","
         try:
-            rows = list(csv.DictReader(fh))
+            # The header goes back in front of the rest, as a pipe cannot seek back to it.
+            rows = list(csv.DictReader(itertools.chain([header], fh), delimiter=delimiter))
         except csv.Error as exc:  # not a ValueError, so callers catching ValueError would miss it
             raise ValueError(f"{path}: {exc}") from exc
     for n, row in enumerate(rows, start=1):

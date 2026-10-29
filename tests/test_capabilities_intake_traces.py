@@ -6,9 +6,12 @@ expect, and will start failing (loudly) the day the defect is fixed.
 """
 
 import json
+import os
+import threading
 from pathlib import Path
 
 import pytest
+from skip_helpers import skip_off_ci
 from typer.testing import CliRunner
 
 from axial.cli import app
@@ -112,6 +115,44 @@ def test_a_csv_saved_by_excel_with_a_utf8_bom_is_readable(tmp_path: Path):
     assert ingest_csv(tmp_path / "t.csv")[0].input == "i"
 
 
+def test_a_csv_saved_by_excel_in_a_semicolon_locale_is_readable(tmp_path: Path):
+    """Excel in decimal-comma locales separates fields with `;`; commas stay in their cells."""
+    (tmp_path / "t.csv").write_bytes(
+        "﻿input;output;latency_s\r\nhola, ¿qué tal?;bien;1,5\r\n".encode()
+    )
+    trace = ingest(tmp_path / "t.csv")[0]
+    assert (trace.input, trace.output) == ("hola, ¿qué tal?", "bien")
+    assert trace.metadata == {"latency_s": "1,5"}
+
+
+def test_a_comma_in_the_csv_header_keeps_semicolons_as_text(tmp_path: Path):
+    """A header with a comma is a comma CSV, even if a column name or a cell holds a `;`."""
+    (tmp_path / "t.csv").write_text("input,output,score; 1-5\na;b,c,4\n")
+    trace = ingest_csv(tmp_path / "t.csv")[0]
+    assert (trace.input, trace.output) == ("a;b", "c")
+    assert trace.metadata == {"score; 1-5": "4"}
+
+
+def test_a_semicolon_csv_is_refused_for_the_column_it_lacks(tmp_path: Path):
+    """A `;` header without `output` is refused for `output`, not for the `input` it has."""
+    (tmp_path / "t.csv").write_text("input;answer\ni;o\n")
+    with pytest.raises(ValueError, match="row 1: missing required field 'output'"):
+        ingest_csv(tmp_path / "t.csv")
+
+
+def test_a_csv_that_cannot_rewind_such_as_a_named_pipe_is_readable(tmp_path: Path):
+    """The header line is read once to pick the separator; a pipe cannot seek back to it."""
+    if not hasattr(os, "mkfifo"):
+        skip_off_ci("named pipes need os.mkfifo, which Windows lacks")
+    pipe = tmp_path / "t.csv"
+    os.mkfifo(pipe)
+    # Opening a pipe to write blocks until ingest opens it to read, so a thread writes it.
+    writer = threading.Thread(target=pipe.write_text, args=("input;output\ni;o\n",), daemon=True)
+    writer.start()
+    assert ingest(pipe)[0].output == "o"
+    writer.join(timeout=5)
+
+
 # --- ids -------------------------------------------------------------------------
 
 
@@ -178,6 +219,12 @@ def test_blank_and_whitespace_only_jsonl_lines_are_skipped(tmp_path: Path):
         '\n{"input": "i1", "output": "o1"}\n   \n\n{"input": "i2", "output": "o2"}\n\n'
     )
     assert [t.input for t in ingest_jsonl(tmp_path / "t.jsonl")] == ["i1", "i2"]
+
+
+def test_a_jsonl_file_with_a_utf8_bom_is_readable(tmp_path: Path):
+    """PowerShell 5's `Set-Content -Encoding UTF8` starts the file with a BOM; it should ingest."""
+    (tmp_path / "t.jsonl").write_bytes(b'\xef\xbb\xbf{"input": "i", "output": "o"}\n')
+    assert ingest(tmp_path / "t.jsonl")[0].input == "i"
 
 
 def test_jsonl_row_numbers_in_errors_count_blank_lines(tmp_path: Path):
