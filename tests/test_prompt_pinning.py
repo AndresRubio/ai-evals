@@ -393,6 +393,19 @@ def test_require_promoted_refuses_a_relabelled_few_shot_example(tmp_path: Path):
         require_promoted(store, MEASURE_MODE, 1)
 
 
+def test_require_promoted_names_the_answer_schema_among_the_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    # An upgrade that reorders the schema leaves judge.yaml and every example as they
+    # were, so the refusal has to name the schema for the reader to find the cause.
+    store = Store(tmp_path)
+    build_promoted_judge(store)
+    monkeypatch.setattr(axial.judge, "Verdict", VerdictFirst)
+    with pytest.raises(InvariantViolation, match="not the prompt it was promoted with") as caught:
+        require_promoted(store, MEASURE_MODE, 1)
+    assert "the answer schema" in str(caught.value)
+
+
 def test_require_promoted_refuses_a_reingested_few_shot_example(tmp_path: Path):
     store = Store(tmp_path)
     build_promoted_judge(store, few_shot_ids=["train-0"])
