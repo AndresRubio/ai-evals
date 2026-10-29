@@ -8,4 +8,4 @@ A commit message or PR description that says behaviour changed (a fix, an input 
 
 A test that already passes before the change guards against a looser rewrite. It is welcome, and the commit message names it as a guard.
 
-To check a commit: reverse its source changes with `git show <commit> -- src | git apply -R`, run the tests the commit added, then restore with `git checkout HEAD -- src`. Every added test fails while the change is reversed, apart from the named guards. If the reverse patch does not apply because a later commit edited the same lines, run the check from a checkout of the commit itself.
+To check a commit: reverse its source changes with `git show <commit> -- src | git apply -R`, run the tests the commit added, then restore with `git show <commit> -- src | git apply`. That puts back only the lines the reverse step changed, so uncommitted edits under `src` survive. Every added test fails while the change is reversed, apart from the named guards. If the reverse patch does not apply because a later commit edited the same lines, run the check from a checkout of the commit itself.
