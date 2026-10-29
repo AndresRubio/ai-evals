@@ -237,6 +237,16 @@ def test_an_answer_of_the_wrong_type_is_an_error_not_a_guess(monkeypatch):
         _model().complete("x")
 
 
+@pytest.mark.parametrize("bad", [float("nan"), 1.7, -0.2, True])
+def test_a_noul_that_is_not_a_probability_is_an_error(monkeypatch, bad):
+    # Recorded as it came, a value like this would crash `align` and `promote` later
+    # and be thresholded into a verdict now (nan >= t is False: a silent pass).
+    _install(monkeypatch, lambda *a, **kw: _make_response(noul=bad))
+
+    with pytest.raises(AxialError, match="between 0 and 1"):
+        _model().complete("x")
+
+
 def test_a_missing_answer_is_an_error(monkeypatch):
     _install(monkeypatch, lambda *a, **kw: _make_response(answers={}))
 

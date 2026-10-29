@@ -29,6 +29,7 @@ from axial import cli
 from axial.cli import app
 from axial.config import write_default_config
 from axial.dataset import Label, add_labels
+from axial.judge import JudgeSpec
 from axial.model import FakeModel
 from axial.sample import Review, write_session
 from axial.store import Store
@@ -38,6 +39,8 @@ runner = CliRunner()
 
 M = MEASURE_MODE
 OTHER = "other"
+# A decision-model judge with recorded probabilities, for tune-threshold.
+SCORED = "scored"
 
 COMMANDS: dict[str, list[str]] = {
     "init": ["init"],
@@ -54,6 +57,7 @@ COMMANDS: dict[str, list[str]] = {
     "measure": ["measure", M, "--version", "1", "--traces", "batch.jsonl", "--name", "h"],
     "gate": ["gate", M, "--version", "1"],
     "gate --batch": ["gate", M, "--batch", "g"],
+    "tune-threshold": ["tune-threshold", SCORED, "1"],
 }
 
 TRACES = ".axial/traces/traces.jsonl"
@@ -80,12 +84,15 @@ READS: dict[str, list[str]] = {
     "label-from-reviews": [SESSION, LABELS],
     "split": [f".axial/datasets/{OTHER}/labels.jsonl", f".axial/datasets/{OTHER}/splits.json"],
     "judge": [TAXONOMY, JUDGE, VERDICTS, ERRORS, *FEW_SHOT],
-    "align": [VERDICTS, ERRORS, LABELS, TRACES],
+    "align": [JUDGE, VERDICTS, ERRORS, LABELS, TRACES],
     "checks": [VERDICTS, TRACES],
     "promote": [JUDGE, VERDICTS, ERRORS, *FEW_SHOT],
     "measure": [JUDGE, VERDICTS, *FEW_SHOT],
     "gate": [JUDGE, VERDICTS, *FEW_SHOT],
     "gate --batch": [JUDGE, VERDICTS, *FEW_SHOT, *BATCH],
+    "tune-threshold": [
+        f".axial/judges/{SCORED}/v1/judge.yaml", f".axial/judges/{SCORED}/v1/verdicts.jsonl"
+    ],
 }
 
 TAXONOMY_REPLY = json.dumps(
@@ -134,6 +141,15 @@ def template(tmp_path_factory: pytest.TempPathFactory) -> Path:
         json.dumps({"trace_id": "dev-00", "label": True, "critique": "c", "annotator": "andres"}) + "\n"
     )
     write_batch(root / "batch.jsonl", ["BAD"] * 5 + ["GOOD"] * 15)
+    JudgeSpec(mode=SCORED, model="typesafe/jev-1.13", version=1).save(store)
+    store.write_jsonl(
+        store.judge_dir(SCORED, 1) / "verdicts.jsonl",
+        [
+            {"trace_id": f"s{i}", "split": "dev", "verdict": failed, "truth": failed,
+             "probability": 0.8 if failed else 0.2}
+            for i, failed in enumerate([True, False] * 5)
+        ],
+    )
     with pytest.MonkeyPatch.context() as mp:
         mp.chdir(root)
         mp.setattr(cli, "build_judge_model", fake_judge_builder())

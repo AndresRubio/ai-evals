@@ -12,10 +12,11 @@ from axial.judge import (
     assemble_prompt,
     grade_trace,
     parse_verdict,
+    read_verdicts,
     resolve_few_shot,
     run_judge,
 )
-from axial.model import FakeModel
+from axial.model import Completion, FakeModel
 from axial.store import Store
 from axial.traces import Trace
 
@@ -363,3 +364,38 @@ def test_resolve_few_shot_refuses_an_id_it_cannot_find():
     with pytest.raises(InvariantViolation, match="'t9' could not be resolved"):
         resolve_few_shot(spec(few_shot_ids=["t9"]), [trace(1)], [gold])
     assert resolve_few_shot(spec(few_shot_ids=["t1"]), [trace(1)], [gold]) == [(trace(1), gold)]
+
+
+class _ScoringModel:
+    """A decision model's shape: a verdict plus the probability behind it."""
+
+    def __init__(self, probability: float) -> None:
+        self.probability = probability
+
+    def complete(self, prompt: str, *, max_tokens: int = 1024, schema=None) -> Completion:
+        verdict = "fail" if self.probability >= 0.5 else "pass"
+        return Completion(
+            text=f'{{"verdict": "{verdict}"}}', model="fake", probability=self.probability
+        )
+
+
+def test_a_decision_model_verdict_row_keeps_the_full_probability(tmp_path: Path):
+    store = Store(tmp_path)
+    splits = Splits(train=[], dev=["t1"], test=[])
+    result = run_judge(
+        store, spec(), [trace(1)], [label(1, True)], splits, _ScoringModel(0.123456789),
+        split="dev",
+    )
+    assert result.verdicts[0]["probability"] == 0.123456789
+    on_disk = read_verdicts(store, store.judge_dir("merged", 1) / "verdicts.jsonl")
+    assert on_disk[0]["probability"] == 0.123456789
+
+
+def test_a_text_model_verdict_row_records_no_probability(tmp_path: Path):
+    store = Store(tmp_path)
+    splits = Splits(train=[], dev=["t1"], test=[])
+    result = run_judge(
+        store, spec(), [trace(1)], [label(1, True)], splits,
+        FakeModel(lambda _p: '{"verdict": "fail"}'), split="dev",
+    )
+    assert result.verdicts[0]["probability"] is None

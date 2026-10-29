@@ -6,10 +6,11 @@
 
 ## methodology
 
+- [decision-model-thresholds](knowledge/methodology/decision-model-thresholds.md): Tune a decision model's threshold on held-out folds and check its calibration before it judges, per Husain and Saha (2026-10), and how axial does it (2026-10-22)
 - [mechanizable-vs-human](knowledge/methodology/mechanizable-vs-human.md): Which eval steps a tool should own outright, which must stay human, and the grey zone between (2026-09-17)
 - [methodology-spine](knowledge/methodology/methodology-spine.md): The thirteen-step error-analysis-first loop from instrumentation to production monitoring, with each step's artifact (2026-09-17)
-- [numbers-and-rules-of-thumb](knowledge/methodology/numbers-and-rules-of-thumb.md): Effort, cadence, sample sizes and agreement thresholds the practitioners quote, and who quotes which (2026-09-17)
-- [points-of-disagreement](knowledge/methodology/points-of-disagreement.md): Where the practitioner sources disagree on method, numbers and judge design (2026-09-17)
+- [numbers-and-rules-of-thumb](knowledge/methodology/numbers-and-rules-of-thumb.md): Effort, cadence, sample sizes and agreement thresholds the practitioners quote, and who quotes which (2026-10-22)
+- [points-of-disagreement](knowledge/methodology/points-of-disagreement.md): Where the practitioner sources disagree on method, numbers and judge design (2026-10-22)
 
 ## procedures
 

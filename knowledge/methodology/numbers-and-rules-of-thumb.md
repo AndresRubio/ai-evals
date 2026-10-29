@@ -2,7 +2,7 @@
 name: numbers-and-rules-of-thumb
 description: Effort, cadence, sample sizes and agreement thresholds the practitioners quote, and who quotes which
 shelf: methodology
-updated: 2026-09-17
+updated: 2026-10-22
 sources:
   - url: https://hamel.dev/blog/posts/evals-faq/
     read: 2026-09-17
@@ -10,6 +10,8 @@ sources:
     read: 2026-09-17
   - url: https://hamel.dev/blog/posts/field-guide/
     read: 2026-09-17
+  - url: https://hamel.dev/blog/posts/decision-model-evals/
+    read: 2026-10-21
   - url: https://www.lennysnewsletter.com/p/why-ai-evals-are-the-hottest-new-skill
     read: 2026-09-17
   - url: https://arxiv.org/abs/2401.03038
@@ -26,7 +28,7 @@ sources:
     read: 2026-09-17
   - url: https://platform.claude.com/docs/en/docs/test-and-evaluate/develop-tests
     read: 2026-09-17
-related: [methodology-spine]
+related: [methodology-spine, decision-model-thresholds]
 ---
 
 # Concrete numbers and rules of thumb
@@ -76,3 +78,9 @@ related: [methodology-spine]
 - **SPADE** (Shankar et al., arXiv 2401.03038, 2024-01): auto-generated assertions from prompt version history cut assertion count **14%** and false failures **21%** vs baselines; deployed across **2,000+ pipelines** via LangSmith; evaluated on 9 real pipelines.
 - Husain's contrarian metric: a **70% pass rate may be a more meaningful eval than 100%**. Optimize for catching real issues, not for green dashboards.
 - Anthropic docs' multi-criteria example: F1 ≥ 0.85, 99.5% non-toxic, 95% of responses <200ms, <0.1% of 10,000 trials flagged for toxicity.
+
+## Decision models
+From Husain and Saha, *How To Use Decision Models for Evals* (2026-10-20), on 98 labelled traces (61 failures). Detail in [decision-model-thresholds](decision-model-thresholds.md).
+- **0.50** is the default threshold, and it is the largest single error: Clef Flash catches **21%** of failures at 0.50 and tunes to **0.055**; Liquid d1 catches **46%** and tunes to about **0.10**.
+- **80% precision and 80% recall** as minimums, set before comparing models; only OpenAI Decisions (GPT-6 Luna) met both in all **100** training splits, at held-out F1 **0.865** for **3.72¢ per 100 runs**. Perplexity Decider is cheapest at **0.82¢**, held-out F1 **0.787**.
+- **Brier 0.187 → 0.188** for Jev and **0.159 → 0.164** for OpenAI after Platt scaling: calibration methods can make a calibrated model worse, so measure before keeping one.

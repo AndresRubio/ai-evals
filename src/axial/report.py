@@ -19,23 +19,56 @@ from axial.config import Thresholds
 from axial.dataset import Label
 from axial.errors import InvariantViolation, MalformedFile
 from axial.judge import JudgeSpec, current_prompt_sha256, read_errors, read_verdicts
+from axial.model import is_probability
 from axial.store import Store
 from axial.traces import Trace
+
+
+def require_human_labels(rows: list[dict[str, Any]]) -> None:
+    """Refuse verdict rows that carry no human label."""
+    missing = [v.get("trace_id") for v in rows if v.get("truth") is None]
+    if missing:
+        raise ValueError(
+            f"{len(missing)} verdict row(s) have no human label ({missing[:3]}); a judge can "
+            "only be aligned against labels a human made"
+        )
+
+
+def row_probability(row: dict[str, Any]) -> float | None:
+    """A verdict row's recorded probability, or `None` for a row without one.
+
+    `read_verdicts` already refuses such a row in a file, naming its line. This is for
+    rows a caller built in memory: a nan, a bool or a value outside [0, 1] would make
+    every number computed from it wrong, so it is refused by trace id.
+    """
+    value = row.get("probability")
+    if value is None:
+        return None
+    if not is_probability(value):
+        raise ValueError(
+            f"verdict row {row.get('trace_id')!r} records probability {value!r}, which is "
+            "not a number between 0 and 1"
+        )
+    return float(value)
 
 
 def alignment_from_verdicts(
     verdicts: list[dict[str, Any]], split: str, *, seed: int = 0
 ) -> Alignment:
     rows = [v for v in verdicts if v.get("split") == split]
-    missing = [v["trace_id"] for v in rows if v.get("truth") is None]
-    if missing:
-        raise ValueError(
-            f"{len(missing)} verdict row(s) have no human label ({missing[:3]}); a judge can "
-            "only be aligned against labels a human made"
-        )
+    require_human_labels(rows)
     y_true = [bool(v["truth"]) for v in rows]
     y_pred = [bool(v["verdict"]) for v in rows]
-    return align(y_true, y_pred, seed=seed)
+    # A Brier score over part of a split would be a different number from the one
+    # the table implies, so it is all rows or none.
+    recorded = [row_probability(v) for v in rows]
+    probabilities = [p for p in recorded if p is not None]
+    return align(
+        y_true,
+        y_pred,
+        probabilities=probabilities if rows and len(probabilities) == len(rows) else None,
+        seed=seed,
+    )
 
 
 class PromotionCheck:
@@ -587,6 +620,23 @@ def write_alignment(
     ]
     if test is not None:
         lines.append(f"Test: {test.summary()}")
+    scored = [(name, r) for name, r in (("dev", dev), ("test", test)) if r and r.brier is not None]
+    if scored:
+        lines += [
+            "",
+            "## Calibration",
+            "",
+            "The Brier score is the mean squared gap between the judge's probability of a",
+            "failure and the human label (1 for a failure, 0 for a pass); lower is better.",
+            "The reference is what always predicting the split's own failure rate scores. A",
+            "Brier score at or above it means the probabilities add nothing to the base rate,",
+            "however good TPR and TNR look at this threshold.",
+            "",
+            "| split | Brier | reference |",
+            "|---|---|---|",
+        ]
+        for name, result in scored:
+            lines.append(f"| {name} | {result.brier:.3f} | {result.brier_reference:.3f} |")
     lines += [
         "",
         f"Quarantined calls (never scored): {n_errors}. See `errors.jsonl`.",
