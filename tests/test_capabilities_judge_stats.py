@@ -223,13 +223,6 @@ def test_a_few_shot_example_carries_its_human_label_and_critique_into_the_prompt
     assert 'ANSWER: {"verdict": "fail", "reason": "mixes two events"}' in prompt
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=json.JSONDecodeError,
-    reason="assemble_prompt interpolates the critique into the ANSWER line without JSON "
-    "escaping (judge.py:135), so a critique that quotes the output shows the judge an "
-    "invalid-JSON answer as the example to imitate",
-)
 def test_a_few_shot_answer_line_is_valid_json_even_when_the_critique_quotes_the_output():
     """Detailed critiques quote the output; the example answer must still be parseable JSON."""
     splits = Splits(train=["ex"], dev=["d"])

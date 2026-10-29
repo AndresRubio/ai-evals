@@ -118,10 +118,14 @@ def render_few_shot(few_shot: list[tuple[Trace, Label]]) -> str:
     """
     blocks = []
     for example, label in few_shot:
-        verdict = "fail" if label.label else "pass"
+        # A critique pasted between quotes ends the JSON string at its first quote, so the
+        # answer is serialised. Accented text stays as written rather than as \u escapes.
+        answer = json.dumps(
+            {"verdict": "fail" if label.label else "pass", "reason": label.critique},
+            ensure_ascii=False,
+        )
         blocks.append(
-            f"\nEXAMPLE\nINPUT:\n{example.input}\nOUTPUT:\n{example.output}\n"
-            f'ANSWER: {{"verdict": "{verdict}", "reason": "{label.critique}"}}\n'
+            f"\nEXAMPLE\nINPUT:\n{example.input}\nOUTPUT:\n{example.output}\nANSWER: {answer}\n"
         )
     return "".join(blocks)
 

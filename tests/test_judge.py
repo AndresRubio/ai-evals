@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -12,6 +13,7 @@ from axial.judge import (
     assemble_prompt,
     grade_trace,
     parse_verdict,
+    render_few_shot,
     resolve_few_shot,
     run_judge,
 )
@@ -83,6 +85,22 @@ def test_few_shot_from_train_is_allowed():
     s = spec(few_shot_ids=["t1"])
     text = assemble_prompt(s, trace(9), few_shot=[(trace(1), label(1, True))], splits=splits)
     assert "in1" in text
+
+
+def few_shot_answer(critique: str) -> str:
+    """The ANSWER line of a one-example few-shot block."""
+    example = Label(trace_id="t1", label=True, critique=critique, annotator="andres")
+    block = render_few_shot([(trace(1), example)])
+    return block.split("ANSWER: ", 1)[1].splitlines()[0]
+
+
+def test_a_few_shot_critique_with_quotes_renders_as_json_that_reads_back():
+    critique = 'Quotes "Reuters" from C:\\desk\nand runs to a second line.'
+    assert json.loads(few_shot_answer(critique)) == {"verdict": "fail", "reason": critique}
+
+
+def test_a_few_shot_critique_keeps_its_accents_as_written():
+    assert "«El País»" in few_shot_answer("Cita «El País» sin enlace.")
 
 
 def test_few_shot_from_dev_is_refused():
