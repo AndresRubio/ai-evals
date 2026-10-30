@@ -67,8 +67,9 @@ _VERDICT_FIRST = re.compile(r'\{+\s*"verdict"\s*:[^{}]*"reason"\s*:')
 # The reason comes first and is required. A model writes a schema's fields in order, and
 # a reason written after the verdict only justifies a decision already made.
 #
-# This is a comment rather than a docstring because pydantic sends a class docstring to
-# the model as the schema's description, and the schema is part of the fingerprint.
+# This is a comment rather than a docstring because pydantic puts a class docstring into
+# the schema as its description, and the schema goes to the model and into the
+# fingerprint.
 class Verdict(BaseModel):
     reason: str
     verdict: Literal["pass", "fail"]
@@ -171,10 +172,13 @@ def prompt_sha256(spec: JudgeSpec, few_shot: list[tuple[Trace, Label]]) -> str:
     example changes it. `ensure_ascii` writes a lone surrogate as an escape, which keeps
     the document encodable.
 
-    A text model is also sent the answer schema with every request, so it is covered
-    too. It goes in as text: the sorted dump below would put its fields in alphabetical
-    order, and their order is what makes the judge reason before its verdict. A decision
-    model is sent no schema, and its fingerprint leaves the schema out.
+    A text model is also sent the answer schema when litellm says its provider can take
+    one, so the schema is covered for every text model. It goes in as text: the sorted
+    dump below would put its fields in alphabetical order, and their order is what makes
+    the judge reason before its verdict. What is hashed is pydantic's schema. litellm
+    sends it inside a strict wrapper of its own, and a litellm upgrade that changed the
+    wrapper would leave the fingerprint as it was. A decision model is sent no schema,
+    and its fingerprint leaves the schema out.
     """
     document: dict[str, object] = {
         "spec": spec.model_dump(),

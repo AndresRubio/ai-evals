@@ -130,10 +130,11 @@ def test_the_verdict_schema_requires_the_reason():
     assert Verdict.model_json_schema()["required"] == ["reason", "verdict"]
 
 
-def test_the_verdict_schema_is_exactly_what_the_judge_is_sent():
-    # The schema goes to the judge and into every text-model judge's fingerprint, so any
-    # change to it withdraws every promotion. A docstring on `Verdict` would arrive as its
-    # description, and fixing a typo in one would do that unnoticed.
+def test_the_verdict_schema_is_pinned_to_its_exact_text():
+    # The schema goes into every text-model judge's fingerprint, and to the model where
+    # litellm says the provider can take one, so any change to it withdraws every
+    # text-model promotion. A docstring on `Verdict` would arrive as its description, and
+    # fixing a typo in one would do that unnoticed.
     assert json.dumps(Verdict.model_json_schema()) == (
         '{"properties": {"reason": {"title": "Reason", "type": "string"}, '
         '"verdict": {"enum": ["pass", "fail"], "title": "Verdict", "type": "string"}}, '

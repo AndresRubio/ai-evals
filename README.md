@@ -100,7 +100,8 @@ The refusals are the product.
   been re-judged or edited fails the gate until it is re-measured. Every verdict and
   error row records a fingerprint of the full prompt: `judge.yaml` plus the few-shot
   examples as resolved from the current traces and labels, and for a text model the
-  answer schema sent with every request. `axial promote` refuses a
+  answer schema, which goes with each request when litellm says the provider can take
+  one. `axial promote` refuses a
   judge with no `judge.yaml`, and refuses unless every row in `verdicts.jsonl` and
   `errors.jsonl`, whatever its split, carries the current fingerprint. It then writes
   the fingerprint as the third `key=value` line of `PROMOTED`, `prompt_sha256=<hex>`,

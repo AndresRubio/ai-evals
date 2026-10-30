@@ -143,8 +143,8 @@ def fingerprint_with_schema(
 def test_the_fingerprint_changes_with_the_order_of_the_answer_schema(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    # The schema is sent with every request to a text model, and the field order decides
-    # whether the judge reasons before its verdict.
+    # A text model is sent the schema when litellm says its provider can take one, and
+    # the field order decides whether the judge reasons before its verdict.
     reason_first = fingerprint_with_schema(monkeypatch, ReasonFirst, spec())
     assert fingerprint_with_schema(monkeypatch, VerdictFirst, spec()) != reason_first
 
