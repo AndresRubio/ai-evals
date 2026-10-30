@@ -130,6 +130,17 @@ def test_the_verdict_schema_requires_the_reason():
     assert Verdict.model_json_schema()["required"] == ["reason", "verdict"]
 
 
+def test_the_verdict_schema_is_exactly_what_the_judge_is_sent():
+    # The schema goes to the judge and into every text-model judge's fingerprint, so any
+    # change to it withdraws every promotion. A docstring on `Verdict` would arrive as its
+    # description, and fixing a typo in one would do that unnoticed.
+    assert json.dumps(Verdict.model_json_schema()) == (
+        '{"properties": {"reason": {"title": "Reason", "type": "string"}, '
+        '"verdict": {"enum": ["pass", "fail"], "title": "Verdict", "type": "string"}}, '
+        '"required": ["reason", "verdict"], "title": "Verdict", "type": "object"}'
+    )
+
+
 def test_few_shot_from_dev_is_refused():
     """Few-shot examples leak their split into the judge."""
     splits = Splits(train=["t1"], dev=["t2"], test=["t3"])

@@ -51,17 +51,18 @@ it is not.
 """
 
 
+# The judge's answer, as a schema the provider can be asked to honour.
+#
+# Asking for this rather than parsing free text is what keeps a well-formed answer out
+# of the `unparseable` error bucket. The text parse below remains for providers that
+# cannot enforce a schema.
+#
+# The reason comes first and is required. A model writes a schema's fields in order, and
+# a reason written after the verdict only justifies a decision already made.
+#
+# This is a comment rather than a docstring because pydantic sends a class docstring to
+# the model as the schema's description, and the schema is part of the fingerprint.
 class Verdict(BaseModel):
-    """The judge's answer, as a schema the provider can be asked to honour.
-
-    Asking for this rather than parsing free text is what keeps a well-formed answer
-    out of the `unparseable` error bucket. The text parse below remains for providers
-    that cannot enforce a schema.
-
-    The reason comes first and is required. A model writes a schema's fields in order,
-    and a reason written after the verdict only justifies a decision already made.
-    """
-
     reason: str
     verdict: Literal["pass", "fail"]
 
