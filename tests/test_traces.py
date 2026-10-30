@@ -42,6 +42,33 @@ def test_ingest_jsonl_rejects_a_row_missing_output(tmp_path: Path):
         ingest_jsonl(p)
 
 
+@pytest.mark.parametrize(
+    ("row", "field"),
+    [
+        ({"trace_id": "b", "input": "emoji cut \ud83d", "output": "o"}, "input"),
+        ({"trace_id": "b", "input": "i", "output": "emoji cut \ud83d"}, "output"),
+        ({"input": "emoji cut \ud83d", "output": "o"}, "input"),
+    ],
+    ids=["input", "output", "input-without-id"],
+)
+def test_ingest_jsonl_refuses_a_lone_surrogate_naming_the_row_and_field(
+    tmp_path: Path, row: dict, field: str
+):
+    """JSON allows a lone surrogate such as "\\ud83d", which JavaScript writes when it
+    cuts an emoji in half. UTF-8 cannot encode one, and Jev's client on httpx 0.28 or
+    later, and litellm's OpenAI route, fail on it before sending a prompt that carries
+    the trace. A row without an id used to fail first in the hash that derives one,
+    naming no row."""
+    path = tmp_path / "t.jsonl"
+    path.write_text(json.dumps({"input": "fine", "output": "fine"}) + "\n" + json.dumps(row) + "\n")
+    with pytest.raises(ValueError) as caught:
+        ingest_jsonl(path)
+    assert str(caught.value) == (
+        f"row 2 has an {field} that is not valid UTF-8 (a lone surrogate at character 11, "
+        "which a cut emoji can leave)"
+    )
+
+
 def test_ingest_csv_reads_input_and_output_columns(tmp_path: Path):
     p = tmp_path / "t.csv"
     p.write_text("input,output\ni,o\n")

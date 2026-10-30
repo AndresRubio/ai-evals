@@ -22,7 +22,7 @@ import yaml
 from pydantic import BaseModel, ValidationError
 
 from axial.errors import AxialError, MalformedFile, validation_message
-from axial.traces import Trace
+from axial.traces import Trace, lone_surrogate
 
 # A mode or a batch name becomes one directory name under `.axial/`, and a review
 # session's name one file name under `.axial/reviews/`. Starting with a
@@ -384,6 +384,14 @@ class Store:
 
     # --- traces --------------------------------------------------------
     def write_traces(self, traces: Iterable[Trace]) -> None:
+        """Replace the corpus with `traces`, refusing all of them if one holds a lone
+        surrogate. `ingest` already refuses one in a file as it reads the row; this
+        catches an adapter's traces, which skip the file readers."""
+        traces = list(traces)
+        for trace in traces:
+            problem = lone_surrogate(trace.input, trace.output)
+            if problem:
+                raise AxialError(f"trace {trace.trace_id!r} has {problem}")
         self.write_jsonl(self.traces_path, [t.model_dump() for t in traces])
 
     def read_traces(self) -> list[Trace]:

@@ -224,7 +224,7 @@ def test_measure_refuses_a_lone_surrogate_in_one_line(repo: Path):
         '{"trace_id": "b", "input": "emoji cut \\ud83d", "output": "GOOD"}\n'
     )
     result = axial("measure", MEASURE_MODE, "--version", "1", "--traces", str(path), "--name", "s")
-    assert_clean(result, 1, "trace 'b' has an input that is not valid UTF-8")
+    assert_clean(result, 1, f"could not read {path}: row 2 has an input that is not valid UTF-8")
     assert len(result.output.strip().splitlines()) == 1
 
 

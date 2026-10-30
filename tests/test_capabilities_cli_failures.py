@@ -28,6 +28,7 @@ from axial.cli import app
 from axial.model import FakeModel
 from axial.sample import Review, write_session
 from axial.store import Store
+from axial.traces import Trace, register_adapter
 
 runner = CliRunner()
 
@@ -206,6 +207,40 @@ def test_ingest_of_a_wrongly_typed_field_fails_cleanly(tmp_path: Path) -> None:
     result = run("ingest", str(bad))
     assert_one_line_refusal(result, "row 1: input: ", "got list")
     assert "pydantic" not in result.output
+
+
+def test_ingest_of_a_cut_emoji_fails_cleanly_and_keeps_the_corpus(tmp_path: Path) -> None:
+    """A lone surrogate, which JavaScript leaves when it cuts an emoji in half, is refused
+    naming the file, the row and the field. In the corpus it would fail the prompts that
+    carry it through Jev's client on httpx 0.28 or later, or litellm's OpenAI route."""
+    run("ingest", str(write_traces(tmp_path)))
+    corpus = Path(".axial/traces/traces.jsonl")
+    before = corpus.read_bytes()
+    cut = tmp_path / "cut.jsonl"
+    cut.write_text(
+        '{"trace_id": "a", "input": "fine", "output": "GOOD"}\n'
+        '{"trace_id": "b", "input": "emoji cut \\ud83d", "output": "GOOD"}\n'
+    )
+    assert_one_line_refusal(
+        run("ingest", str(cut)), f"could not read {cut}: row 2 has an input that is not valid UTF-8"
+    )
+    assert corpus.read_bytes() == before
+
+
+def test_ingest_of_a_cut_emoji_from_an_adapter_fails_cleanly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An adapter's traces skip the file readers, so the corpus refuses the lone surrogate
+    itself, naming the trace, before anything is written."""
+    cut = Trace(trace_id="b", input="fine", output="emoji cut \ud83d")
+    monkeypatch.setattr("axial.traces._ADAPTERS", {})
+    register_adapter("cut", lambda _path: [cut])
+    export = tmp_path / "export.log"
+    assert_one_line_refusal(
+        run("ingest", str(export), "--adapter", "cut"),
+        f"could not ingest {export}: trace 'b' has an output that is not valid UTF-8",
+    )
+    assert not Path(".axial/traces/traces.jsonl").exists()
 
 
 def test_ingest_of_a_csv_field_over_the_parser_limit_fails_cleanly(tmp_path: Path) -> None:
