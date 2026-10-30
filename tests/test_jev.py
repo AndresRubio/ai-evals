@@ -91,6 +91,16 @@ def test_reason_records_the_probability_and_the_threshold(monkeypatch):
     assert "0.5" in reason
 
 
+def test_the_answer_gives_the_reason_before_the_verdict(monkeypatch):
+    # The same order a text-model judge is asked for, so every raw answer in
+    # verdicts.jsonl reads the same way.
+    _install(monkeypatch, lambda *a, **kw: _make_response(noul=0.912))
+
+    out = _model(threshold=0.5).complete("grade this trace")
+
+    assert list(json.loads(out.text)) == ["reason", "verdict"]
+
+
 def test_probability_is_exposed_on_the_completion(monkeypatch):
     """A threshold sweep needs the raw probability, not the thresholded verdict."""
     _install(monkeypatch, lambda *a, **kw: _make_response(noul=0.4321))

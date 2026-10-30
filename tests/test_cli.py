@@ -536,6 +536,79 @@ def test_second_judge_run_does_not_clobber_a_hand_edited_prompt_template(
     assert yaml.safe_load(judge_yaml.read_text())["prompt_template"] == custom_template
 
 
+def test_rerunning_a_judge_made_with_the_old_default_template_upgrades_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """`judge --version N` reloads judge.yaml, template included, so a judge made with
+    the old default would otherwise ask for the verdict first under a reason-first
+    schema."""
+    import yaml
+    from template_helpers import VERDICT_FIRST_DEFAULT_TEMPLATE
+
+    import axial.cli as cli_module
+    from axial.config import write_default_config
+    from axial.judge import DEFAULT_TEMPLATE
+    from axial.model import FakeModel
+
+    store = Store(tmp_path)
+    write_default_config(store)
+    _seed_corpus_and_splits(store)
+    JudgeSpec(
+        mode="m", model="claude-opus-5", prompt_template=VERDICT_FIRST_DEFAULT_TEMPLATE
+    ).save(store)
+    model = FakeModel(lambda _p: '{"reason": "fine", "verdict": "pass"}')
+    monkeypatch.setattr(cli_module, "build_judge_model", lambda _spec: model)
+
+    result = runner.invoke(
+        app, ["judge", "m", "--split", "dev", "--version", "1", "--repo", str(tmp_path)]
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert "replaced the default template" in result.stdout
+    judge_yaml = store.judge_dir("m", 1) / "judge.yaml"
+    assert yaml.safe_load(judge_yaml.read_text())["prompt_template"] == DEFAULT_TEMPLATE
+    assert model.calls and all("Write the reason first" in prompt for prompt in model.calls)
+
+
+def test_a_hand_written_verdict_first_template_is_refused_before_judge_yaml_is_rewritten(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Its author has to change it, so the file is left as they wrote it."""
+    import axial.cli as cli_module
+    from axial.config import write_default_config
+    from axial.model import FakeModel
+
+    store = Store(tmp_path)
+    write_default_config(store)
+    _seed_corpus_and_splits(store)
+    judge_yaml = store.judge_dir("m", 1) / "judge.yaml"
+    judge_yaml.parent.mkdir(parents=True)
+    # A block scalar, which `JudgeSpec.save` would rewrite as one escaped string.
+    judge_yaml.write_text(
+        "mode: m\n"
+        "model: claude-opus-5\n"
+        "prompt_template: |\n"
+        "  Grade {mode_name}: {mode_definition}\n"
+        "  {few_shot}\n"
+        "  INPUT: {input}\n"
+        "  OUTPUT: {output}\n"
+        '  Answer: {{"verdict": "fail", "reason": "why"}}\n'
+    )
+    before = judge_yaml.read_bytes()
+    model = FakeModel(lambda _p: '{"reason": "fine", "verdict": "pass"}')
+    monkeypatch.setattr(cli_module, "build_judge_model", lambda _spec: model)
+
+    result = runner.invoke(
+        app, ["judge", "m", "--split", "dev", "--version", "1", "--few-shot", "t0",
+              "--repo", str(tmp_path)],
+    )
+
+    assert result.exit_code == 1, result.stdout
+    assert "verdict before the reason" in result.stdout
+    assert judge_yaml.read_bytes() == before
+    assert model.calls == []
+
+
 def _fake_run_judge_writing_verdicts(store_arg, spec, traces_arg, labels_arg, splits_arg, model_arg, **kwargs):
     """A stand-in for `run_judge` that mimics its real merge-by-split disk write
     (see `run_judge`'s own tail: rows for other splits are kept, this split's rows

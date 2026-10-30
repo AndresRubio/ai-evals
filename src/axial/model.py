@@ -314,7 +314,7 @@ class JevModel:
     is not an option — this class speaks the Decisions API directly.
 
     The adapter asks exactly one `noul` (yes/no probability) question per call and
-    thresholds the answer into the same `{"verdict": ..., "reason": ...}` JSON an
+    thresholds the answer into the same `{"reason": ..., "verdict": ...}` JSON an
     LLM judge is asked to emit. That keeps `run_judge` and `parse_verdict`
     unchanged, and it keeps the prompt that `assemble_prompt` built — few-shot
     train-only guarantee included — as the state Jev reads.
@@ -411,7 +411,7 @@ class JevModel:
                 f"-> {'fail' if failed else 'pass'}"
             )
             return Completion(
-                text=json.dumps({"verdict": "fail" if failed else "pass", "reason": reason}),
+                text=json.dumps({"reason": reason, "verdict": "fail" if failed else "pass"}),
                 model=served,
                 usage=_read_usage(payload.get("usage")),
                 stop_reason="stop",
