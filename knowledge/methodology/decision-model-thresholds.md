@@ -22,9 +22,10 @@ a score from 0 to 1 for "this trace has the failure", and the API turns the scor
 a label at a threshold, 0.50 by default. Husain and Saha (*How To Use Decision Models
 for Evals*, 2026-10-20) compare six of them on one task: Jev (TypeSafe), Decider
 (Perplexity), d1 and d1-ultra (Liquid), Clef Flash (Cloudflare) and the Decisions API
-(OpenAI, running GPT-6 Luna). Their central claim is that the default threshold is an
-untested guess. A model that scores every failure 0.40 and every pass 0.10 separates
-them perfectly at 0.30 and catches nothing at 0.50.
+(OpenAI, running GPT-6 Luna). They note that people use the default threshold without
+checking it against their own data, which they say can cost a lot of performance. A
+model that scores every failure 0.40 and every pass 0.10 separates them perfectly at
+0.30 and catches nothing at 0.50.
 
 ## Their method
 
@@ -34,11 +35,13 @@ them perfectly at 0.30 and catches nothing at 0.50.
    agent (100 less two internal QA traces), 61 with a failure and 37 without.
 3. Set minimums first, 80% precision and 80% recall, and drop any model that cannot
    reach both.
-4. Tune each model's threshold before comparing models. In each training split they
-   take the highest-F1 threshold that meets both minimums. When none does, they take
-   the unconstrained F1 optimum and record the split as infeasible. The threshold is
-   scored on the held-out fold. The published audit has 100 splits per model (five
-   folds, repeated 20 times), the same splits for every model.
+4. Tune each model's threshold before comparing models. For the three candidates, the
+   models whose full-sample curves reach both minimums, each training split takes the
+   highest-F1 threshold that meets both. When none does, it takes the unconstrained F1
+   optimum and records the split as infeasible. The other three models are tuned to
+   their unconstrained F1 optimum in every split. Each threshold is scored on the
+   held-out fold. The published audit has 100 splits per model (five folds, repeated 20
+   times), the same splits for every model.
 5. Check calibration before reading a score as a probability. They group traces by
    predicted probability (about 20 per group), compare each group with its observed
    failure rate, try Platt scaling, and judge the result by the Brier score.
@@ -52,9 +55,11 @@ averages at the unconstrained optimum, so the two disagree.
 
 ## Results
 
-Held-out figures are the means over the 100 splits in `chart-data.json`. "At 0.50" is
-the default threshold applied to all 98 traces. The Brier column is computed here from
-the published scores; the post's text gives the Jev and OpenAI values and they match.
+Held-out figures are the means over the 100 splits in `chart-data.json`: the
+constrained choice for the three candidates and the unconstrained one for the others.
+"At 0.50" is the default threshold applied to all 98 traces. The Brier column is
+computed here from the published scores; the post's text gives the Jev, d1-ultra and
+OpenAI values and they match.
 
 | Model | Met 80/80 | Held-out precision | Held-out recall | Held-out F1 | F1 at 0.50 | Recall at 0.50 | Cost per 100 runs | Brier |
 |---|---|---|---|---|---|---|---|---|
@@ -81,7 +86,9 @@ What the numbers show:
   of failure types, raised its F1 at the default threshold from 0.78 to 0.80.
 - Platt scaling moved Perplexity, Liquid d1 and Clef Flash closer to calibrated. Jev and
   d1-ultra barely needed it (Jev's Brier score went from 0.187 to 0.188), and it made
-  OpenAI slightly worse (0.159 to 0.164).
+  OpenAI slightly worse (0.159 to 0.164). An exploratory refit directly on
+  probabilities gave OpenAI 0.154, which the authors read as the result depending on
+  the fitting method.
 - Always predicting this set's failure rate (61 of 98) scores a Brier of 0.235. Liquid d1
   (0.282) and Clef Flash (0.383) score worse than that before calibration, so their raw
   probabilities should not be read as failure rates. They still rank traces: computed
@@ -110,9 +117,12 @@ weighting of precision and recall through F1 is a simplification they name.
   the choice on stratified dev folds, and when no threshold clears both floors it exits
   with an error and writes nothing, so it never saves a relaxed choice. Its
   cross-validated estimate does score a fold with no feasible threshold at the closest
-  one, and says how many folds that was. With
-  `--write` it saves the threshold as a new judge version, which still needs a real
-  `axial judge` run on dev and then on test.
+  one, and says how many folds that was. The cross-validated rates take some of the
+  in-sample optimism out on average, but on one dev split they cannot tell whether this
+  threshold will clear the floors on test, and they move with the seed. With `--write`
+  it saves the threshold as a new judge version, which still needs a real `axial judge`
+  run on dev and then on test, and it writes nothing when the judge already uses the
+  chosen threshold.
 - `run_judge` records each decision model's probability in `verdicts.jsonl`, so tuning
   and the Brier score need no new model calls. `axial align` prints the Brier score
   beside the base-rate reference. Calibration curves and Platt scaling are not
@@ -120,7 +130,8 @@ weighting of precision and recall through F1 is a simplification they name.
 
 Run on the post's published scores as dev verdicts (2026-10-22), `tune-threshold` finds
 no threshold reaching TPR and TNR of 0.85 for any of the six models. OpenAI comes
-closest, TPR 0.852 and TNR 0.811 on all 98 traces and TNR 0.757 cross-validated, and
+closest, TPR 0.852 and TNR 0.811 on all 98 traces and TNR 0.757 cross-validated at the
+default seed (0.757 to 0.784 over seeds 0 to 19), and
 Perplexity's closest is TPR 0.770 and TNR 0.784. On a set that is 62% failures, 80%
 precision asks much less of TNR, so all three candidates pass the post's bar and none
 passes `axial`'s default one.

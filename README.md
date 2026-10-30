@@ -239,16 +239,19 @@ axial judge merged_stories --split dev --version 2
 
 It reads dev and nothing else. It picks the threshold whose weaker rate clears its floor
 (`min_tpr`, `min_tnr`) by the widest margin, and it reports a stratified k-fold estimate
-(`--folds`, default 5) alongside, because the best fit to dev flatters dev. When no
+(`--folds`, default 5) alongside, because the best fit to dev flatters dev. The estimate
+takes some of that flattery out on average, and it moves with the `--seed` that deals the
+folds. It cannot tell whether this one threshold will clear the floors on test, which is
+what the test split is for. When no
 threshold clears both floors it exits 1 and writes nothing; the floors are yours to
 change in `.axial/config.toml`, and it will not lower them for you. `--write` saves a new
 judge version and no verdicts, so the new version gets its own dev run before test.
 
 `axial align` prints a decision model's Brier score beside the score of always predicting
 the split's failure rate. A Brier score at or above that reference means the
-probabilities are badly calibrated and should not be read as failure rates. They can
-still rank traces well enough for a threshold to separate them, which is what TPR and TNR
-measure.
+probabilities forecast no better than that failure rate, so they should not be read as
+failure rates. They can still rank traces well enough for a threshold to separate them,
+which is what TPR and TNR measure.
 
 Two things it cannot do:
 

@@ -800,11 +800,15 @@ def test_promote_exits_1_with_a_message_on_a_recorded_nan_probability(tmp_path: 
 
 
 def _seed_jev_judge(
-    store: Store, scored: list[tuple[bool, float]], *, prompt_sha256: str | None = None
+    store: Store,
+    scored: list[tuple[bool, float]],
+    *,
+    prompt_sha256: str | None = None,
+    threshold: float = 0.5,
 ) -> None:
     """A Jev judge v1 with dev verdicts stamped with the prompt it sends now, unless
     `prompt_sha256` names another."""
-    spec = JudgeSpec(mode="m", model="typesafe/jev-1.13", version=1)
+    spec = JudgeSpec(mode="m", model="typesafe/jev-1.13", version=1, decision_threshold=threshold)
     spec.save(store)
     stamp = prompt_sha256 or current_prompt_sha256(store, spec)
     _write_dev_verdicts(store, [
@@ -950,6 +954,7 @@ def test_align_on_a_text_model_judge_adds_no_brier_note_section_or_key(tmp_path:
     report = (directory / "alignment.md").read_text()
     assert "no Brier score" not in report
     assert "Calibration" not in report
+    assert "tune-threshold" not in report
     assert "brier" not in (directory / "alignment.json").read_text()
 
 
@@ -988,3 +993,31 @@ def test_align_notes_missing_probabilities_when_test_rows_exist_too(tmp_path: Pa
 
     assert result.exit_code == 0, result.stdout
     assert "no Brier score" in (directory / "alignment.md").read_text()
+
+
+def test_tune_threshold_writes_nothing_when_the_judge_already_uses_the_chosen_threshold(
+    tmp_path: Path,
+):
+    store = Store(tmp_path)
+    _seed_jev_judge(store, _SEPARABLE, threshold=0.22)
+
+    result = runner.invoke(app, ["tune-threshold", "m", "1", "--write", "--repo", str(tmp_path)])
+
+    assert result.exit_code == 0, result.stdout
+    assert "m v1 already uses decision_threshold 0.22; nothing to write" in result.stdout
+    assert store.latest_judge_version("m") == 1
+
+
+def test_align_points_a_decision_model_at_tune_threshold(tmp_path: Path):
+    store = Store(tmp_path)
+    JudgeSpec(mode="m", model="typesafe/jev-1.13", version=1).save(store)
+    directory = _write_dev_verdicts(store, [
+        {"trace_id": f"d{i}", "split": "dev", "verdict": p >= 0.5, "truth": truth,
+         "model": "typesafe/jev-1.13", "probability": p}
+        for i, (truth, p) in enumerate([(True, 0.4), (False, 0.1), (True, 0.3), (False, 0.2)])
+    ])
+
+    result = runner.invoke(app, ["align", "m", "1", "--repo", str(tmp_path)])
+
+    assert result.exit_code == 0, result.stdout
+    assert "`axial tune-threshold m 1`" in (directory / "alignment.md").read_text()

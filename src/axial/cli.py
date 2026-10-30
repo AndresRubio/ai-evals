@@ -509,6 +509,11 @@ def align(
             "replaces this version's dev verdicts and drops its PROMOTED marker, so it must "
             "be promoted again."
         )
+    if spec is not None and is_decision_model(spec.model) and dev.brier is not None:
+        notes.append(
+            f"`axial tune-threshold {mode} {version}` chooses this decision model's "
+            "threshold from these dev verdicts, without calling the model."
+        )
     disagreements = find_disagreements(verdicts, labels, traces)
     path = write_alignment(
         store, mode, version, dev, test,
@@ -603,6 +608,12 @@ def tune_threshold(
             "The floors in .axial/config.toml are yours to set, and tune-threshold will not "
             "lower them."
         )
+    if choice.threshold == spec.decision_threshold:
+        typer.echo(
+            f"{mode} v{version} already uses decision_threshold {choice.threshold}; "
+            "nothing to write"
+        )
+        return
     if not write:
         typer.echo(f"pass --write to save it as {mode} v{store.next_judge_version(mode)}")
         return

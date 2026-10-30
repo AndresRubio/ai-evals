@@ -1,11 +1,11 @@
 """Choosing a decision model's threshold from its dev verdicts.
 
 A decision model returns a probability, and `JevModel` turns it into a verdict at
-`decision_threshold`. The default of 0.5 is a guess. A model whose failures all score
-0.4 and whose passes all score 0.1 separates them perfectly at 0.3 and catches nothing
-at 0.5 (Husain and Saha, "How To Use Decision Models for Evals", 2026-10-20). This
-module picks the threshold from the probabilities `run_judge` already recorded, so it
-costs no model calls.
+`decision_threshold`. The default of 0.5 is never checked against the data. A model
+whose failures all score 0.4 and whose passes all score 0.1 separates them perfectly at
+0.3 and catches nothing at 0.5 (Husain and Saha, "How To Use Decision Models for
+Evals", 2026-10-20). This module picks the threshold from the probabilities `run_judge`
+already recorded, so it costs no model calls.
 
 It keeps the rules the rest of axial keeps:
 
@@ -16,7 +16,10 @@ It keeps the rules the rest of axial keeps:
   refuses it. The floors are never relaxed to make a choice.
 - The choice is estimated out of sample. The threshold that fits dev best is
   optimistic about dev, so stratified k-fold cross-validation repeats the choice on
-  each training part and scores it on the fold that part never saw.
+  each training part and scores it on the fold that part never saw. That removes some
+  of the optimism on average. On one dev split it cannot say whether this threshold
+  will clear the floors on test, and it moves with the seed that deals the folds; the
+  test split is the check.
 """
 
 from __future__ import annotations
@@ -330,6 +333,13 @@ def write_tuned_spec(store: Store, spec: JudgeSpec, tuning: Tuning) -> JudgeSpec
         raise InvariantViolation(
             f"threshold {tuning.choice.threshold} misses the floors on dev "
             f"(TPR {tuning.choice.tpr:.3f}, TNR {tuning.choice.tnr:.3f}), so it is not saved"
+        )
+    if tuning.choice.threshold == spec.decision_threshold:
+        # A copy would become the latest version, so a bare `axial judge` run would
+        # land on it instead of on the version that holds the verdicts.
+        raise InvariantViolation(
+            f"{spec.mode} v{spec.version} already uses decision_threshold "
+            f"{spec.decision_threshold}, so a new version would only be a copy of it"
         )
     tuned = spec.model_copy(
         update={

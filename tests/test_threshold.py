@@ -461,3 +461,15 @@ def test_tuning_refuses_dev_rows_stamped_with_another_prompt():
         tune_from_verdicts(rows, _jev_spec(), Thresholds(), prompt_sha256="new")
     rows[0]["prompt_sha256"] = rows[1]["prompt_sha256"] = "new"
     assert tune_from_verdicts(rows, _jev_spec(), Thresholds(), prompt_sha256="new").choice.feasible
+
+
+def test_a_threshold_the_judge_already_uses_is_not_written_again(tmp_path):
+    store = Store(tmp_path)
+    original = _jev_spec()
+    tuning = tune_from_verdicts(_rows("dev", _separable()), original, Thresholds())
+    already = original.model_copy(update={"decision_threshold": tuning.choice.threshold})
+    already.save(store)
+
+    with pytest.raises(InvariantViolation, match="already uses"):
+        write_tuned_spec(store, already, tune_from_verdicts(_rows("dev", _separable()), already, Thresholds()))
+    assert store.latest_judge_version("m") == 1
