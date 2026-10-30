@@ -542,6 +542,12 @@ def corrupt(store: Store, kind: str) -> str:
         with store.traces_path.open("a") as fh:
             fh.write("{oops\n")
         return "traces.jsonl: invalid JSON on line"
+    if kind == "traces-surrogate":
+        # A trace ingested before `ingest` refused a lone surrogate, as a cut emoji leaves.
+        line = len(store.traces_path.read_text().splitlines()) + 1
+        with store.traces_path.open("a") as fh:
+            fh.write('{"trace_id": "cut", "input": "emoji cut \\ud83d", "output": "o"}\n')
+        return f"traces.jsonl: line {line} has an input that is not valid UTF-8"
     if kind == "labels-type":
         with labels.open("a") as fh:
             fh.write(json.dumps({"trace_id": 1.5, "label": True, "critique": "c", "annotator": "a"}))
@@ -558,7 +564,8 @@ def corrupt(store: Store, kind: str) -> str:
 
 
 @pytest.mark.parametrize(
-    "kind", ["traces-json", "labels-type", "labels-missing-field", "labels-unreadable"]
+    "kind",
+    ["traces-json", "traces-surrogate", "labels-type", "labels-missing-field", "labels-unreadable"],
 )
 @pytest.mark.parametrize(
     "command", [("judge", MEASURE_MODE, "--split", "dev"), ("align", MEASURE_MODE, "1")],

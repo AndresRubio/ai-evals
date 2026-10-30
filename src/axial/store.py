@@ -213,13 +213,17 @@ class Store:
         """
         if missing_ok and not path.exists():
             return []
-        models: list[M] = []
+        return [item for _, item in self._numbered_models(path, model)]
+
+    def _numbered_models[M: BaseModel](
+        self, path: Path, model: type[M]
+    ) -> Iterator[tuple[int, M]]:
         for lineno, row in self._object_rows(path):
             try:
-                models.append(model.model_validate(row))
+                item = model.model_validate(row)
             except ValidationError as exc:
                 raise MalformedFile(path, f"line {lineno}: {validation_message(exc)}") from exc
-        return models
+            yield lineno, item
 
     def _atomic_write(self, path: Path, data: str) -> None:
         """Write `data` to `path` via a same-directory temp file plus `os.replace`.
@@ -395,7 +399,19 @@ class Store:
         self.write_jsonl(self.traces_path, [t.model_dump() for t in traces])
 
     def read_traces(self) -> list[Trace]:
-        return self.read_models(self.traces_path, Trace)
+        """The corpus. A trace whose input or output holds a lone surrogate is a
+        MalformedFile naming the line: a corpus written before `write_traces` refused
+        one can still hold it, and some clients fail on a prompt carrying it before
+        sending."""
+        if not self.traces_path.exists():
+            return []
+        traces: list[Trace] = []
+        for lineno, trace in self._numbered_models(self.traces_path, Trace):
+            problem = lone_surrogate(trace.input, trace.output)
+            if problem:
+                raise MalformedFile(self.traces_path, f"line {lineno} has {problem}")
+            traces.append(trace)
+        return traces
 
     # --- hashing -------------------------------------------------------
     def hash_ids(self, ids: Iterable[str]) -> str:
