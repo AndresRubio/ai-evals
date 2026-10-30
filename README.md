@@ -112,10 +112,11 @@ The refusals are the product.
   again, and batches measured before it need `--replace` to be measured again. The
   same goes for a judge promoted before the judge was asked for its reason ahead of
   its verdict, unless it is a decision model with no few-shot examples. A text-model
-  judge of that age keeps the old template in its `judge.yaml`, which asks for the
-  verdict first, and `axial judge` refuses to run it until that answer line is
-  replaced. The refusal prints the answer instructions `DEFAULT_TEMPLATE` in
-  `src/axial/judge.py` ends with now; paste them over the old line, then re-run:
+  judge of that age keeps its template in `judge.yaml`. If that is the old default,
+  which asked for the verdict first, `axial judge` replaces it with the current one
+  and says so. A template you wrote whose example answer gives the verdict first is
+  refused until you put the reason first or delete `prompt_template` to use the
+  default. Then re-run:
 
   ```bash
   axial judge <mode> --version N --split dev

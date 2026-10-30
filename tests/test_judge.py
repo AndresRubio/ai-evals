@@ -2,10 +2,12 @@ import json
 from pathlib import Path
 
 import pytest
+from template_helpers import VERDICT_FIRST_DEFAULT_TEMPLATE
 
 from axial.dataset import Label, Splits
 from axial.errors import InvariantViolation, MalformedFile
 from axial.judge import (
+    DEFAULT_TEMPLATE,
     Graded,
     JudgeSpec,
     SetAside,
@@ -16,6 +18,7 @@ from axial.judge import (
     render_few_shot,
     resolve_few_shot,
     run_judge,
+    upgrade_verdict_first_default,
 )
 from axial.model import FakeModel
 from axial.store import Store
@@ -261,12 +264,53 @@ def test_a_text_judge_whose_template_asks_for_the_verdict_first_is_refused_befor
     assert model.calls == []
     assert (directory / "PROMOTED").read_text() == "marker\n"
     message = str(refusal.value)
-    assert "asks for the verdict before the reason" in message
+    assert "gives an example answer with the verdict before the reason" in message
     assert str(directory / "judge.yaml") in message
-    # The replacement is given as judge.yaml stores it, ready to paste over the old line.
-    assert 'Answer with JSON only: {{"reason": "two or three sentences", "verdict": "fail"}}' in (
-        message
-    )
+    # judge.yaml stores the template as one escaped string, so text to paste over a line
+    # of it cannot work. Deleting the key or reordering the example can.
+    assert "delete prompt_template" in message
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        '{{"confidence": "high", "verdict": "fail", "reason": "one sentence"}}',
+        "{{'verdict': 'fail', 'reason': 'one sentence'}}",
+    ],
+    ids=["another-key-first", "single-quotes"],
+)
+def test_a_verdict_first_example_answer_is_refused_whatever_comes_before_it(
+    tmp_path: Path, answer: str
+):
+    model = FakeModel(lambda _p: '{"reason": "fine", "verdict": "pass"}')
+    with pytest.raises(InvariantViolation, match="verdict before the reason"):
+        run_judge(
+            Store(tmp_path), spec(prompt_template=f"{TEMPLATE}\nAnswer with JSON only: {answer}"),
+            [trace(1)], [label(1, False)], Splits(dev=["t1"]), model, split="dev",
+        )
+    assert model.calls == []
+
+
+def test_the_old_default_template_is_upgraded_to_the_current_one():
+    judge = spec(prompt_template=VERDICT_FIRST_DEFAULT_TEMPLATE, model="claude-opus-5")
+    assert upgrade_verdict_first_default(judge) is True
+    assert judge.prompt_template == DEFAULT_TEMPLATE
+
+
+def test_a_hand_edited_template_is_not_upgraded():
+    # Its author chose its wording, so it is refused rather than replaced.
+    edited = VERDICT_FIRST_DEFAULT_TEMPLATE.replace("Do not reward length.", "Be strict.")
+    judge = spec(prompt_template=edited, model="claude-opus-5")
+    assert upgrade_verdict_first_default(judge) is False
+    assert judge.prompt_template == edited
+
+
+def test_a_decision_judges_old_default_template_is_not_upgraded():
+    # Jev ignores the answer instructions, and a new template would change the prompt of
+    # a judge whose rows are otherwise still current.
+    judge = spec(prompt_template=VERDICT_FIRST_DEFAULT_TEMPLATE, model="typesafe/jev-1.13")
+    assert upgrade_verdict_first_default(judge) is False
+    assert judge.prompt_template == VERDICT_FIRST_DEFAULT_TEMPLATE
 
 
 def test_a_decision_judge_whose_template_asks_for_the_verdict_first_still_runs(tmp_path: Path):
