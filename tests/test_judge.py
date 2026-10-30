@@ -107,6 +107,18 @@ def test_a_few_shot_critique_keeps_its_accents_as_written():
     assert "«El País»" in few_shot_answer("Cita «El País» sin enlace.")
 
 
+def test_a_lone_surrogate_in_a_few_shot_critique_is_written_as_an_escape():
+    # JavaScript writes "\ud83d" when it cuts an emoji in half. UTF-8 cannot encode it, so
+    # sent raw it makes the HTTP client refuse every request that carries the example.
+    answer = few_shot_answer("cut \ud83d")
+    assert "cut \\ud83d" in answer
+    assert json.loads(answer)["reason"] == "cut \ud83d"
+
+
+def test_a_whole_emoji_in_a_few_shot_critique_stays_as_written():
+    assert "cut 😀" in few_shot_answer("cut 😀")
+
+
 def test_a_few_shot_answer_gives_the_reason_before_the_verdict():
     assert list(json.loads(few_shot_answer("because"))) == ["reason", "verdict"]
 

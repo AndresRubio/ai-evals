@@ -158,9 +158,15 @@ def render_few_shot(few_shot: list[tuple[Trace, Label]]) -> str:
     for example, label in few_shot:
         # A critique pasted between quotes ends the JSON string at its first quote, so the
         # answer is serialised. Accented text stays as written rather than as \u escapes.
-        answer = json.dumps(
-            {"reason": label.critique, "verdict": "fail" if label.label else "pass"},
-            ensure_ascii=False,
+        # A lone surrogate, which JavaScript writes when it cuts an emoji in half, is the
+        # only kind of character UTF-8 cannot encode, so it alone becomes an escape.
+        answer = (
+            json.dumps(
+                {"reason": label.critique, "verdict": "fail" if label.label else "pass"},
+                ensure_ascii=False,
+            )
+            .encode("utf-8", "backslashreplace")
+            .decode("utf-8")
         )
         blocks.append(
             f"\nEXAMPLE\nINPUT:\n{example.input}\nOUTPUT:\n{example.output}\nANSWER: {answer}\n"
