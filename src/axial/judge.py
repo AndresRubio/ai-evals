@@ -50,6 +50,13 @@ Then give the verdict, where "fail" means the failure mode IS present and "pass"
 it is not.
 """
 
+# The answer instructions DEFAULT_TEMPLATE ends with, as judge.yaml stores them.
+_ANSWER_INSTRUCTIONS = DEFAULT_TEMPLATE[DEFAULT_TEMPLATE.index("Answer with JSON only:") :]
+
+# An example answer that gives the verdict before the reason. The default template ended
+# with one until the judge was asked to reason first.
+_VERDICT_FIRST = re.compile(r'\{+\s*"verdict"\s*:[^{}]*"reason"\s*:')
+
 
 # The judge's answer, as a schema the provider can be asked to honour.
 #
@@ -113,6 +120,26 @@ def build_judge_model(spec: JudgeSpec) -> Model:
         true_when="the failure mode is present in the OUTPUT",
         false_when="the failure mode is absent from the OUTPUT",
         threshold=spec.decision_threshold,
+    )
+
+
+def refuse_a_verdict_first_template(store: Store, spec: JudgeSpec) -> None:
+    """Refuse a text-model judge whose template asks for the verdict before the reason.
+
+    `judge` reloads an existing judge.yaml, template included, so a judge made before the
+    reason came first keeps asking for the verdict first while its schema asks for the
+    reason first, and nothing downstream reads the order. A decision model writes no
+    answer of its own and is sent no schema, so its template is left alone.
+    """
+    if is_decision_model(spec.model) or not _VERDICT_FIRST.search(spec.prompt_template):
+        return
+    path = store.judge_dir(spec.mode, spec.version) / "judge.yaml"
+    raise InvariantViolation(
+        f"judge {spec.mode} v{spec.version} asks for the verdict before the reason, and "
+        "its answer schema puts the reason first. axial's default template asked in that "
+        "order until the judge was made to reason first, and judge.yaml keeps its own copy "
+        f"of the template. Replace the answer instructions in {path} with these, then run "
+        f"the judge again:\n\n{_ANSWER_INSTRUCTIONS}"
     )
 
 
@@ -416,7 +443,8 @@ def run_judge(
     # Merge by split rather than overwrite, so running dev and then test leaves both
     # on disk. Re-running one split replaces only that split's rows. The rows kept are
     # read first, so a damaged file is refused before a call is paid for or PROMOTED
-    # is deleted.
+    # is deleted. So is a template that asks for the verdict first.
+    refuse_a_verdict_first_template(store, spec)
     directory = store.judge_dir(spec.mode, spec.version)
     kept = kept_rows(store, spec.mode, spec.version, split)
     few_shot = resolve_few_shot(spec, traces if corpus is None else corpus, labels)

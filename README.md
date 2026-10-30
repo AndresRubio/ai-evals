@@ -112,9 +112,9 @@ The refusals are the product.
   same goes for a judge promoted before the judge was asked for its reason ahead of
   its verdict, unless it is a decision model with no few-shot examples. A text-model
   judge of that age keeps the old template in its `judge.yaml`, which asks for the
-  verdict first. Replace its answer instructions with the ones in `DEFAULT_TEMPLATE`
-  in `src/axial/judge.py` before re-running, or the prompt and the schema ask for
-  opposite orders:
+  verdict first, and `axial judge` refuses to run it until that answer line is
+  replaced. The refusal prints the answer instructions `DEFAULT_TEMPLATE` in
+  `src/axial/judge.py` ends with now; paste them over the old line, then re-run:
 
   ```bash
   axial judge <mode> --version N --split dev

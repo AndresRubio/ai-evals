@@ -238,6 +238,47 @@ def test_a_damaged_rows_file_is_refused_before_any_call_and_promoted_stays(
     assert (directory / "PROMOTED").read_text() == "marker\n"
 
 
+# The answer line axial's default template ended with before it asked for the reason
+# first. A judge.yaml written then keeps its own copy.
+VERDICT_FIRST = TEMPLATE + '\nAnswer with JSON only: {{"verdict": "fail", "reason": "one sentence"}}'
+
+
+def test_a_text_judge_whose_template_asks_for_the_verdict_first_is_refused_before_any_call(
+    tmp_path: Path,
+):
+    store = Store(tmp_path)
+    directory = store.judge_dir("merged", 1)
+    directory.mkdir(parents=True)
+    (directory / "PROMOTED").write_text("marker\n")
+    model = FakeModel(lambda _p: '{"reason": "fine", "verdict": "pass"}')
+
+    with pytest.raises(InvariantViolation) as refusal:
+        run_judge(
+            store, spec(prompt_template=VERDICT_FIRST), [trace(1)], [label(1, False)],
+            Splits(dev=["t1"]), model, split="dev",
+        )
+    assert model.calls == []
+    assert (directory / "PROMOTED").read_text() == "marker\n"
+    message = str(refusal.value)
+    assert "asks for the verdict before the reason" in message
+    assert str(directory / "judge.yaml") in message
+    # The replacement is given as judge.yaml stores it, ready to paste over the old line.
+    assert 'Answer with JSON only: {{"reason": "two or three sentences", "verdict": "fail"}}' in (
+        message
+    )
+
+
+def test_a_decision_judge_whose_template_asks_for_the_verdict_first_still_runs(tmp_path: Path):
+    # Jev reads the prompt as the state it decides on and is sent no answer schema, so
+    # the order the template asks for does not reach anything.
+    model = FakeModel(lambda _p: '{"reason": "fine", "verdict": "pass"}')
+    result = run_judge(
+        Store(tmp_path), spec(prompt_template=VERDICT_FIRST, model="typesafe/jev-1.13"),
+        [trace(1)], [label(1, False)], Splits(dev=["t1"]), model, split="dev",
+    )
+    assert len(result.verdicts) == 1
+
+
 def test_rerunning_a_split_replaces_only_that_split(tmp_path: Path):
     store = Store(tmp_path)
     splits = Splits(train=[], dev=["t1"], test=["t2"])

@@ -536,6 +536,35 @@ def test_second_judge_run_does_not_clobber_a_hand_edited_prompt_template(
     assert yaml.safe_load(judge_yaml.read_text())["prompt_template"] == custom_template
 
 
+def test_rerunning_a_judge_made_before_the_reason_came_first_refuses_until_its_template_is_fixed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """`judge --version N` reloads judge.yaml, template included, so a judge made with
+    the old default would otherwise ask for the verdict first under a reason-first
+    schema."""
+    import axial.cli as cli_module
+    from axial.config import write_default_config
+    from axial.judge import DEFAULT_TEMPLATE
+    from axial.model import FakeModel
+
+    store = Store(tmp_path)
+    write_default_config(store)
+    _seed_corpus_and_splits(store)
+    old_line = 'Answer with JSON only: {{"verdict": "fail", "reason": "one sentence"}}'
+    old_template = DEFAULT_TEMPLATE[: DEFAULT_TEMPLATE.index("Answer with")] + old_line + "\n"
+    JudgeSpec(mode="m", model="claude-opus-5", prompt_template=old_template).save(store)
+    model = FakeModel(lambda _p: '{"reason": "fine", "verdict": "pass"}')
+    monkeypatch.setattr(cli_module, "build_judge_model", lambda _spec: model)
+
+    result = runner.invoke(
+        app, ["judge", "m", "--split", "dev", "--version", "1", "--repo", str(tmp_path)]
+    )
+
+    assert result.exit_code == 1, result.stdout
+    assert "asks for the verdict before the reason" in result.stdout
+    assert model.calls == []
+
+
 def _fake_run_judge_writing_verdicts(store_arg, spec, traces_arg, labels_arg, splits_arg, model_arg, **kwargs):
     """A stand-in for `run_judge` that mimics its real merge-by-split disk write
     (see `run_judge`'s own tail: rows for other splits are kept, this split's rows
