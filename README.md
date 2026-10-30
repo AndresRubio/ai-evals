@@ -99,7 +99,9 @@ The refusals are the product.
   the new batch as it did on test. A measurement taken by a judge that has since
   been re-judged or edited fails the gate until it is re-measured. Every verdict and
   error row records a fingerprint of the full prompt: `judge.yaml` plus the few-shot
-  examples as resolved from the current traces and labels. `axial promote` refuses a
+  examples as resolved from the current traces and labels, and for a text model the
+  answer schema, which goes with each request when litellm says the provider can take
+  one. `axial promote` refuses a
   judge with no `judge.yaml`, and refuses unless every row in `verdicts.jsonl` and
   `errors.jsonl`, whatever its split, carries the current fingerprint. It then writes
   the fingerprint as the third `key=value` line of `PROMOTED`, `prompt_sha256=<hex>`,
@@ -107,7 +109,14 @@ The refusals are the product.
   been relabelled or re-ingested, until dev and test are re-run and the judge is
   promoted again. A judge promoted before this
   change has to re-run every split it has rows for, train included, and be promoted
-  again, and batches measured before it need `--replace` to be measured again:
+  again, and batches measured before it need `--replace` to be measured again. The
+  same goes for a judge promoted before the judge was asked for its reason ahead of
+  its verdict, unless it is a decision model with no few-shot examples. A text-model
+  judge of that age keeps its template in `judge.yaml`. If that is the old default,
+  which asked for the verdict first, `axial judge` replaces it with the current one
+  and says so. A template you wrote whose example answer gives the verdict first is
+  refused until you put the reason first or delete `prompt_template` to use the
+  default. Then re-run:
 
   ```bash
   axial judge <mode> --version N --split dev

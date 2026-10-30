@@ -300,8 +300,9 @@ def require_promoted(store: Store, mode: str, version: int) -> PromotedHashes:
             f"judge {mode} v{version} would send a prompt that is not the prompt it was "
             "promoted with. judge.yaml is unchanged, so either a few-shot example, resolved "
             "from the current traces and labels, was relabelled or re-ingested, or an axial "
-            "upgrade changed how the prompt is built (a JudgeSpec field or default, or the "
-            f"few-shot rendering). Re-run `axial judge {mode} --version {version} --split "
+            "upgrade changed how the prompt is built (a JudgeSpec field or default, the "
+            "few-shot rendering, or the answer schema). Re-run "
+            f"`axial judge {mode} --version {version} --split "
             "dev` and `--split test`, then `axial promote` again."
         )
     return PromotedHashes(recorded_judge_hash, recorded_verdicts_hash, recorded_prompt_hash)
