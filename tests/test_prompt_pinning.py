@@ -5,8 +5,10 @@ See docs/superpowers/specs/2026-10-20-prompt-pinning-design.md.
 
 from __future__ import annotations
 
+import copy
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -27,13 +29,14 @@ from axial.errors import AxialError, InvariantViolation
 from axial.gate import gate_batches
 from axial.judge import (
     JudgeSpec,
+    build_judge_model,
     current_prompt_sha256,
     load_few_shot,
     prompt_sha256,
     run_judge,
 )
 from axial.measure import input_sha256, measure_batch
-from axial.model import FakeModel
+from axial.model import FakeModel, JevModel
 from axial.report import (
     PROMPT_HASH_KEY,
     alignment_from_verdicts,
@@ -156,6 +159,58 @@ def test_a_decision_models_fingerprint_ignores_the_answer_schema(
     jev = spec(model="typesafe/jev-1.13")
     reason_first = fingerprint_with_schema(monkeypatch, ReasonFirst, jev)
     assert fingerprint_with_schema(monkeypatch, VerdictFirst, jev) == reason_first
+
+
+def question_parts(tree: dict[str, Any], path: tuple[str, ...] = ()) -> list[tuple[str, ...]]:
+    """The path to every value in `tree`, a JevModel's questions."""
+    parts: list[tuple[str, ...]] = []
+    for key, value in tree.items():
+        here = (*path, key)
+        parts += question_parts(value, here) if isinstance(value, dict) else [here]
+    return parts
+
+
+def jev_asking(changed: tuple[str, ...]) -> type[JevModel]:
+    """JevModel as an axial upgrade might build it, with the part of its question at
+    `changed` written differently."""
+
+    class Changed(JevModel):
+        @property
+        def questions(self) -> dict[str, Any]:
+            questions = copy.deepcopy(super().questions)
+            *parents, leaf = changed
+            part = questions
+            for key in parents:
+                part = part[key]
+            part[leaf] = f"other {part[leaf]}"
+            return questions
+
+    return Changed
+
+
+def test_a_decision_models_fingerprint_changes_with_every_part_of_its_question(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    # Jev is asked a question with every request, partly in fixed text in axial, so an
+    # upgrade can change its wording or its answer type while judge.yaml and every
+    # example stay as they were.
+    jev = spec(model="typesafe/jev-1.13")
+    asked = prompt_sha256(jev, [example()])
+    parts = question_parts(build_judge_model(jev).questions)
+    unchanged = []
+    for part in parts:
+        monkeypatch.setattr(axial.judge, "JevModel", jev_asking(part))
+        if prompt_sha256(jev, [example()]) == asked:
+            unchanged.append(part)
+    assert ("verdict", "type") in parts
+    assert unchanged == []
+
+
+def test_the_fingerprint_refuses_a_floating_decision_model_alias():
+    # Fingerprinting builds the Jev model to read its question, and building it refuses an
+    # alias that can move, as `axial judge` does.
+    with pytest.raises(AxialError, match="floating alias"):
+        prompt_sha256(spec(model="~typesafe/jev-latest"), [])
 
 
 # --- resolving from the store ------------------------------------------------------
@@ -404,6 +459,17 @@ def test_require_promoted_names_the_answer_schema_among_the_changes(
     with pytest.raises(InvariantViolation, match="not the prompt it was promoted with") as caught:
         require_promoted(store, MEASURE_MODE, 1)
     assert "the answer schema" in str(caught.value)
+
+
+def test_require_promoted_names_a_decision_models_question_among_the_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    store = Store(tmp_path)
+    build_promoted_judge(store, model="typesafe/jev-1.13")
+    monkeypatch.setattr(axial.judge, "JevModel", jev_asking(("verdict", "criteria", "true")))
+    with pytest.raises(InvariantViolation, match="not the prompt it was promoted with") as caught:
+        require_promoted(store, MEASURE_MODE, 1)
+    assert "the question a decision model is asked" in str(caught.value)
 
 
 def test_require_promoted_refuses_a_reingested_few_shot_example(tmp_path: Path):
