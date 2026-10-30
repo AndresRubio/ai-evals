@@ -28,7 +28,9 @@ from axial.judge import (
     kept_rows,
     read_errors,
     read_verdicts,
+    refuse_a_verdict_first_template,
     run_judge,
+    upgrade_verdict_first_default,
 )
 from axial.measure import measure_batch, summary_lines
 from axial.model import LiteLLMModel, require_text_model
@@ -443,6 +445,11 @@ def judge(
             spec.mode_name = entry.name
         if not spec.mode_definition and entry:
             spec.mode_definition = entry.definition
+        if upgrade_verdict_first_default(spec):
+            typer.echo(
+                f"{judge_yaml}: replaced the default template it was made with, which asked "
+                "for the verdict before the reason, with the current default"
+            )
     else:
         spec = JudgeSpec(
             mode=mode,
@@ -453,6 +460,12 @@ def judge(
         )
     if few_shot:
         spec.few_shot_ids = few_shot
+    # `run_judge` refuses this template too, but only after judge.yaml is saved, which
+    # would rewrite a refused file its author still has to edit.
+    try:
+        refuse_a_verdict_first_template(store, spec)
+    except AxialError as exc:
+        _fail(str(exc))
     spec.save(store)
 
     wanted = set(getattr(splits, split_name))

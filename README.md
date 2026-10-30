@@ -116,10 +116,11 @@ The refusals are the product.
   covered the question it is asked, few-shot examples or not. It also goes for a judge
   whose few-shot critique holds a lone surrogate (half of a cut emoji), which the
   prompt now carries as an escape. A text-model judge from before the reason came
-  first keeps the old template in its `judge.yaml`, which asks for the verdict first,
-  and `axial judge` refuses to run it until that answer line is replaced. The refusal
-  prints the answer instructions `DEFAULT_TEMPLATE` in `src/axial/judge.py` ends with
-  now; paste them over the old line, then re-run:
+  first keeps its template in `judge.yaml`. If that is the old default, which asked
+  for the verdict first, `axial judge` replaces it with the current one and says so.
+  A template you wrote whose example answer gives the verdict first is refused until
+  you put the reason first or delete `prompt_template` to use the default. Then
+  re-run:
 
   ```bash
   axial judge <mode> --version N --split dev
