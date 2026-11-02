@@ -135,6 +135,10 @@ def build_judge_model(spec: JudgeSpec) -> Model:
     """
     if not is_decision_model(spec.model):
         return LiteLLMModel(spec.model)
+    return _decision_model(spec)
+
+
+def _decision_model(spec: JudgeSpec) -> JevModel:
     definition = spec.mode_definition or spec.mode_name or spec.mode
     return JevModel(
         spec.model,
@@ -193,9 +197,15 @@ def render_few_shot(few_shot: list[tuple[Trace, Label]]) -> str:
     for example, label in few_shot:
         # A critique pasted between quotes ends the JSON string at its first quote, so the
         # answer is serialised. Accented text stays as written rather than as \u escapes.
-        answer = json.dumps(
-            {"reason": label.critique, "verdict": "fail" if label.label else "pass"},
-            ensure_ascii=False,
+        # A lone surrogate, which JavaScript writes when it cuts an emoji in half, is the
+        # only kind of character UTF-8 cannot encode, so it alone becomes an escape.
+        answer = (
+            json.dumps(
+                {"reason": label.critique, "verdict": "fail" if label.label else "pass"},
+                ensure_ascii=False,
+            )
+            .encode("utf-8", "backslashreplace")
+            .decode("utf-8")
         )
         blocks.append(
             f"\nEXAMPLE\nINPUT:\n{example.input}\nOUTPUT:\n{example.output}\nANSWER: {answer}\n"
@@ -217,13 +227,17 @@ def prompt_sha256(spec: JudgeSpec, few_shot: list[tuple[Trace, Label]]) -> str:
     the judge reason before its verdict. What is hashed is pydantic's schema. litellm
     sends it inside a strict wrapper of its own, and a litellm upgrade that changed the
     wrapper would leave the fingerprint as it was. A decision model is sent no schema,
-    and its fingerprint leaves the schema out.
+    and its fingerprint leaves the schema out. It is asked a question with every request
+    instead, partly in fixed text from this module, and the fingerprint covers that
+    question as the request carries it.
     """
     document: dict[str, object] = {
         "spec": spec.model_dump(),
         "few_shot": render_few_shot(few_shot),
     }
-    if not is_decision_model(spec.model):
+    if is_decision_model(spec.model):
+        document["questions"] = _decision_model(spec).questions
+    else:
         document["answer_schema"] = json.dumps(Verdict.model_json_schema())
     text = json.dumps(document, sort_keys=True, ensure_ascii=True)
     return hashlib.sha256(text.encode("ascii")).hexdigest()

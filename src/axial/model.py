@@ -333,6 +333,21 @@ class JevModel:
         self.timeout_s = timeout_s
         self._rng = random.Random(seed)
 
+    @property
+    def questions(self) -> dict[str, Any]:
+        """The questions every request asks, beside the prompt it sends as state.
+
+        The judge's prompt fingerprint covers them, so their wording is part of what a
+        promotion attests to.
+        """
+        return {
+            "verdict": {
+                "type": "noul",
+                "instructions": self.instructions,
+                "criteria": {"true": self.true_when, "false": self.false_when},
+            }
+        }
+
     def complete(
         self,
         prompt: str,
@@ -355,17 +370,7 @@ class JevModel:
                 "Decisions API, which needs its own key."
             )
 
-        body = {
-            "model": self.model,
-            "state": prompt,
-            "questions": {
-                "verdict": {
-                    "type": "noul",
-                    "instructions": self.instructions,
-                    "criteria": {"true": self.true_when, "false": self.false_when},
-                }
-            },
-        }
+        body = {"model": self.model, "state": prompt, "questions": self.questions}
         headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
 
         last_error: Exception | None = None

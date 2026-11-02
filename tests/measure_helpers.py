@@ -37,6 +37,7 @@ def build_promoted_judge(
     *,
     version: int = 1,
     few_shot_ids: list[str] | None = None,
+    model: str = "fake-judge",
     test_matrix: tuple[int, int, int, int] = (28, 2, 66, 4),
     thresholds: Thresholds | None = None,
 ) -> None:
@@ -70,7 +71,7 @@ def build_promoted_judge(
     spec = JudgeSpec(
         mode=MEASURE_MODE,
         prompt_template=MEASURE_TEMPLATE,
-        model="fake-judge",
+        model=model,
         few_shot_ids=few_shot_ids or [],
         version=version,
     )

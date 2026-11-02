@@ -137,6 +137,24 @@ def test_sends_the_prompt_as_state_with_one_noul_question(monkeypatch):
     assert question["criteria"] == {"true": "unsupported", "false": "supported"}
 
 
+def test_a_request_carries_only_what_the_prompt_fingerprint_covers(monkeypatch):
+    # `prompt_sha256` covers the spec's model, the prompt sent as state, and `questions`.
+    # A new field in the body has to be covered there too before it is added here.
+    calls: list[dict] = []
+
+    def post(*args, **kwargs):
+        calls.append(kwargs)
+        return _make_response()
+
+    _install(monkeypatch, post)
+    model = _model()
+    model.complete("the assembled judge prompt")
+
+    body = calls[0]["json"]
+    assert sorted(body) == ["model", "questions", "state"]
+    assert body["questions"] == model.questions
+
+
 def test_posts_to_the_decisions_endpoint_with_the_api_key(monkeypatch):
     calls: list[dict] = []
 

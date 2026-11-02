@@ -301,7 +301,8 @@ def require_promoted(store: Store, mode: str, version: int) -> PromotedHashes:
             "promoted with. judge.yaml is unchanged, so either a few-shot example, resolved "
             "from the current traces and labels, was relabelled or re-ingested, or an axial "
             "upgrade changed how the prompt is built (a JudgeSpec field or default, the "
-            "few-shot rendering, or the answer schema). Re-run "
+            "few-shot rendering, the answer schema, or the question a decision model is "
+            "asked). Re-run "
             f"`axial judge {mode} --version {version} --split "
             "dev` and `--split test`, then `axial promote` again."
         )
