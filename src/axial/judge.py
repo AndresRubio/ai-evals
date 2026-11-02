@@ -18,11 +18,11 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from axial.dataset import Label, Splits, read_labels
 from axial.errors import AxialError, InvariantViolation, MalformedFile
-from axial.model import JevModel, LiteLLMModel, Model, is_decision_model
+from axial.model import JevModel, LiteLLMModel, Model, is_decision_model, is_probability
 from axial.store import Store
 from axial.traces import Trace
 
@@ -310,6 +310,15 @@ class VerdictRow(BaseModel):
     verdict: bool
     split: str | None = None
     truth: bool | None = None
+    # A decision model's score, read by `align` and `tune-threshold`.
+    probability: float | None = None
+
+    @field_validator("probability", mode="before")
+    @classmethod
+    def _is_a_probability(cls, value: object) -> object:
+        if value is not None and not is_probability(value):
+            raise ValueError("not a number between 0 and 1")
+        return value
 
 
 class ErrorRow(BaseModel):
@@ -357,6 +366,8 @@ class Graded:
     usage: dict[str, int]
     attempts: int
     latency_s: float
+    # A decision model's probability of the failure; `None` for a text model.
+    probability: float | None = None
 
 
 @dataclass(frozen=True)
@@ -472,6 +483,7 @@ def grade_trace(
         usage=completion.usage,
         attempts=completion.attempts,
         latency_s=completion.latency_s,
+        probability=completion.probability,
     )
 
 
@@ -547,6 +559,10 @@ def run_judge(
                 "usage": outcome.usage,
                 "attempts": outcome.attempts,
                 "latency_s": outcome.latency_s,
+                # A decision model's score, unrounded, so `tune-threshold` and the
+                # Brier score can be computed from what is on disk without calling
+                # the model again. `None` for a text model, which has no score.
+                "probability": outcome.probability,
                 "raw": outcome.raw,
                 "prompt_sha256": fingerprint,
             }

@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from promotion_helpers import stamp_run
 
-from axial.align import align
+from axial.align import align, brier_score
 from axial.config import Thresholds
 from axial.errors import InvariantViolation
 from axial.report import (
@@ -297,5 +297,96 @@ def test_read_verdicts_returns_well_formed_rows_exactly_as_written(tmp_path: Pat
          "usage": {"input_tokens": 3}, "prompt_sha256": "abc"},
         {"trace_id": "t1", "verdict": False},
     ]
+    store.write_jsonl(path, rows)
+    assert read_verdicts(store, path) == rows
+
+
+def _scored_rows(split: str, scored: list[tuple[bool, float | None]]) -> list[dict]:
+    return [
+        {
+            "trace_id": f"{split}{i}",
+            "split": split,
+            "verdict": p is not None and p >= 0.5,
+            "truth": truth,
+            "probability": p,
+        }
+        for i, (truth, p) in enumerate(scored)
+    ]
+
+
+def test_alignment_from_verdicts_scores_brier_from_recorded_probabilities():
+    scored = [(True, 0.9), (False, 0.2), (True, 0.4), (False, 0.6)]
+    a = alignment_from_verdicts(_scored_rows("dev", scored), "dev")
+    assert a.brier == pytest.approx(brier_score([t for t, _ in scored], [p for _, p in scored]))
+
+
+def test_alignment_from_verdicts_has_no_brier_for_a_text_model():
+    a = alignment_from_verdicts(_scored_rows("dev", [(True, None), (False, None)]), "dev")
+    assert a.brier is None
+
+
+def test_alignment_from_verdicts_has_no_brier_when_any_row_lacks_a_probability():
+    # Rows written before verdicts recorded a probability carry no key at all.
+    rows = _scored_rows("dev", [(True, 0.9), (False, 0.1)])
+    del rows[1]["probability"]
+    assert alignment_from_verdicts(rows, "dev").brier is None
+
+
+def test_write_alignment_reports_brier_beside_its_reference(tmp_path: Path):
+    store = Store(tmp_path)
+    dev = align([True, False, False, False], [True, False, False, False],
+                probabilities=[0.9, 0.2, 0.1, 0.4], n_boot=50)
+    text = write_alignment(store, "merged", 1, dev, None, n_errors=0).read_text()
+    assert "Brier" in text
+    assert f"{dev.brier:.3f}" in text
+    assert "0.188" in text  # 0.25 * 0.75 = 0.1875, the base-rate reference
+
+
+def test_write_alignment_leaves_brier_out_for_a_text_model(tmp_path: Path):
+    store = Store(tmp_path)
+    text = write_alignment(store, "merged", 1, perfect(), perfect(), n_errors=0).read_text()
+    assert "Brier" not in text
+
+
+@pytest.mark.parametrize("bad", [math.nan, 1.5, -0.1, True, "0.4"])
+def test_alignment_from_verdicts_refuses_a_recorded_value_that_is_not_a_probability(bad):
+    rows = _scored_rows("test", [(True, 0.9), (False, 0.1)])
+    rows[1]["probability"] = bad
+    with pytest.raises(ValueError, match="test1"):
+        alignment_from_verdicts(rows, "test")
+
+
+def test_write_alignment_lists_both_splits_in_the_calibration_table(tmp_path: Path):
+    store = Store(tmp_path)
+    dev = align([True, False], [True, False], probabilities=[0.9, 0.2], n_boot=50)
+    test = align([True, False], [True, True], probabilities=[0.7, 0.6], n_boot=50)
+    text = write_alignment(store, "merged", 1, dev, test, n_errors=0).read_text()
+    calibration = text.split("## Calibration")[1]
+    assert f"| dev | {dev.brier:.3f} |" in calibration
+    assert f"| test | {test.brier:.3f} |" in calibration
+
+
+@pytest.mark.parametrize("bad", ["NaN", "1.5", "-0.1", "true", '"0.4"'])
+def test_read_verdicts_refuses_a_probability_that_is_not_one_naming_the_line(
+    tmp_path: Path, bad: str
+):
+    from axial.errors import MalformedFile
+
+    store = Store(tmp_path)
+    path = store.judge_dir("m", 1) / "verdicts.jsonl"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        '{"trace_id": "t0", "verdict": true, "probability": 0.25}\n'
+        f'{{"trace_id": "t1", "verdict": false, "probability": {bad}}}\n'
+    )
+    with pytest.raises(MalformedFile, match="line 2: probability: .*not a number between 0 and 1"):
+        read_verdicts(store, path)
+
+
+def test_read_verdicts_keeps_a_recorded_probability_as_written(tmp_path: Path):
+    store = Store(tmp_path)
+    path = store.judge_dir("m", 1) / "verdicts.jsonl"
+    rows = [{"trace_id": "t0", "verdict": True, "probability": 0.123456789},
+            {"trace_id": "t1", "verdict": False, "probability": None}]
     store.write_jsonl(path, rows)
     assert read_verdicts(store, path) == rows

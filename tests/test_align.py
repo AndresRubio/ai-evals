@@ -2,7 +2,7 @@ import math
 
 import pytest
 
-from axial.align import align, confusion_matrix, paired_bootstrap_ci
+from axial.align import align, brier_score, confusion_matrix, paired_bootstrap_ci, tpr_tnr
 
 
 def test_confusion_matrix_counts_each_cell():
@@ -140,3 +140,61 @@ def test_rates_are_nan_when_a_class_is_absent():
     a = align([False, False], [False, False], n_boot=100, seed=1)
     assert math.isnan(a.tpr)
     assert a.tnr == pytest.approx(1.0)
+
+
+# --- Brier score -------------------------------------------------------------
+
+
+def test_brier_score_is_zero_for_certain_correct_scores():
+    assert brier_score([True, False], [1.0, 0.0]) == 0.0
+
+
+def test_brier_score_of_a_coin_flip_is_a_quarter():
+    assert brier_score([True, False, True], [0.5, 0.5, 0.5]) == pytest.approx(0.25)
+
+
+def test_brier_score_by_hand():
+    # (1 - 0.8)^2 = 0.04 and (0 - 0.3)^2 = 0.09, mean 0.065
+    assert brier_score([True, False], [0.8, 0.3]) == pytest.approx(0.065)
+
+
+def test_brier_score_rejects_a_probability_outside_zero_and_one():
+    with pytest.raises(ValueError, match="between 0 and 1"):
+        brier_score([True], [1.2])
+
+
+def test_brier_score_rejects_a_nan_probability():
+    with pytest.raises(ValueError, match="between 0 and 1"):
+        brier_score([True], [math.nan])
+
+
+def test_brier_score_rejects_mismatched_lengths():
+    with pytest.raises(ValueError, match="same length"):
+        brier_score([True, False], [0.5])
+
+
+def test_align_reports_brier_and_its_base_rate_reference_when_given_probabilities():
+    # 1 failure in 4: always predicting 0.25 scores 0.25 * 0.75 = 0.1875.
+    y_true = [True, False, False, False]
+    probabilities = [0.9, 0.2, 0.1, 0.4]
+    a = align(y_true, [p >= 0.5 for p in probabilities], probabilities=probabilities, n_boot=50)
+    assert a.brier == pytest.approx(brier_score(y_true, probabilities))
+    assert a.brier_reference == pytest.approx(0.1875)
+
+
+def test_align_has_no_brier_without_probabilities():
+    a = align([True, False], [True, False], n_boot=50)
+    assert a.brier is None
+    assert a.brier_reference is None
+
+
+def test_align_rejects_probabilities_of_the_wrong_length():
+    with pytest.raises(ValueError, match="same length"):
+        align([True, False], [True, False], probabilities=[0.9], n_boot=50)
+
+
+def test_tpr_tnr_matches_align_without_the_bootstrap():
+    y_true = [True] * 8 + [False] * 12
+    y_pred = [True] * 6 + [False] * 2 + [True] * 3 + [False] * 9
+    a = align(y_true, y_pred, n_boot=50)
+    assert tpr_tnr(y_true, y_pred) == (a.tpr, a.tnr)

@@ -55,7 +55,8 @@ example, not committed, so nothing here demonstrates that directly.)
 | `axial label-import` | a labels JSONL + a mode name | human labels, for labels made elsewhere |
 | `axial split` | labels | a stratified, seeded, frozen split |
 | `axial judge` | a split + a prompt | verdicts, and errors kept separate |
-| `axial align` | verdicts vs labels | an alignment report |
+| `axial tune-threshold` | a decision model's dev verdicts | a threshold chosen on dev, cross-validated; with `--write`, the next judge version |
+| `axial align` | verdicts vs labels | an alignment report, with a Brier score for a decision model |
 | `axial checks` | verdicts + traces | slice breakdown, verbosity bias, judged cost, noise floor |
 | `axial promote` | alignment on test | a judge cleared for CI |
 | `axial measure` | a promoted judge + a batch of new traces | the batch's failure rate, corrected for the judge's errors, with a 95% interval |
@@ -232,9 +233,38 @@ Jev is not reachable through litellm — it runs on `POST /api/alpha/decisions`,
 chat-completions endpoint — so `JevModel` speaks that API directly. It asks one `noul`
 (yes/no probability) question per trace, using the prompt `assemble_prompt` built as the
 state, and thresholds the calibrated probability into the same verdict JSON an LLM judge
-emits. `run_judge`, `align`, `promote` and `gate` are unchanged. Tune the threshold in
-`judge.yaml` (`decision_threshold`, default `0.5`) and bump the judge version when you do —
-it changes every verdict, which is why it lives in the hashed judge definition.
+emits, and `run_judge` records the probability beside each verdict. `promote` and `gate`
+read those verdicts like any other judge's, and refuse a recorded probability that is not
+a number between 0 and 1. The threshold is `decision_threshold` in `judge.yaml`, which
+`promote` hashes, because it changes every verdict.
+
+Its default of `0.5` is untested. In Husain and Saha's comparison of six decision
+models, one caught 21% of failures at 0.5 and tunes to 0.055
+([knowledge/methodology/decision-model-thresholds.md](knowledge/methodology/decision-model-thresholds.md)).
+`run_judge` records each probability in `verdicts.jsonl`, so the threshold can be chosen
+from a dev run without calling the model again:
+
+```bash
+axial tune-threshold merged_stories 1           # report only
+axial tune-threshold merged_stories 1 --write   # save it as merged_stories v2
+axial judge merged_stories --split dev --version 2
+```
+
+It reads dev and nothing else. It picks the threshold whose weaker rate clears its floor
+(`min_tpr`, `min_tnr`) by the widest margin, and it reports a stratified k-fold estimate
+(`--folds`, default 5) alongside, because the best fit to dev flatters dev. The estimate
+takes some of that flattery out on average, and it moves with the `--seed` that deals the
+folds. It cannot tell whether this one threshold will clear the floors on test, which is
+what the test split is for. When no
+threshold clears both floors it exits 1 and writes nothing; the floors are yours to
+change in `.axial/config.toml`, and it will not lower them for you. `--write` saves a new
+judge version and no verdicts, so the new version gets its own dev run before test.
+
+`axial align` prints a decision model's Brier score beside the score of always predicting
+the split's failure rate. A Brier score at or above that reference means the
+probabilities forecast no better than that failure rate, so they should not be read as
+failure rates. They can still rank traces well enough for a threshold to separate them,
+which is what TPR and TNR measure.
 
 Two things it cannot do:
 

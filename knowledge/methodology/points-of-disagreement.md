@@ -2,12 +2,14 @@
 name: points-of-disagreement
 description: Where the practitioner sources disagree on method, numbers and judge design
 shelf: methodology
-updated: 2026-09-17
+updated: 2026-10-30
 sources:
   - url: https://hamel.dev/blog/posts/evals-faq/
     read: 2026-09-17
   - url: https://hamelhusain.substack.com/p/its-hard-to-eval-is-a-product-smell
     read: 2026-09-17
+  - url: https://hamel.dev/blog/posts/decision-model-evals/
+    read: 2026-10-21
   - url: https://arxiv.org/abs/2404.12272
     read: 2026-09-17
   - url: https://arxiv.org/abs/2401.03038
@@ -30,7 +32,7 @@ sources:
     read: 2026-09-17
   - url: https://www.sh-reya.com/blog/ai-engineering-short/
     read: 2026-09-17
-related: [methodology-spine]
+related: [methodology-spine, decision-model-thresholds, evals-skills]
 ---
 
 # Points of disagreement
@@ -61,3 +63,6 @@ Anthropic: grade what the agent produced, not the path, to avoid punishing valid
 
 **i) Is rigorous eval for everyone?**
 Shankar (*In Defense of AI Evals, for Everyone*, 2025-09-05) concedes ground to the anti-eval camp: teams in well-represented domains (coding agents) can lean on upstream model providers, and experienced teams with deep domain intuition can substitute continuous dogfooding plus error analysis for formal metrics. Her line is that newcomers and teams without data backgrounds cannot. Husain's framing in *"It's Hard to Eval" Is a Product Smell* (2026-06-29) goes further sideways: if verification is hard, that's a **product design defect** — surface intermediate artifacts, anchor outputs to vetted references with diffs, make outputs reviewable in small units — fix the product rather than building a heroic eval.
+
+**j) Floors on precision, or on TPR and TNR.**
+Husain's judge-alignment writing reports TPR and TNR beside raw agreement, and so does the course's `validate-evaluator` skill ([evals-skills](../landscape/evals-skills.md)). Husain and Saha's decision-model post (2026-10-20) sets its minimums on precision and recall instead and picks thresholds by F1, while telling readers not to use F1 just because the post did. The choice matters when the labelled set's failure rate differs from production's. Recall is TPR, but precision moves with prevalence: their set is 62% failures, where a judge with TPR 0.9 and TNR 0.9 has precision 0.94, and at a 5% failure rate the same judge has precision 0.32. Precision is the right floor when the labelled set has production's failure rate; TPR and TNR are the floors that carry over when it does not. `axial` gates on TPR and TNR ([decision-model-thresholds](decision-model-thresholds.md)).

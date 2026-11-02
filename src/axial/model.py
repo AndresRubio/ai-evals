@@ -14,7 +14,7 @@ import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any, Protocol, TypeGuard
 
 from pydantic import BaseModel
 
@@ -248,6 +248,19 @@ DECISIONS_URL = "https://openrouter.ai/api/alpha/decisions"
 _DECISION_PROVIDERS = frozenset({"typesafe"})
 
 
+def is_probability(value: object) -> TypeGuard[float]:
+    """Whether `value` is a number from 0 to 1.
+
+    A bool is an int to Python and a numeric string would pass a cast, so both are
+    refused by type; `0 <= v <= 1` is written this way round so that nan fails it.
+    """
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and 0.0 <= value <= 1.0
+    )
+
+
 def is_decision_model(model_id: str) -> bool:
     """Whether `model_id` names a decision model rather than a text model."""
     segments = [seg for seg in model_id.lstrip("~").split("/") if seg]
@@ -432,6 +445,12 @@ class JevModel:
         value = answer.get("noul")
         if not isinstance(value, (int, float)):
             raise AxialError(f"the 'noul' answer carried no probability: {answer!r}")
+        # Thresholded, anything else is a verdict nobody gave, and recorded it breaks
+        # every Brier score and tuning run that reads it later.
+        if not is_probability(value):
+            raise AxialError(
+                f"the 'noul' answer {value!r} is not a probability between 0 and 1"
+            )
         return float(value)
 
 

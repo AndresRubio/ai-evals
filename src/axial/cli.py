@@ -25,6 +25,7 @@ from axial.gate import gate_batches
 from axial.judge import (
     JudgeSpec,
     build_judge_model,
+    current_prompt_sha256,
     kept_rows,
     read_errors,
     read_verdicts,
@@ -33,7 +34,7 @@ from axial.judge import (
     upgrade_verdict_first_default,
 )
 from axial.measure import measure_batch, summary_lines
-from axial.model import LiteLLMModel, require_text_model
+from axial.model import LiteLLMModel, is_decision_model, require_text_model
 from axial.perplexity import DEGENERATE_SPREAD, score_traces
 from axial.perplexity import spread as perplexity_spread
 from axial.report import (
@@ -488,11 +489,13 @@ def align(
     store = Store(repo)
     config = _config(store)
     directory = store.judge_dir(mode, version)
+    judge_yaml = directory / "judge.yaml"
     try:
         verdicts = read_verdicts(store, directory / "verdicts.jsonl")
         errors = read_errors(store, directory / "errors.jsonl")
         labels = read_labels(store, mode)
         traces = store.read_traces()
+        spec = JudgeSpec.load(store, mode, version) if judge_yaml.exists() else None
     except (OSError, ValueError) as exc:
         _fail(f"could not align {mode} v{version}: {_one_line(exc)}")
     _require_verdicts(verdicts, "dev", mode, version)
@@ -500,7 +503,7 @@ def align(
         dev = alignment_from_verdicts(verdicts, "dev")
         has_test = any(v.get("split") == "test" for v in verdicts)
         test = alignment_from_verdicts(verdicts, "test") if has_test else None
-    except ValueError as exc:  # a verdict row that carries no human label
+    except ValueError as exc:  # no human label, or a recorded probability that is not one
         _fail(f"could not align {mode} v{version}: {_one_line(exc)}")
     notes: list[str] = []
     if test is not None:
@@ -509,16 +512,130 @@ def align(
         # here so that a skipped check is recorded in alignment.md rather than
         # only surfacing later, at `promote` time.
         notes = check_promotion(dev, test, config.thresholds).notes
+    # judge.yaml names the model; a row records whatever id the provider served,
+    # which can be a bare `jev-1.13` that no longer says it is a decision model.
+    if spec is not None and is_decision_model(spec.model) and dev.brier is None:
+        notes.append(
+            "no Brier score: these decision-model verdicts carry no probability, so they "
+            "were written before axial recorded one. Re-run "
+            f"`axial judge {mode} --split dev --version {version}` to record it. The re-run "
+            "replaces this version's dev verdicts and drops its PROMOTED marker, so it must "
+            "be promoted again."
+        )
+    if spec is not None and is_decision_model(spec.model) and dev.brier is not None:
+        notes.append(
+            f"`axial tune-threshold {mode} {version}` chooses this decision model's "
+            "threshold from these dev verdicts, without calling the model."
+        )
     disagreements = find_disagreements(verdicts, labels, traces)
     path = write_alignment(
         store, mode, version, dev, test,
         n_errors=len(errors), notes=notes, disagreements=disagreements,
     )
-    typer.echo(f"dev  {dev.summary()}")
-    if test:
-        typer.echo(f"test {test.summary()}")
+    for name, result in (("dev ", dev), ("test", test)):
+        if result is None:
+            continue
+        typer.echo(f"{name} {result.summary()}")
+        if result.brier is not None:
+            typer.echo(
+                f"{name} Brier {result.brier:.3f} "
+                f"(base-rate reference {result.brier_reference:.3f})"
+            )
     typer.echo(disagreement_counts(disagreements))
     typer.echo(f"written to {path}")
+
+
+@app.command("tune-threshold")
+def tune_threshold(
+    mode: str = ModeArgument,
+    version: int = typer.Argument(...),
+    folds: int = typer.Option(
+        5, help="Stratified folds for the cross-validated estimate. Dev needs at least this "
+        "many real failures and this many real passes."
+    ),
+    seed: int = typer.Option(0),
+    write: bool = typer.Option(
+        False, "--write", help="Save the chosen threshold as the next judge version."
+    ),
+    repo: str = RepoOption,
+) -> None:
+    """Choose a decision model's threshold from its dev verdicts. Calls no model."""
+    from axial.threshold import tune_from_verdicts, write_tuned_spec
+
+    store = Store(repo)
+    config = _config(store)
+    directory = store.judge_dir(mode, version)
+    if not (directory / "judge.yaml").exists():
+        _fail(
+            f"no judge {mode} v{version}; run `axial judge {mode} --split dev --version "
+            f"{version}` first"
+        )
+    try:
+        spec = JudgeSpec.load(store, mode, version)
+        verdicts = read_verdicts(store, directory / "verdicts.jsonl")
+        errors = read_errors(store, directory / "errors.jsonl")
+        fingerprint = current_prompt_sha256(store, spec)
+    except (OSError, ValueError) as exc:
+        _fail(f"could not tune {mode} v{version}: {_one_line(exc)}")
+    except AxialError as exc:  # a few-shot example's file could not be read
+        _fail(str(exc))
+    try:
+        tuning = tune_from_verdicts(
+            verdicts, spec, config.thresholds, folds=folds, seed=seed, prompt_sha256=fingerprint
+        )
+    except AxialError as exc:
+        _fail(str(exc))
+
+    floors = config.thresholds
+    choice = tuning.choice
+    typer.echo(
+        f"dev: {tuning.n_failures} real failures, {tuning.n_passes} real passes, "
+        f"scored by {spec.model}; floors TPR >= {floors.min_tpr:.2f}, TNR >= {floors.min_tnr:.2f}"
+    )
+    quarantined = sum(1 for e in errors if e.get("split") == "dev")
+    if quarantined:
+        typer.echo(
+            f"  {quarantined} dev call(s) quarantined in errors.jsonl are not in these numbers"
+        )
+    typer.echo(
+        f"current threshold {tuning.current_threshold}: "
+        f"TPR {tuning.current_tpr:.3f}  TNR {tuning.current_tnr:.3f}"
+    )
+    typer.echo(
+        f"{'chosen' if choice.feasible else 'closest'} threshold {choice.threshold}: "
+        f"TPR {choice.tpr:.3f}  TNR {choice.tnr:.3f} on dev, which it was chosen on"
+    )
+    held_out = tuning.cv.held_out
+    typer.echo(
+        f"{tuning.cv.folds}-fold cross-validation on dev: TPR {held_out.fmt('tpr')}  "
+        f"TNR {held_out.fmt('tnr')}, each trace scored by a threshold chosen without it"
+    )
+    if tuning.cv.infeasible_folds:
+        typer.echo(
+            f"  no threshold cleared the floors in {tuning.cv.infeasible_folds} of "
+            f"{tuning.cv.folds} training folds; those folds were scored at their closest one"
+        )
+    if not choice.feasible:
+        _fail(
+            "no threshold clears both floors on dev. Improve the judge prompt or the labels. "
+            "The floors in .axial/config.toml are yours to set, and tune-threshold will not "
+            "lower them."
+        )
+    if choice.threshold == spec.decision_threshold:
+        typer.echo(
+            f"{mode} v{version} already uses decision_threshold {choice.threshold}; "
+            "nothing to write"
+        )
+        return
+    if not write:
+        typer.echo(f"pass --write to save it as {mode} v{store.next_judge_version(mode)}")
+        return
+    tuned = write_tuned_spec(store, spec, tuning)
+    typer.echo(
+        f"wrote {mode} v{tuned.version} with decision_threshold {tuned.decision_threshold}. "
+        f"Run `axial judge {mode} --split dev --version {tuned.version}` to record its "
+        "verdicts, then --split test once."
+    )
 
 
 @app.command()
