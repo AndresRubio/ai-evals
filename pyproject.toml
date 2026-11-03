@@ -1,5 +1,5 @@
 [project]
-name = "axial"
+name = "axial-evals"
 version = "0.1.0"
 description = "Error-analysis-first eval toolkit: from traces to a judge you can trust"
 readme = "README.md"
@@ -16,6 +16,9 @@ dependencies = [
     "uvicorn>=0.30",
 ]
 
+[project.urls]
+Repository = "https://github.com/AndresRubio/ai-evals"
+
 [project.scripts]
 axial = "axial.cli:app"
 
@@ -28,6 +31,10 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/axial"]
+
+# The sdist otherwise ships every tracked file, internal plans and agent notes included.
+[tool.hatch.build.targets.sdist]
+exclude = ["docs/", ".github/", "CLAUDE.md"]
 
 [tool.ruff]
 line-length = 100

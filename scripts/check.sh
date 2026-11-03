@@ -16,6 +16,7 @@ step() {
   "$@" || failed+=("$*")
 }
 
+step uv lock --check
 step uv run ruff check .
 step uv run mypy src/axial scripts
 step uv run pytest -q
