@@ -17,12 +17,18 @@ methodology and done in spreadsheets. `axial` is that step, as code.
 
 ## Install
 
-`axial` is on PyPI as `axial-evals`, because the name `axial` belongs to an unrelated
-package there. The command and the import are both still `axial`:
+`axial` is not on PyPI. Install it straight from this repository, pinned to a release
+tag:
 
 ```bash
-uv tool install axial-evals    # or: pip install axial-evals
+uv tool install git+https://github.com/AndresRubio/ai-evals@v0.1.0
+# or: pip install git+https://github.com/AndresRubio/ai-evals@v0.1.0
 ```
+
+It needs Python 3.13 or newer. `uv tool install` fetches one if needed; with pip, run
+it from a 3.13+ interpreter. The package is named `axial-evals`, because the name
+`axial` belongs to an unrelated PyPI package. The command and the import are both
+`axial`.
 
 The quickstart below uses the example traces in this repository, so for that, work
 from a clone:
@@ -32,7 +38,7 @@ uv sync
 ```
 
 Every command below is written as `uv run axial ...`, which runs it from that clone.
-With the PyPI install, drop the `uv run`.
+With the installed tool, drop the `uv run`.
 
 ### Credentials
 
@@ -44,7 +50,7 @@ cp .env.example .env    # then fill in the keys you need
 given by `--repo`, which defaults to the current one. It never overrides a variable
 already exported in your shell, and this repository gitignores it.
 [`.env.example`](https://github.com/AndresRubio/ai-evals/blob/main/.env.example) lists
-which key each model path needs and why; with a PyPI install, copy it from there.
+which key each model path needs and why; with the installed tool, copy it from there.
 Most of the pipeline calls no model at all and needs no key: `init`, `ingest`,
 `sample`, `annotate`, `label-from-reviews`, `split`, `align`, `promote` and `gate`.
 
@@ -419,29 +425,21 @@ fails when the index is stale or a file breaks the rules in
 
 ## Releasing
 
-Set the new version with `uv version --bump patch` (or `minor`, `major`, or
-`uv version X.Y.Z`), which updates `pyproject.toml` and `uv.lock` together. Merge that,
-then tag the merged commit on main:
+Pushing a tag is the whole release. There is no build or publish step, and users
+install the tag by name.
+
+In one pull request, set the new version with `uv version --bump patch` (or `minor`,
+`major`, or `uv version X.Y.Z`), which updates `pyproject.toml` and `uv.lock` together,
+and change the tag in the Install section's commands to match. Merge it, then tag the
+merged commit on main:
 
 ```bash
 git switch main && git pull && git tag -a vX.Y.Z -m vX.Y.Z && git push origin vX.Y.Z
 ```
 
-[`.github/workflows/release.yml`](https://github.com/AndresRubio/ai-evals/blob/main/.github/workflows/release.yml)
-refuses a tag that is not on main or does not match the version. It runs the checks,
-builds, installs the wheel on its own to make sure it runs, and publishes from a
-separate job that installs none of the project's dependencies.
-
-Publishing uses PyPI trusted publishing, so no token is stored in the repository. Before
-the first release, add a pending publisher on PyPI (Account settings, Publishing) with
-project `axial-evals`, owner `AndresRubio`, repository `ai-evals`, workflow
-`release.yml` and environment `pypi`.
-
-The workflow only checks that the tag is on main, so whoever can push to main and push
-tags can publish. Close that in the repository settings as part of the same setup:
-require a pull request to merge into main, limit who can create `v*` tags, and give
-the `pypi` environment a required reviewer and a rule that allows only `v*` tags. The
-publish job then waits for a person to approve it.
+Nothing checks the tag itself. Tag only a merged commit on main, and make sure
+`uv version --short` prints the same version as the tag. Repository rulesets require a
+pull request to merge into main and let only admins create `v*` tags.
 
 ## Licence
 
