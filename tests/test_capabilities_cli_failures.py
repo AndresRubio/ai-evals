@@ -178,6 +178,26 @@ def test_sample_over_a_corrupt_corpus_fails_cleanly() -> None:
     assert not Path(".axial/reviews").exists()
 
 
+def test_ingesting_the_source_again_clears_a_corpus_holding_a_cut_emoji(tmp_path: Path) -> None:
+    """A corpus written before `ingest` refused a lone surrogate stops every command that
+    reads it. Ingesting the corrected source again replaces the corpus without reading
+    the old one, so that is the way out."""
+    source = write_traces(tmp_path)
+    run("ingest", str(source))
+    corpus = Path(".axial/traces/traces.jsonl")
+    with corpus.open("a") as fh:
+        fh.write('{"trace_id": "cut", "input": "emoji cut \\ud83d", "output": "o"}\n')
+    line = len(corpus.read_text().splitlines())
+    assert_one_line_refusal(
+        run("sample", "--n", "1", "--name", "s"),
+        "could not read the traces",
+        f"line {line} has an input that is not valid UTF-8",
+    )
+    assert run("ingest", str(source)).exit_code == 0
+    result = run("sample", "--n", "1", "--name", "s")
+    assert result.exit_code == 0, result.output
+
+
 # --- missing or malformed inputs -----------------------------------------------
 
 

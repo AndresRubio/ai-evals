@@ -313,6 +313,30 @@ def test_measure_with_a_few_shot_judge_refuses_a_corpus_it_cannot_read_in_one_li
     assert tree(axial_dir) == before
 
 
+@pytest.mark.parametrize(
+    "command",
+    [("measure", "--version", "1", "--traces", "b.jsonl", "--name", "g"), ("gate", "--version", "1")],
+    ids=["measure", "gate"],
+)
+def test_measure_and_gate_with_a_few_shot_judge_refuse_a_stored_lone_surrogate(
+    few_shot_repo: Path, command: tuple[str, ...]
+):
+    """Checking the promotion resolves the few-shot examples from the corpus, so a trace
+    whose input holds a lone surrogate stops both, naming its line, though it is not
+    one of the examples."""
+    corpus = few_shot_repo / ".axial" / "traces" / "traces.jsonl"
+    line = len(corpus.read_text().splitlines()) + 1
+    appending(b'{"trace_id": "cut", "input": "emoji cut \\ud83d", "output": "o"}\n')(corpus)
+    write_batch(few_shot_repo / "b.jsonl", ["BAD"] * 5 + ["GOOD"] * 15)
+    before = tree(few_shot_repo / ".axial")
+    result = axial(command[0], MEASURE_MODE, *command[1:])
+    assert_clean(
+        result, 1, "could not read the traces", f"line {line} has an input that is not valid UTF-8"
+    )
+    assert len(result.output.strip().splitlines()) == 1
+    assert tree(few_shot_repo / ".axial") == before
+
+
 # --- gate --batch -------------------------------------------------------------------
 
 
