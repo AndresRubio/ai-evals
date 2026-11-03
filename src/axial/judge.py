@@ -78,6 +78,18 @@ where "fail" means the failure mode IS present and "pass" means it is not.
 # and in either kind of quotes. One with a nested object between the two is missed.
 _VERDICT_FIRST = re.compile(r"""\{+[^{}]*["']verdict["']\s*:[^{}]*["']reason["']\s*:""")
 
+# The most tokens one judge answer may take, used by `run_judge` and `measure_batch`
+# so a dev trace and a new one are cut off at the same length. A model that thinks
+# before it answers counts its thinking here too, and a reason-first answer runs
+# longer, so at 512 some answers ran out. An answer cut off is set aside as `truncated`
+# and still billed. Tokens are billed as used, so a bigger cap costs more only when an
+# answer runs longer.
+#
+# The cap is not part of the prompt fingerprint, so changing it leaves a promotion in
+# place. A judge promoted under another cap then grades, on a new batch, traces its
+# test split set aside. Re-running dev and test and promoting again closes that gap.
+JUDGE_MAX_TOKENS = 1024
+
 
 # The judge's answer, as a schema the provider can be asked to honour.
 #
@@ -496,7 +508,7 @@ def run_judge(
     model: Model,
     *,
     split: str,
-    max_tokens: int = 512,
+    max_tokens: int = JUDGE_MAX_TOKENS,
     corpus: list[Trace] | None = None,
 ) -> RunResult:
     """Run `spec` over `traces`, writing verdict and error rows to `store`.

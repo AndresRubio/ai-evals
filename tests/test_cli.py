@@ -609,6 +609,30 @@ def test_a_hand_written_verdict_first_template_is_refused_before_judge_yaml_is_r
     assert model.calls == []
 
 
+def test_axial_judge_gives_the_model_the_shared_answer_cap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from cap_helpers import LongAnswer
+
+    import axial.cli as cli_module
+    from axial.config import write_default_config
+    from axial.judge import JUDGE_MAX_TOKENS
+
+    store = Store(tmp_path)
+    write_default_config(store)
+    _seed_corpus_and_splits(store)
+    JudgeSpec(mode="m", model="claude-opus-5").save(store)
+    model = LongAnswer(JUDGE_MAX_TOKENS)
+    monkeypatch.setattr(cli_module, "build_judge_model", lambda _spec: model)
+
+    result = runner.invoke(
+        app, ["judge", "m", "--split", "dev", "--version", "1", "--repo", str(tmp_path)]
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert model.caps == [JUDGE_MAX_TOKENS] * 2
+
+
 def _fake_run_judge_writing_verdicts(store_arg, spec, traces_arg, labels_arg, splits_arg, model_arg, **kwargs):
     """A stand-in for `run_judge` that mimics its real merge-by-split disk write
     (see `run_judge`'s own tail: rows for other splits are kept, this split's rows

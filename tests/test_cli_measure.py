@@ -8,11 +8,19 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
+from cap_helpers import LongAnswer
 from cli_helpers import plain_output
-from measure_helpers import MEASURE_MODE, build_promoted_judge, fake_judge_builder, write_batch
+from measure_helpers import (
+    MEASURE_MODE,
+    build_promoted_judge,
+    fake_judge_builder,
+    judge_reply,
+    write_batch,
+)
 from typer.testing import CliRunner, Result
 
 from axial import cli
+from axial.judge import JUDGE_MAX_TOKENS
 from axial.store import Store
 
 runner = CliRunner()
@@ -118,6 +126,13 @@ def test_measure_prints_the_corrected_rate_and_its_notes(repo: Path):
         [0.000, 0.128, 0.042, 0.107], abs=0.002
     )
     assert (repo / ".axial" / "measurements" / MEASURE_MODE / "rel-1" / "measurement.json").exists()
+
+
+def test_measure_gives_the_model_the_shared_answer_cap(repo: Path, monkeypatch: pytest.MonkeyPatch):
+    model = LongAnswer(JUDGE_MAX_TOKENS, judge_reply, model="fake-judge")
+    monkeypatch.setattr(cli, "build_judge_model", lambda _spec: model)
+    assert_clean(measure(repo, "rel-1", 1, 10), 0, "n=10 graded, 0 set aside")
+    assert model.caps == [JUDGE_MAX_TOKENS] * 10
 
 
 def test_measure_refuses_an_existing_name_and_replace_overrides(repo: Path):

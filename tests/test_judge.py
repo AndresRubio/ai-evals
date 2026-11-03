@@ -2,12 +2,14 @@ import json
 from pathlib import Path
 
 import pytest
+from cap_helpers import LongAnswer
 from template_helpers import VERDICT_FIRST_DEFAULT_TEMPLATE
 
 from axial.dataset import Label, Splits
 from axial.errors import InvariantViolation, MalformedFile
 from axial.judge import (
     DEFAULT_TEMPLATE,
+    JUDGE_MAX_TOKENS,
     Graded,
     JudgeSpec,
     SetAside,
@@ -502,6 +504,32 @@ def test_grade_trace_sets_aside_what_it_cannot_score(template, model, failure_cl
     outcome = grade_trace(spec(prompt_template=template), trace(1), [], None, model, max_tokens=64)
     assert isinstance(outcome, SetAside)
     assert outcome.failure_class == failure_class
+
+
+def test_a_judge_run_grades_an_answer_that_needs_more_than_512_tokens(tmp_path: Path):
+    # A model that thinks first counts its thinking against the cap, and on the newsroom
+    # corpus claude-opus-5 ran out on some reason-first answers at 512.
+    splits = Splits(train=[], dev=["t1"], test=[])
+    result = run_judge(
+        Store(tmp_path), spec(), [trace(1)], [label(1, True)], splits, LongAnswer(700),
+        split="dev",
+    )
+    assert result.errors == []
+    assert [v["verdict"] for v in result.verdicts] == [True]
+
+
+@pytest.mark.parametrize(
+    ("needs", "failure_classes"), [(JUDGE_MAX_TOKENS, []), (JUDGE_MAX_TOKENS + 1, ["truncated"])]
+)
+def test_a_judge_run_cuts_an_answer_off_only_past_the_cap(
+    tmp_path: Path, needs: int, failure_classes: list[str]
+):
+    splits = Splits(train=[], dev=["t1"], test=[])
+    result = run_judge(
+        Store(tmp_path), spec(), [trace(1)], [label(1, True)], splits, LongAnswer(needs),
+        split="dev",
+    )
+    assert [e["failure_class"] for e in result.errors] == failure_classes
 
 
 def test_grade_trace_lets_a_refusal_propagate():

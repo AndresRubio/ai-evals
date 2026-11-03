@@ -126,7 +126,12 @@ The refusals are the product.
   its verdict, and for any decision-model judge promoted before its fingerprint
   covered the question it is asked, few-shot examples or not. It also goes for a judge
   whose few-shot critique holds a lone surrogate (half of a cut emoji), which the
-  prompt now carries as an escape. A text-model judge from before the reason came
+  prompt now carries as an escape. It goes too for a judge with `truncated` rows in
+  `errors.jsonl` from before an answer could take 1,024 tokens, up from 512. Nothing
+  refuses that judge, since the cap is not in the fingerprint, but its test-split
+  rates leave out the answers that ran out, and `measure` now grades such traces. A
+  gate that compares a batch measured since then with one measured before also mixes
+  the two caps. A text-model judge from before the reason came
   first keeps its template in `judge.yaml`. If that is the old default, which asked
   for the verdict first, `axial judge` replaces it with the current one and says so.
   A template you wrote whose example answer gives the verdict first is refused until

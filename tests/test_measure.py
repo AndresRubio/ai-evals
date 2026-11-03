@@ -6,19 +6,22 @@ import dataclasses
 import hashlib
 import json
 import math
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
+from cap_helpers import LongAnswer
 from measure_helpers import (
     MEASURE_MODE,
     batch_traces,
     build_promoted_judge,
     fake_judge_builder,
+    judge_reply,
 )
 
 from axial.align import ConfusionMatrix
 from axial.errors import AxialError, InvariantViolation
-from axial.judge import JudgeSpec
+from axial.judge import JUDGE_MAX_TOKENS, JudgeSpec
 from axial.measure import (
     ASSUMPTION_NOTE,
     Measurement,
@@ -271,6 +274,29 @@ def test_a_few_shot_example_in_the_batch_is_set_aside(tmp_path: Path):
     errors = store._read_jsonl(store.measurement_dir(MEASURE_MODE, "rel-1") / "errors.jsonl")
     assert [(e["trace_id"], e["failure_class"]) for e in errors] == [("train-0", "few_shot_example")]
     assert (result.n_graded, result.n_set_aside, result.flagged) == (9, 1, 0)
+
+
+def long_answers(needs: int) -> Callable[[JudgeSpec], LongAnswer]:
+    return lambda spec: LongAnswer(needs, judge_reply, model=spec.model)
+
+
+def test_measuring_grades_an_answer_that_needs_more_than_512_tokens(store: Store):
+    result = measure_batch(
+        store, MEASURE_MODE, 1, "rel-1", batch_traces(["BAD"] + ["GOOD"] * 9),
+        long_answers(700), draws=2000,
+    )
+    assert (result.n_graded, result.n_set_aside, result.flagged) == (10, 0, 1)
+
+
+@pytest.mark.parametrize(("needs", "n_set_aside"), [(JUDGE_MAX_TOKENS, 0), (JUDGE_MAX_TOKENS + 1, 10)])
+def test_measuring_cuts_an_answer_off_at_the_same_length_as_judging(
+    store: Store, needs: int, n_set_aside: int
+):
+    result = measure_batch(
+        store, MEASURE_MODE, 1, "rel-1", batch_traces(["BAD"] + ["GOOD"] * 9),
+        long_answers(needs), draws=2000,
+    )
+    assert result.n_set_aside == n_set_aside
 
 
 def test_set_aside_traces_stay_out_of_the_rate_and_are_noted_above_five_percent(store: Store):
