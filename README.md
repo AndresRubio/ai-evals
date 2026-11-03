@@ -438,10 +438,7 @@ git switch main && git pull && git tag -a vX.Y.Z -m vX.Y.Z && git push origin vX
 ```
 
 Nothing checks the tag itself. Tag only a merged commit on main, and make sure
-`uv version --short` prints the same version as the tag. Repository rulesets require a
-pull request to merge into main, let only admins create `v*` tags, and block deleting
-or moving one for everyone, admins included. To fix a bad tag, disable the "v* tags:
-no deleting or moving" ruleset first.
+`uv version --short` prints the same version as the tag.
 
 ## Licence
 
