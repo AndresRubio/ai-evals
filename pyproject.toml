@@ -32,6 +32,10 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/axial"]
 
+# The sdist otherwise ships every tracked file, internal plans and agent notes included.
+[tool.hatch.build.targets.sdist]
+exclude = ["docs/", ".github/", "CLAUDE.md"]
+
 [tool.ruff]
 line-length = 100
 

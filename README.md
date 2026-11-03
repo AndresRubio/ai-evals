@@ -44,9 +44,9 @@ cp .env.example .env    # then fill in the keys you need
 given by `--repo`, which defaults to the current one. It never overrides a variable
 already exported in your shell, and this repository gitignores it.
 [`.env.example`](https://github.com/AndresRubio/ai-evals/blob/main/.env.example) lists
-which key each model path needs and why; with a PyPI install, copy it from there. Most of the pipeline — `init`, `ingest`,
-`sample`, `annotate`, `label-from-reviews`, `split`, `align`, `promote`, `gate` —
-calls no model at all and needs no key.
+which key each model path needs and why; with a PyPI install, copy it from there.
+Most of the pipeline calls no model at all and needs no key: `init`, `ingest`,
+`sample`, `annotate`, `label-from-reviews`, `split`, `align`, `promote` and `gate`.
 
 ## The pipeline
 
@@ -198,7 +198,7 @@ uv run axial gate merged_stories --version 1
 `label-from-reviews` is what turns the `annotate` app's output into ground truth —
 every completed review already carries a verdict, a critique and an annotator, so
 there is no separate hand-built file to write. See
-[`examples/newsroom/`](examples/newsroom/) for the fully offline, `FakeModel`-backed
+[`examples/newsroom/`](https://github.com/AndresRubio/ai-evals/tree/main/examples/newsroom) for the fully offline, `FakeModel`-backed
 version of this same walkthrough.
 
 Once promoted, the judge grades new output. Put a batch of the system's traces in a
@@ -250,7 +250,7 @@ a number between 0 and 1. The threshold is `decision_threshold` in `judge.yaml`,
 
 Its default of `0.5` is untested. In Husain and Saha's comparison of six decision
 models, one caught 21% of failures at 0.5 and tunes to 0.055
-([knowledge/methodology/decision-model-thresholds.md](knowledge/methodology/decision-model-thresholds.md)).
+([knowledge/methodology/decision-model-thresholds.md](https://github.com/AndresRubio/ai-evals/blob/main/knowledge/methodology/decision-model-thresholds.md)).
 `run_judge` records each probability in `verdicts.jsonl`, so the threshold can be chosen
 from a dev run without calling the model again:
 
@@ -407,15 +407,15 @@ invent it. See the knowledge base below for the sources behind every default.
 ## Knowledge base
 
 Everything this repository has read about evaluating LLM applications lives under
-[`knowledge/`](knowledge/) as one Markdown file per topic, on three shelves:
-methodology, procedures, and a dated landscape of tools. [`llms.txt`](llms.txt) at the
+[`knowledge/`](https://github.com/AndresRubio/ai-evals/tree/main/knowledge) as one Markdown file per topic, on three shelves:
+methodology, procedures, and a dated landscape of tools. [`llms.txt`](https://github.com/AndresRubio/ai-evals/blob/main/llms.txt) at the
 repository root is the index. An agent or a person queries it the same way: fetch the
 index, pick a line, fetch that file.
 
 To add or change an entry, edit the file and run
 `uv run python scripts/knowledge_index.py`. CI runs the same script with `--check` and
 fails when the index is stale or a file breaks the rules in
-[`knowledge/README.md`](knowledge/README.md).
+[`knowledge/README.md`](https://github.com/AndresRubio/ai-evals/blob/main/knowledge/README.md).
 
 ## Releasing
 
@@ -436,6 +436,12 @@ Publishing uses PyPI trusted publishing, so no token is stored in the repository
 the first release, add a pending publisher on PyPI (Account settings, Publishing) with
 project `axial-evals`, owner `AndresRubio`, repository `ai-evals`, workflow
 `release.yml` and environment `pypi`.
+
+The workflow only checks that the tag is on main, so whoever can push to main and push
+tags can publish. Close that in the repository settings as part of the same setup:
+require a pull request to merge into main, limit who can create `v*` tags, and give
+the `pypi` environment a required reviewer and a rule that allows only `v*` tags. The
+publish job then waits for a person to approve it.
 
 ## Licence
 
