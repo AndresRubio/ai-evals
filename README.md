@@ -437,9 +437,6 @@ merged commit on main:
 git switch main && git pull && git tag -a vX.Y.Z -m vX.Y.Z && git push origin vX.Y.Z
 ```
 
-Nothing checks the tag itself. Tag only a merged commit on main, and make sure
-`uv version --short` prints the same version as the tag.
-
 ## Licence
 
 MIT.
