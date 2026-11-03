@@ -1,5 +1,5 @@
 [project]
-name = "axial"
+name = "axial-evals"
 version = "0.1.0"
 description = "Error-analysis-first eval toolkit: from traces to a judge you can trust"
 readme = "README.md"

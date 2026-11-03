@@ -17,14 +17,22 @@ methodology and done in spreadsheets. `axial` is that step, as code.
 
 ## Install
 
-Not yet published to PyPI — `axial` is at 0.1.0, with no release workflow. From a
-clone of this repository:
+`axial` is on PyPI as `axial-evals`, because the name `axial` belongs to an unrelated
+package there. The command and the import are both still `axial`:
+
+```bash
+uv tool install axial-evals    # or: pip install axial-evals
+```
+
+The quickstart below uses the example traces in this repository, so for that, work
+from a clone:
 
 ```bash
 uv sync
 ```
 
-Every command below runs as `uv run axial ...` from that clone.
+Every command below is written as `uv run axial ...`, which runs it from that clone.
+With the PyPI install, drop the `uv run`.
 
 ### Credentials
 
@@ -406,6 +414,19 @@ To add or change an entry, edit the file and run
 `uv run python scripts/knowledge_index.py`. CI runs the same script with `--check` and
 fails when the index is stale or a file breaks the rules in
 [`knowledge/README.md`](knowledge/README.md).
+
+## Releasing
+
+Bump `version` in `pyproject.toml`, merge, then push a matching tag:
+
+```bash
+git tag v0.1.0 && git push origin v0.1.0
+```
+
+[`.github/workflows/release.yml`](.github/workflows/release.yml) refuses a tag that
+does not match the version, runs the checks, builds, installs the wheel on its own to
+make sure it runs, and publishes through PyPI trusted publishing, so no token is stored
+in the repository.
 
 ## Licence
 

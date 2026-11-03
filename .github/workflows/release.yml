@@ -1,0 +1,40 @@
+name: release
+# Push a tag such as v0.1.0 to publish that version to PyPI as axial-evals. The tag
+# must match the version in pyproject.toml. Publishing uses PyPI trusted publishing,
+# so the repository holds no token: PyPI trusts this workflow file in the `pypi`
+# environment of AndresRubio/ai-evals.
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e  # v10.3.2
+        with:
+          python-version: "3.14"
+      - name: Check the tag matches the package version
+        run: |
+          version="$(uv version --short)"
+          if [ "${GITHUB_REF_NAME#v}" != "$version" ]; then
+            echo "tag $GITHUB_REF_NAME does not match version $version in pyproject.toml"
+            exit 1
+          fi
+      - run: uv sync
+      - run: uv run ruff check .
+      - run: uv run mypy src/axial scripts
+      - run: uv run pytest -q
+      - run: uv build
+      # Install the wheel alone, away from the checkout, so a file the package needs
+      # but the wheel left out fails here instead of on a user's machine.
+      - name: Smoke-test the wheel
+        run: |
+          cd "$RUNNER_TEMP"
+          uv run --isolated --no-project --python 3.13 --with "$GITHUB_WORKSPACE"/dist/*.whl axial --help
+      - run: uv publish
