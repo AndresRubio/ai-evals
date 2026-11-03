@@ -16,6 +16,9 @@ dependencies = [
     "uvicorn>=0.30",
 ]
 
+[project.urls]
+Repository = "https://github.com/AndresRubio/ai-evals"
+
 [project.scripts]
 axial = "axial.cli:app"
 

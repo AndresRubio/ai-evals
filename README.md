@@ -40,9 +40,11 @@ With the PyPI install, drop the `uv run`.
 cp .env.example .env    # then fill in the keys you need
 ```
 
-`.env` is gitignored, read from the repo root by `axial taxonomy`, `axial judge` and `axial measure`,
-and never overrides a variable already exported in your shell. `.env.example` lists
-which key each model path needs and why. Most of the pipeline — `init`, `ingest`,
+`axial taxonomy`, `axial judge` and `axial measure` read `.env` from the directory
+given by `--repo`, which defaults to the current one. It never overrides a variable
+already exported in your shell, and this repository gitignores it.
+[`.env.example`](https://github.com/AndresRubio/ai-evals/blob/main/.env.example) lists
+which key each model path needs and why; with a PyPI install, copy it from there. Most of the pipeline — `init`, `ingest`,
 `sample`, `annotate`, `label-from-reviews`, `split`, `align`, `promote`, `gate` —
 calls no model at all and needs no key.
 
@@ -417,16 +419,23 @@ fails when the index is stale or a file breaks the rules in
 
 ## Releasing
 
-Bump `version` in `pyproject.toml`, merge, then push a matching tag:
+Set the new version with `uv version --bump patch` (or `minor`, `major`, or
+`uv version X.Y.Z`), which updates `pyproject.toml` and `uv.lock` together. Merge that,
+then tag the merged commit on main:
 
 ```bash
-git tag v0.1.0 && git push origin v0.1.0
+git switch main && git pull && git tag -a vX.Y.Z -m vX.Y.Z && git push origin vX.Y.Z
 ```
 
-[`.github/workflows/release.yml`](.github/workflows/release.yml) refuses a tag that
-does not match the version, runs the checks, builds, installs the wheel on its own to
-make sure it runs, and publishes through PyPI trusted publishing, so no token is stored
-in the repository.
+[`.github/workflows/release.yml`](https://github.com/AndresRubio/ai-evals/blob/main/.github/workflows/release.yml)
+refuses a tag that is not on main or does not match the version. It runs the checks,
+builds, installs the wheel on its own to make sure it runs, and publishes from a
+separate job that installs none of the project's dependencies.
+
+Publishing uses PyPI trusted publishing, so no token is stored in the repository. Before
+the first release, add a pending publisher on PyPI (Account settings, Publishing) with
+project `axial-evals`, owner `AndresRubio`, repository `ai-evals`, workflow
+`release.yml` and environment `pypi`.
 
 ## Licence
 
