@@ -115,9 +115,11 @@ The refusals are the product.
   can take one, and the question a decision model is asked with each request. It
   leaves out `max_tokens` in `judge.yaml`, the most tokens one answer may take with
   the model's thinking, which is 1,024 when the file sets none. `judge` and `measure`
-  both use it, and changing it still withdraws a promotion, which is bound to the
-  file's hash. `axial promote` refuses a
-  judge with no `judge.yaml`, and refuses unless every row in `verdicts.jsonl` and
+  both use it, and a decision model ignores it. Editing it changes the file's hash,
+  so `measure` and `gate` refuse the judge until it is promoted again, but `promote`
+  takes the verdicts graded under the old cap: re-run dev and test first if they
+  should be graded under the new one. `axial promote` refuses a judge with no
+  `judge.yaml`, and refuses unless every row in `verdicts.jsonl` and
   `errors.jsonl`, whatever its split, carries the current fingerprint. It then writes
   the fingerprint as the third `key=value` line of `PROMOTED`, `prompt_sha256=<hex>`,
   after the two hashes. `measure` and `gate` refuse a judge whose examples have since
@@ -132,10 +134,10 @@ The refusals are the product.
   prompt now carries as an escape. It goes too for a judge with `truncated` rows in
   `errors.jsonl` from before the default cap on an answer rose from 512 tokens to
   1,024. Nothing refuses that judge, since the cap is not in the fingerprint, but its
-  test-split rates leave out the answers that ran out, and `measure` now grades such traces. A
-  gate that compares a batch measured since then with one measured before also mixes
-  the two caps. A text-model judge from before the reason came
-  first keeps its template in `judge.yaml`. If that is the old default, which asked
+  test-split rates leave out the answers that ran out, and `measure` now grades such
+  traces. A gate that compares a batch measured since then with one measured before
+  also mixes the two caps. A text-model judge from before the reason came first keeps
+  its template in `judge.yaml`. If that is the old default, which asked
   for the verdict first, `axial judge` replaces it with the current one and says so.
   A template you wrote whose example answer gives the verdict first is refused until
   you put the reason first or delete `prompt_template` to use the default. Then
@@ -361,10 +363,10 @@ Two properties worth understanding before trusting a batch:
 
 - **promptfoo, DeepEval, Ragas, autoevals** — assertion and metric catalogues. `axial`
   produces a validated judge definition (`judge.yaml`: prompt template, model, few-shot
-  trace ids, decision threshold, answer token cap) and the alignment report behind it. There is no
-  exporter to any of these tools; to run the judge inside one, you port the prompt and
-  threshold by hand, and the alignment numbers only carry over if the model and prompt
-  do too.
+  trace ids, decision threshold, answer token cap) and the alignment report behind it.
+  There is no exporter to any of these tools; to run the judge inside one, you port
+  the prompt and threshold by hand, and the alignment numbers only carry over if the
+  model and prompt do too.
 - **Pydantic Evals** — the best-engineered instance of the pattern, and the most
   type-rigorous eval library in the ecosystem: typed `Case` and `Dataset`, an
   `LLMJudge` graded against a rubric you write, MIT, no account needed. Its own docs tell

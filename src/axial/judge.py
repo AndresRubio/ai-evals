@@ -126,16 +126,21 @@ class JudgeSpec(BaseModel):
     # kept anywhere else could be retuned without invalidating the gate.
     decision_threshold: float = 0.5
     # The most tokens one answer may take, thinking included, for both `judge` and
-    # `measure`. A file without it gets JUDGE_MAX_TOKENS. Changing it withdraws a
-    # promotion through this file's hash, as `decision_threshold` does, but it is left
-    # out of the prompt fingerprint. Strict, so `max_tokens: true` is not a cap of 1.
+    # `measure`; a decision model ignores it. A file without it gets JUDGE_MAX_TOKENS,
+    # and `save` writes it only when it was set, so re-saving a file from before the
+    # field existed leaves its bytes, and its promotion, alone. Editing it changes this
+    # file's hash, so `measure` and `gate` refuse the judge until it is promoted again.
+    # Unlike `decision_threshold` it is left out of the prompt fingerprint, so `promote`
+    # accepts the old verdicts without a re-run. Strict, so `max_tokens: true` is
+    # refused rather than read as a cap of 1.
     max_tokens: int = Field(default=JUDGE_MAX_TOKENS, gt=0, strict=True)
 
     def save(self, store: Store) -> None:
         directory = store.judge_dir(self.mode, self.version)
         directory.mkdir(parents=True, exist_ok=True)
+        unset = set() if "max_tokens" in self.model_fields_set else {"max_tokens"}
         (directory / "judge.yaml").write_text(
-            yaml.safe_dump(self.model_dump(), sort_keys=False), encoding="utf-8"
+            yaml.safe_dump(self.model_dump(exclude=unset), sort_keys=False), encoding="utf-8"
         )
 
     @classmethod

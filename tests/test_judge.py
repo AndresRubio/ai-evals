@@ -551,19 +551,30 @@ def test_a_judge_yaml_with_no_max_tokens_gets_the_default(tmp_path: Path):
     assert JudgeSpec.load(store, "merged", 1).max_tokens == JUDGE_MAX_TOKENS == 1024
 
 
-@pytest.mark.parametrize("value", ["0", "-1", "true", "1.5", "'1024'"])
-def test_a_max_tokens_that_is_not_a_positive_whole_number_is_refused(tmp_path: Path, value: str):
+@pytest.mark.parametrize(
+    ("value", "complaint"),
+    [
+        ("0", "greater than 0, got int"),
+        ("-1", "greater than 0, got int"),
+        ("true", "a valid integer, got bool"),
+        ("1.5", "a valid integer, got float"),
+        ("'1024'", "a valid integer, got str"),
+    ],
+)
+def test_a_max_tokens_that_is_not_a_positive_whole_number_is_refused(
+    tmp_path: Path, value: str, complaint: str
+):
     store = Store(tmp_path)
     judge_yaml = store.judge_dir("merged", 1) / "judge.yaml"
     judge_yaml.parent.mkdir(parents=True)
     judge_yaml.write_text(f"mode: merged\nmax_tokens: {value}\n", encoding="utf-8")
-    with pytest.raises(MalformedFile, match="max_tokens: Input should be (greater than 0|a valid int)"):
+    with pytest.raises(MalformedFile, match=f"max_tokens: Input should be {complaint}"):
         JudgeSpec.load(store, "merged", 1)
 
 
 def test_the_fingerprint_leaves_out_max_tokens():
     # So a judge promoted before judge.yaml had `max_tokens` stays promoted. Editing it
-    # still withdraws a promotion, which is bound to judge.yaml's hash.
+    # changes judge.yaml's hash, which `measure` and `gate` check against PROMOTED.
     assert prompt_sha256(spec(max_tokens=2048), []) == prompt_sha256(spec(), [])
 
 
