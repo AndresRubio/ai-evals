@@ -14,7 +14,7 @@ import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any, Protocol, TypeGuard
 
 from pydantic import BaseModel
 
@@ -248,6 +248,19 @@ DECISIONS_URL = "https://openrouter.ai/api/alpha/decisions"
 _DECISION_PROVIDERS = frozenset({"typesafe"})
 
 
+def is_probability(value: object) -> TypeGuard[float]:
+    """Whether `value` is a number from 0 to 1.
+
+    A bool is an int to Python and a numeric string would pass a cast, so both are
+    refused by type; `0 <= v <= 1` is written this way round so that nan fails it.
+    """
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and 0.0 <= value <= 1.0
+    )
+
+
 def is_decision_model(model_id: str) -> bool:
     """Whether `model_id` names a decision model rather than a text model."""
     segments = [seg for seg in model_id.lstrip("~").split("/") if seg]
@@ -301,7 +314,7 @@ class JevModel:
     is not an option — this class speaks the Decisions API directly.
 
     The adapter asks exactly one `noul` (yes/no probability) question per call and
-    thresholds the answer into the same `{"verdict": ..., "reason": ...}` JSON an
+    thresholds the answer into the same `{"reason": ..., "verdict": ...}` JSON an
     LLM judge is asked to emit. That keeps `run_judge` and `parse_verdict`
     unchanged, and it keeps the prompt that `assemble_prompt` built — few-shot
     train-only guarantee included — as the state Jev reads.
@@ -333,6 +346,21 @@ class JevModel:
         self.timeout_s = timeout_s
         self._rng = random.Random(seed)
 
+    @property
+    def questions(self) -> dict[str, Any]:
+        """The questions every request asks, beside the prompt it sends as state.
+
+        The judge's prompt fingerprint covers them, so their wording is part of what a
+        promotion attests to.
+        """
+        return {
+            "verdict": {
+                "type": "noul",
+                "instructions": self.instructions,
+                "criteria": {"true": self.true_when, "false": self.false_when},
+            }
+        }
+
     def complete(
         self,
         prompt: str,
@@ -355,17 +383,7 @@ class JevModel:
                 "Decisions API, which needs its own key."
             )
 
-        body = {
-            "model": self.model,
-            "state": prompt,
-            "questions": {
-                "verdict": {
-                    "type": "noul",
-                    "instructions": self.instructions,
-                    "criteria": {"true": self.true_when, "false": self.false_when},
-                }
-            },
-        }
+        body = {"model": self.model, "state": prompt, "questions": self.questions}
         headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
 
         last_error: Exception | None = None
@@ -398,7 +416,7 @@ class JevModel:
                 f"-> {'fail' if failed else 'pass'}"
             )
             return Completion(
-                text=json.dumps({"verdict": "fail" if failed else "pass", "reason": reason}),
+                text=json.dumps({"reason": reason, "verdict": "fail" if failed else "pass"}),
                 model=served,
                 usage=_read_usage(payload.get("usage")),
                 stop_reason="stop",
@@ -427,6 +445,12 @@ class JevModel:
         value = answer.get("noul")
         if not isinstance(value, (int, float)):
             raise AxialError(f"the 'noul' answer carried no probability: {answer!r}")
+        # Thresholded, anything else is a verdict nobody gave, and recorded it breaks
+        # every Brier score and tuning run that reads it later.
+        if not is_probability(value):
+            raise AxialError(
+                f"the 'noul' answer {value!r} is not a probability between 0 and 1"
+            )
         return float(value)
 
 

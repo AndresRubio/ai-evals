@@ -457,7 +457,7 @@ def test_every_readme_command_is_on_the_installed_console_script() -> None:
     README: "Every command below runs as `uv run axial ...` from that clone."
     """
     commands = re.findall(r"^\| `axial ([a-z-]+)`", README, re.MULTILINE)
-    assert len(commands) == 13
+    assert len(commands) == 14
     script = Path(sys.executable).parent / "axial"
     assert script.exists(), f"console script missing at {script}"
     env = {**os.environ, "COLUMNS": "200", "NO_COLOR": "1", "TERM": "dumb"}

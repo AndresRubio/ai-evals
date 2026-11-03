@@ -17,14 +17,28 @@ methodology and done in spreadsheets. `axial` is that step, as code.
 
 ## Install
 
-Not yet published to PyPI — `axial` is at 0.1.0, with no release workflow. From a
-clone of this repository:
+`axial` is not on PyPI. Install it straight from this repository, pinned to a release
+tag:
+
+```bash
+uv tool install git+https://github.com/AndresRubio/ai-evals@v0.1.0
+# or: pip install git+https://github.com/AndresRubio/ai-evals@v0.1.0
+```
+
+It needs Python 3.13 or newer. `uv tool install` fetches one if needed; with pip, run
+it from a 3.13+ interpreter. The package is named `axial-evals`, because the name
+`axial` belongs to an unrelated PyPI package. The command and the import are both
+`axial`.
+
+The quickstart below uses the example traces in this repository, so for that, work
+from a clone:
 
 ```bash
 uv sync
 ```
 
-Every command below runs as `uv run axial ...` from that clone.
+Every command below is written as `uv run axial ...`, which runs it from that clone.
+With the installed tool, drop the `uv run`.
 
 ### Credentials
 
@@ -32,11 +46,13 @@ Every command below runs as `uv run axial ...` from that clone.
 cp .env.example .env    # then fill in the keys you need
 ```
 
-`.env` is gitignored, read from the repo root by `axial taxonomy`, `axial judge` and `axial measure`,
-and never overrides a variable already exported in your shell. `.env.example` lists
-which key each model path needs and why. Most of the pipeline — `init`, `ingest`,
-`sample`, `annotate`, `label-from-reviews`, `split`, `align`, `promote`, `gate` —
-calls no model at all and needs no key.
+`axial taxonomy`, `axial judge` and `axial measure` read `.env` from the directory
+given by `--repo`, which defaults to the current one. It never overrides a variable
+already exported in your shell, and this repository gitignores it.
+[`.env.example`](https://github.com/AndresRubio/ai-evals/blob/main/.env.example) lists
+which key each model path needs and why; with the installed tool, copy it from there.
+Most of the pipeline calls no model at all and needs no key: `init`, `ingest`,
+`sample`, `annotate`, `label-from-reviews`, `split`, `align`, `promote` and `gate`.
 
 ## The pipeline
 
@@ -55,7 +71,8 @@ example, not committed, so nothing here demonstrates that directly.)
 | `axial label-import` | a labels JSONL + a mode name | human labels, for labels made elsewhere |
 | `axial split` | labels | a stratified, seeded, frozen split |
 | `axial judge` | a split + a prompt | verdicts, and errors kept separate |
-| `axial align` | verdicts vs labels | an alignment report |
+| `axial tune-threshold` | a decision model's dev verdicts | a threshold chosen on dev, cross-validated; with `--write`, the next judge version |
+| `axial align` | verdicts vs labels | an alignment report, with a Brier score for a decision model |
 | `axial checks` | verdicts + traces | slice breakdown, verbosity bias, judged cost, noise floor |
 | `axial promote` | alignment on test | a judge cleared for CI |
 | `axial measure` | a promoted judge + a batch of new traces | the batch's failure rate, corrected for the judge's errors, with a 95% interval |
@@ -99,15 +116,38 @@ The refusals are the product.
   the new batch as it did on test. A measurement taken by a judge that has since
   been re-judged or edited fails the gate until it is re-measured. Every verdict and
   error row records a fingerprint of the full prompt: `judge.yaml` plus the few-shot
-  examples as resolved from the current traces and labels. `axial promote` refuses a
-  judge with no `judge.yaml`, and refuses unless every row in `verdicts.jsonl` and
+  examples as resolved from the current traces and labels. It also covers the answer
+  schema for a text model, which goes with each request when litellm says the provider
+  can take one, and the question a decision model is asked with each request. It
+  leaves out `max_tokens` in `judge.yaml`, the most tokens one answer may take with
+  the model's thinking, which is 1,024 when the file sets none. `judge` and `measure`
+  both use it, and a decision model ignores it. Editing it changes the file's hash,
+  so `measure` and `gate` refuse the judge until it is promoted again, but `promote`
+  takes the verdicts graded under the old cap: re-run dev and test first if they
+  should be graded under the new one. `axial promote` refuses a judge with no
+  `judge.yaml`, and refuses unless every row in `verdicts.jsonl` and
   `errors.jsonl`, whatever its split, carries the current fingerprint. It then writes
   the fingerprint as the third `key=value` line of `PROMOTED`, `prompt_sha256=<hex>`,
   after the two hashes. `measure` and `gate` refuse a judge whose examples have since
   been relabelled or re-ingested, until dev and test are re-run and the judge is
   promoted again. A judge promoted before this
   change has to re-run every split it has rows for, train included, and be promoted
-  again, and batches measured before it need `--replace` to be measured again:
+  again, and batches measured before it need `--replace` to be measured again. The
+  same goes for a judge promoted before the judge was asked for its reason ahead of
+  its verdict, and for any decision-model judge promoted before its fingerprint
+  covered the question it is asked, few-shot examples or not. It also goes for a judge
+  whose few-shot critique holds a lone surrogate (half of a cut emoji), which the
+  prompt now carries as an escape. A judge with `truncated` rows in `errors.jsonl`
+  from before the default cap on an answer rose from 512 tokens to 1,024 should be
+  re-run the same way, though nothing refuses it, since the cap is not in the
+  fingerprint. Its test-split rates leave out the answers that ran out, and `measure`
+  now grades such traces. A gate that compares a batch measured since then with one
+  measured before also mixes the two caps. A text-model judge from before the reason
+  came first keeps its template in `judge.yaml`. If that is the old default, which asked
+  for the verdict first, `axial judge` replaces it with the current one and says so.
+  A template you wrote whose example answer gives the verdict first is refused until
+  you put the reason first or delete `prompt_template` to use the default. Then
+  re-run:
 
   ```bash
   axial judge <mode> --version N --split dev
@@ -174,7 +214,7 @@ uv run axial gate merged_stories --version 1
 `label-from-reviews` is what turns the `annotate` app's output into ground truth —
 every completed review already carries a verdict, a critique and an annotator, so
 there is no separate hand-built file to write. See
-[`examples/newsroom/`](examples/newsroom/) for the fully offline, `FakeModel`-backed
+[`examples/newsroom/`](https://github.com/AndresRubio/ai-evals/tree/main/examples/newsroom) for the fully offline, `FakeModel`-backed
 version of this same walkthrough.
 
 Once promoted, the judge grades new output. Put a batch of the system's traces in a
@@ -219,9 +259,38 @@ Jev is not reachable through litellm — it runs on `POST /api/alpha/decisions`,
 chat-completions endpoint — so `JevModel` speaks that API directly. It asks one `noul`
 (yes/no probability) question per trace, using the prompt `assemble_prompt` built as the
 state, and thresholds the calibrated probability into the same verdict JSON an LLM judge
-emits. `run_judge`, `align`, `promote` and `gate` are unchanged. Tune the threshold in
-`judge.yaml` (`decision_threshold`, default `0.5`) and bump the judge version when you do —
-it changes every verdict, which is why it lives in the hashed judge definition.
+emits, and `run_judge` records the probability beside each verdict. `promote` and `gate`
+read those verdicts like any other judge's, and refuse a recorded probability that is not
+a number between 0 and 1. The threshold is `decision_threshold` in `judge.yaml`, which
+`promote` hashes, because it changes every verdict.
+
+Its default of `0.5` is untested. In Husain and Saha's comparison of six decision
+models, one caught 21% of failures at 0.5 and tunes to 0.055
+([knowledge/methodology/decision-model-thresholds.md](https://github.com/AndresRubio/ai-evals/blob/main/knowledge/methodology/decision-model-thresholds.md)).
+`run_judge` records each probability in `verdicts.jsonl`, so the threshold can be chosen
+from a dev run without calling the model again:
+
+```bash
+axial tune-threshold merged_stories 1           # report only
+axial tune-threshold merged_stories 1 --write   # save it as merged_stories v2
+axial judge merged_stories --split dev --version 2
+```
+
+It reads dev and nothing else. It picks the threshold whose weaker rate clears its floor
+(`min_tpr`, `min_tnr`) by the widest margin, and it reports a stratified k-fold estimate
+(`--folds`, default 5) alongside, because the best fit to dev flatters dev. The estimate
+takes some of that flattery out on average, and it moves with the `--seed` that deals the
+folds. It cannot tell whether this one threshold will clear the floors on test, which is
+what the test split is for. When no
+threshold clears both floors it exits 1 and writes nothing; the floors are yours to
+change in `.axial/config.toml`, and it will not lower them for you. `--write` saves a new
+judge version and no verdicts, so the new version gets its own dev run before test.
+
+`axial align` prints a decision model's Brier score beside the score of always predicting
+the split's failure rate. A Brier score at or above that reference means the
+probabilities forecast no better than that failure rate, so they should not be read as
+failure rates. They can still rank traces well enough for a threshold to separate them,
+which is what TPR and TNR measure.
 
 Two things it cannot do:
 
@@ -300,10 +369,10 @@ Two properties worth understanding before trusting a batch:
 
 - **promptfoo, DeepEval, Ragas, autoevals** — assertion and metric catalogues. `axial`
   produces a validated judge definition (`judge.yaml`: prompt template, model, few-shot
-  trace ids, decision threshold) and the alignment report behind it. There is no
-  exporter to any of these tools; to run the judge inside one, you port the prompt and
-  threshold by hand, and the alignment numbers only carry over if the model and prompt
-  do too.
+  trace ids, decision threshold, answer token cap) and the alignment report behind it.
+  There is no exporter to any of these tools; to run the judge inside one, you port
+  the prompt and threshold by hand, and the alignment numbers only carry over if the
+  model and prompt do too.
 - **Pydantic Evals** — the best-engineered instance of the pattern, and the most
   type-rigorous eval library in the ecosystem: typed `Case` and `Dataset`, an
   `LLMJudge` graded against a rubric you write, MIT, no account needed. Its own docs tell
@@ -354,15 +423,29 @@ invent it. See the knowledge base below for the sources behind every default.
 ## Knowledge base
 
 Everything this repository has read about evaluating LLM applications lives under
-[`knowledge/`](knowledge/) as one Markdown file per topic, on three shelves:
-methodology, procedures, and a dated landscape of tools. [`llms.txt`](llms.txt) at the
+[`knowledge/`](https://github.com/AndresRubio/ai-evals/tree/main/knowledge) as one Markdown file per topic, on three shelves:
+methodology, procedures, and a dated landscape of tools. [`llms.txt`](https://github.com/AndresRubio/ai-evals/blob/main/llms.txt) at the
 repository root is the index. An agent or a person queries it the same way: fetch the
 index, pick a line, fetch that file.
 
 To add or change an entry, edit the file and run
 `uv run python scripts/knowledge_index.py`. CI runs the same script with `--check` and
 fails when the index is stale or a file breaks the rules in
-[`knowledge/README.md`](knowledge/README.md).
+[`knowledge/README.md`](https://github.com/AndresRubio/ai-evals/blob/main/knowledge/README.md).
+
+## Releasing
+
+Pushing a tag is the whole release. There is no build or publish step, and users
+install the tag by name.
+
+In one pull request, set the new version with `uv version --bump patch` (or `minor`,
+`major`, or `uv version X.Y.Z`), which updates `pyproject.toml` and `uv.lock` together,
+and change the tag in the Install section's commands to match. Merge it, then tag the
+merged commit on main:
+
+```bash
+git switch main && git pull && git tag -a vX.Y.Z -m vX.Y.Z && git push origin vX.Y.Z
+```
 
 ## Licence
 

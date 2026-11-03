@@ -6,7 +6,7 @@ from promotion_helpers import stamp_run
 from typer.testing import CliRunner
 
 from axial.cli import app
-from axial.judge import JudgeSpec, current_prompt_sha256
+from axial.judge import JudgeSpec, current_prompt_sha256, read_verdicts
 from axial.report import format_promoted_marker
 from axial.store import Store
 
@@ -536,6 +536,111 @@ def test_second_judge_run_does_not_clobber_a_hand_edited_prompt_template(
     assert yaml.safe_load(judge_yaml.read_text())["prompt_template"] == custom_template
 
 
+def test_rerunning_a_judge_made_with_the_old_default_template_upgrades_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """`judge --version N` reloads judge.yaml, template included, so a judge made with
+    the old default would otherwise ask for the verdict first under a reason-first
+    schema."""
+    import yaml
+    from template_helpers import VERDICT_FIRST_DEFAULT_TEMPLATE
+
+    import axial.cli as cli_module
+    from axial.config import write_default_config
+    from axial.judge import DEFAULT_TEMPLATE
+    from axial.model import FakeModel
+
+    store = Store(tmp_path)
+    write_default_config(store)
+    _seed_corpus_and_splits(store)
+    JudgeSpec(
+        mode="m", model="claude-opus-5", prompt_template=VERDICT_FIRST_DEFAULT_TEMPLATE
+    ).save(store)
+    model = FakeModel(lambda _p: '{"reason": "fine", "verdict": "pass"}')
+    monkeypatch.setattr(cli_module, "build_judge_model", lambda _spec: model)
+
+    result = runner.invoke(
+        app, ["judge", "m", "--split", "dev", "--version", "1", "--repo", str(tmp_path)]
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert "replaced the default template" in result.stdout
+    judge_yaml = store.judge_dir("m", 1) / "judge.yaml"
+    assert yaml.safe_load(judge_yaml.read_text())["prompt_template"] == DEFAULT_TEMPLATE
+    assert model.calls and all("Write the reason first" in prompt for prompt in model.calls)
+
+
+def test_a_hand_written_verdict_first_template_is_refused_before_judge_yaml_is_rewritten(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Its author has to change it, so the file is left as they wrote it."""
+    import axial.cli as cli_module
+    from axial.config import write_default_config
+    from axial.model import FakeModel
+
+    store = Store(tmp_path)
+    write_default_config(store)
+    _seed_corpus_and_splits(store)
+    judge_yaml = store.judge_dir("m", 1) / "judge.yaml"
+    judge_yaml.parent.mkdir(parents=True)
+    # A block scalar, which `JudgeSpec.save` would rewrite as one escaped string.
+    judge_yaml.write_text(
+        "mode: m\n"
+        "model: claude-opus-5\n"
+        "prompt_template: |\n"
+        "  Grade {mode_name}: {mode_definition}\n"
+        "  {few_shot}\n"
+        "  INPUT: {input}\n"
+        "  OUTPUT: {output}\n"
+        '  Answer: {{"verdict": "fail", "reason": "why"}}\n'
+    )
+    before = judge_yaml.read_bytes()
+    model = FakeModel(lambda _p: '{"reason": "fine", "verdict": "pass"}')
+    monkeypatch.setattr(cli_module, "build_judge_model", lambda _spec: model)
+
+    result = runner.invoke(
+        app, ["judge", "m", "--split", "dev", "--version", "1", "--few-shot", "t0",
+              "--repo", str(tmp_path)],
+    )
+
+    assert result.exit_code == 1, result.stdout
+    assert "verdict before the reason" in result.stdout
+    assert judge_yaml.read_bytes() == before
+    assert model.calls == []
+
+
+@pytest.mark.parametrize(("line", "cap"), [("max_tokens: 2048\n", 2048), ("", 1024)])
+def test_axial_judge_gives_the_model_the_cap_judge_yaml_sets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, line: str, cap: int
+):
+    from cap_helpers import LongAnswer
+
+    import axial.cli as cli_module
+    from axial.config import write_default_config
+
+    store = Store(tmp_path)
+    write_default_config(store)
+    _seed_corpus_and_splits(store)
+    judge_yaml = store.judge_dir("m", 1) / "judge.yaml"
+    judge_yaml.parent.mkdir(parents=True)
+    judge_yaml.write_text(f"mode: m\nmodel: claude-opus-5\n{line}", encoding="utf-8")
+    model = LongAnswer(cap)
+    monkeypatch.setattr(cli_module, "build_judge_model", lambda _spec: model)
+
+    result = runner.invoke(
+        app, ["judge", "m", "--split", "dev", "--version", "1", "--repo", str(tmp_path)]
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert model.caps == [cap] * 2
+    # The re-save keeps a cap the file set and adds none it didn't.
+    import yaml
+
+    assert yaml.safe_load(judge_yaml.read_text(encoding="utf-8")).get("max_tokens") == (
+        2048 if line else None
+    )
+
+
 def _fake_run_judge_writing_verdicts(store_arg, spec, traces_arg, labels_arg, splits_arg, model_arg, **kwargs):
     """A stand-in for `run_judge` that mimics its real merge-by-split disk write
     (see `run_judge`'s own tail: rows for other splits are kept, this split's rows
@@ -719,3 +824,305 @@ def test_sample_rejects_an_unknown_perplexity_field(tmp_path: Path):
     )
 
     assert result.exit_code != 0
+
+
+def _write_dev_verdicts(store: Store, rows: list[dict], mode: str = "m", version: int = 1) -> Path:
+    directory = store.judge_dir(mode, version)
+    directory.mkdir(parents=True, exist_ok=True)
+    store.write_jsonl(directory / "verdicts.jsonl", rows)
+    return directory
+
+
+def test_align_prints_the_brier_score_for_a_decision_model(tmp_path: Path):
+    store = Store(tmp_path)
+    rows = [
+        {"trace_id": f"d{i}", "split": "dev", "verdict": p >= 0.5, "truth": truth,
+         "model": "typesafe/jev-1.13", "probability": p}
+        for i, (truth, p) in enumerate([(True, 0.9), (False, 0.2), (True, 0.7), (False, 0.1)])
+    ]
+    _write_dev_verdicts(store, rows)
+    JudgeSpec(mode="m", model="typesafe/jev-1.13", version=1).save(store)
+
+    result = runner.invoke(app, ["align", "m", "1", "--repo", str(tmp_path)])
+
+    assert result.exit_code == 0, result.stdout
+    assert "no Brier score" not in (store.judge_dir("m", 1) / "alignment.md").read_text()
+    from axial.align import brier_score
+
+    expected = brier_score([r["truth"] for r in rows], [r["probability"] for r in rows])
+    assert f"dev  Brier {expected:.3f} (base-rate reference 0.250)" in result.stdout
+
+
+def test_align_notes_a_decision_model_run_that_recorded_no_probabilities(tmp_path: Path):
+    store = Store(tmp_path)
+    # The provider may serve a bare id; judge.yaml is what says this is a decision model.
+    rows = [
+        {"trace_id": f"d{i}", "split": "dev", "verdict": truth, "truth": truth,
+         "model": "jev-1.13"}
+        for i, truth in enumerate([True, False])
+    ]
+    directory = _write_dev_verdicts(store, rows)
+    JudgeSpec(mode="m", model="typesafe/jev-1.13", version=1).save(store)
+
+    result = runner.invoke(app, ["align", "m", "1", "--repo", str(tmp_path)])
+
+    assert result.exit_code == 0, result.stdout
+    note = (directory / "alignment.md").read_text()
+    assert "no probability" in note
+    assert "axial judge m --split dev --version 1" in note
+    assert "PROMOTED" in note
+
+
+def _corrupt_probability_verdicts(store: Store) -> None:
+    rows = [
+        {"trace_id": f"{split}{i}", "split": split, "verdict": truth, "truth": truth,
+         "model": "typesafe/jev-1.13", "probability": 0.9 if truth else 0.1}
+        for split in ("dev", "test") for i, truth in enumerate([True, False] * 30)
+    ]
+    rows[-1]["probability"] = float("nan")
+    _write_dev_verdicts(store, rows)
+    JudgeSpec(mode="m", model="typesafe/jev-1.13", version=1).save(store)
+
+
+def test_align_exits_1_with_a_message_on_a_recorded_nan_probability(tmp_path: Path):
+    store = Store(tmp_path)
+    _corrupt_probability_verdicts(store)
+
+    result = runner.invoke(app, ["align", "m", "1", "--repo", str(tmp_path)])
+
+    assert result.exit_code == 1
+    assert "not a number between 0 and 1" in result.stdout
+
+
+def test_promote_exits_1_with_a_message_on_a_recorded_nan_probability(tmp_path: Path):
+    store = Store(tmp_path)
+    _corrupt_probability_verdicts(store)
+
+    result = runner.invoke(app, ["promote", "m", "1", "--repo", str(tmp_path)])
+
+    assert result.exit_code == 1
+    assert "not a number between 0 and 1" in result.stdout
+
+
+def _seed_jev_judge(
+    store: Store,
+    scored: list[tuple[bool, float]],
+    *,
+    prompt_sha256: str | None = None,
+    threshold: float = 0.5,
+) -> None:
+    """A Jev judge v1 with dev verdicts stamped with the prompt it sends now, unless
+    `prompt_sha256` names another."""
+    spec = JudgeSpec(mode="m", model="typesafe/jev-1.13", version=1, decision_threshold=threshold)
+    spec.save(store)
+    stamp = prompt_sha256 or current_prompt_sha256(store, spec)
+    _write_dev_verdicts(store, [
+        {"trace_id": f"d{i}", "split": "dev", "verdict": p >= 0.5, "truth": truth,
+         "model": "typesafe/jev-1.13", "probability": p, "prompt_sha256": stamp}
+        for i, (truth, p) in enumerate(scored)
+    ])
+
+
+_SEPARABLE = [(True, 0.30 + i / 100) for i in range(10)] + [(False, 0.05 + i / 100) for i in range(10)]
+
+
+def test_tune_threshold_reports_without_writing_unless_asked(tmp_path: Path):
+    store = Store(tmp_path)
+    _seed_jev_judge(store, _SEPARABLE)
+
+    result = runner.invoke(app, ["tune-threshold", "m", "1", "--repo", str(tmp_path)])
+
+    assert result.exit_code == 0, result.stdout
+    assert "current threshold 0.5: TPR 0.000  TNR 1.000" in result.stdout
+    assert "chosen threshold 0.22: TPR 1.000  TNR 1.000" in result.stdout
+    assert "5-fold cross-validation on dev" in result.stdout
+    assert "--write" in result.stdout
+    assert store.latest_judge_version("m") == 1
+
+
+def test_tune_threshold_write_saves_the_next_judge_version(tmp_path: Path):
+    from axial.judge import JudgeSpec
+
+    store = Store(tmp_path)
+    _seed_jev_judge(store, _SEPARABLE)
+
+    result = runner.invoke(app, ["tune-threshold", "m", "1", "--write", "--repo", str(tmp_path)])
+
+    assert result.exit_code == 0, result.stdout
+    assert JudgeSpec.load(store, "m", 2).decision_threshold == 0.22
+    # Guard: re-thresholding v1's run would record verdicts nobody produced.
+    assert not (store.judge_dir("m", 2) / "verdicts.jsonl").exists()
+    assert "axial judge m --split dev --version 2" in result.stdout
+
+
+def test_tune_threshold_exits_1_and_writes_nothing_when_no_threshold_clears_the_floors(
+    tmp_path: Path,
+):
+    store = Store(tmp_path)
+    tangled = [(i % 2 == 0, 0.1 * (i // 2)) for i in range(20)]
+    _seed_jev_judge(store, tangled)
+
+    result = runner.invoke(app, ["tune-threshold", "m", "1", "--write", "--repo", str(tmp_path)])
+
+    assert result.exit_code == 1
+    assert "closest threshold" in result.stdout
+    assert "no threshold cleared the floors in 5 of 5 training folds" in result.stdout
+    assert "will not lower them" in result.stdout
+    assert store.latest_judge_version("m") == 1
+
+
+def test_tune_threshold_names_a_judge_that_does_not_exist(tmp_path: Path):
+    result = runner.invoke(app, ["tune-threshold", "m", "3", "--repo", str(tmp_path)])
+    assert result.exit_code == 1
+    assert "no judge m v3" in result.stdout
+    assert "axial judge m --split dev --version 3" in result.stdout
+
+
+def test_tune_threshold_refuses_dev_rows_from_another_prompt(tmp_path: Path):
+    store = Store(tmp_path)
+    _seed_jev_judge(store, _SEPARABLE, prompt_sha256="0" * 64)
+
+    result = runner.invoke(app, ["tune-threshold", "m", "1", "--repo", str(tmp_path)])
+
+    assert result.exit_code == 1
+    assert "20 dev verdict row(s) were not produced by the prompt" in result.stdout
+    assert "axial judge m --split dev --version 1" in result.stdout
+
+
+def test_tune_threshold_says_how_many_dev_calls_were_quarantined(tmp_path: Path):
+    store = Store(tmp_path)
+    _seed_jev_judge(store, _SEPARABLE)
+    store.write_jsonl(store.judge_dir("m", 1) / "errors.jsonl", [
+        {"trace_id": "e1", "split": "dev", "failure_class": "harness"},
+        {"trace_id": "e2", "split": "dev", "failure_class": "harness"},
+        {"trace_id": "e3", "split": "test", "failure_class": "harness"},
+    ])
+
+    result = runner.invoke(app, ["tune-threshold", "m", "1", "--repo", str(tmp_path)])
+
+    assert result.exit_code == 0, result.stdout
+    assert "2 dev call(s) quarantined in errors.jsonl are not in these numbers" in result.stdout
+
+
+def test_tune_threshold_passes_its_seed_to_the_cross_validation(tmp_path: Path):
+    # Guard: the folds, and so the held-out line, depend on --seed.
+    import numpy as np
+
+    from axial.config import Thresholds
+    from axial.threshold import tune_from_verdicts
+
+    rng = np.random.default_rng(3)
+    scored = [(True, round(float(x), 2)) for x in rng.beta(3, 2, 15)] + [
+        (False, round(float(x), 2)) for x in rng.beta(2, 3, 15)
+    ]
+    store = Store(tmp_path)
+    _seed_jev_judge(store, scored)
+    rows = read_verdicts(store, store.judge_dir("m", 1) / "verdicts.jsonl")
+    spec = JudgeSpec.load(store, "m", 1)
+    floors = Thresholds(min_tpr=0.6, min_tnr=0.6)
+    store.config_path.write_text("[thresholds]\nmin_tpr = 0.6\nmin_tnr = 0.6\n")
+
+    def held_out(seed: int) -> str:
+        cv = tune_from_verdicts(rows, spec, floors, seed=seed).cv.held_out
+        return f"TPR {cv.fmt('tpr')}  TNR {cv.fmt('tnr')}"
+
+    assert held_out(0) != held_out(1)  # the data separates the two seeds
+
+    result = runner.invoke(app, ["tune-threshold", "m", "1", "--seed", "1", "--repo", str(tmp_path)])
+
+    assert result.exit_code == 0, result.stdout
+    assert held_out(1) in result.stdout
+    assert held_out(0) not in result.stdout
+
+
+def test_tune_threshold_refuses_fewer_than_two_folds(tmp_path: Path):
+    # Guard: the refusal names the flag, not some later failure.
+    store = Store(tmp_path)
+    _seed_jev_judge(store, _SEPARABLE)
+    result = runner.invoke(app, ["tune-threshold", "m", "1", "--folds", "1", "--repo", str(tmp_path)])
+    assert result.exit_code == 1
+    assert "--folds must be at least 2" in result.stdout
+
+
+def test_align_on_a_text_model_judge_adds_no_brier_note_section_or_key(tmp_path: Path):
+    # Guard: a text model's verdicts carry no probability, and its report says nothing of it.
+    store = Store(tmp_path)
+    JudgeSpec(mode="m", model="claude-opus-5", version=1).save(store)
+    directory = _write_dev_verdicts(store, [
+        {"trace_id": f"d{i}", "split": "dev", "verdict": truth, "truth": truth, "model": "claude-opus-5"}
+        for i, truth in enumerate([True, False, True, False])
+    ])
+
+    result = runner.invoke(app, ["align", "m", "1", "--repo", str(tmp_path)])
+
+    assert result.exit_code == 0, result.stdout
+    report = (directory / "alignment.md").read_text()
+    assert "no Brier score" not in report
+    assert "Calibration" not in report
+    assert "tune-threshold" not in report
+    assert "brier" not in (directory / "alignment.json").read_text()
+
+
+def test_align_reports_brier_for_dev_and_test_in_output_and_json(tmp_path: Path):
+    # Guard: both splits' scores reach the terminal and alignment.json.
+    store = Store(tmp_path)
+    JudgeSpec(mode="m", model="typesafe/jev-1.13", version=1).save(store)
+    directory = _write_dev_verdicts(store, [
+        {"trace_id": f"{split}{i}", "split": split, "verdict": p >= 0.5, "truth": truth,
+         "model": "typesafe/jev-1.13", "probability": p}
+        for split in ("dev", "test")
+        for i, (truth, p) in enumerate([(True, 0.9), (False, 0.2), (True, 0.6), (False, 0.3)])
+    ])
+
+    result = runner.invoke(app, ["align", "m", "1", "--repo", str(tmp_path)])
+
+    assert result.exit_code == 0, result.stdout
+    assert "dev  Brier" in result.stdout
+    assert "test Brier" in result.stdout
+    saved = json.loads((directory / "alignment.json").read_text())
+    assert saved["dev"]["brier"] == pytest.approx(0.075)  # (0.01 + 0.04 + 0.16 + 0.09) / 4
+    assert saved["test"]["brier"] == pytest.approx(0.075)
+
+
+def test_align_notes_missing_probabilities_when_test_rows_exist_too(tmp_path: Path):
+    # Guard: the note does not depend on whether test has been run.
+    store = Store(tmp_path)
+    JudgeSpec(mode="m", model="typesafe/jev-1.13", version=1).save(store)
+    directory = _write_dev_verdicts(store, [
+        {"trace_id": f"{split}{i}", "split": split, "verdict": truth, "truth": truth,
+         "model": "typesafe/jev-1.13"}
+        for split in ("dev", "test") for i, truth in enumerate([True, False])
+    ])
+
+    result = runner.invoke(app, ["align", "m", "1", "--repo", str(tmp_path)])
+
+    assert result.exit_code == 0, result.stdout
+    assert "no Brier score" in (directory / "alignment.md").read_text()
+
+
+def test_tune_threshold_writes_nothing_when_the_judge_already_uses_the_chosen_threshold(
+    tmp_path: Path,
+):
+    store = Store(tmp_path)
+    _seed_jev_judge(store, _SEPARABLE, threshold=0.22)
+
+    result = runner.invoke(app, ["tune-threshold", "m", "1", "--write", "--repo", str(tmp_path)])
+
+    assert result.exit_code == 0, result.stdout
+    assert "m v1 already uses decision_threshold 0.22; nothing to write" in result.stdout
+    assert store.latest_judge_version("m") == 1
+
+
+def test_align_points_a_decision_model_at_tune_threshold(tmp_path: Path):
+    store = Store(tmp_path)
+    JudgeSpec(mode="m", model="typesafe/jev-1.13", version=1).save(store)
+    directory = _write_dev_verdicts(store, [
+        {"trace_id": f"d{i}", "split": "dev", "verdict": p >= 0.5, "truth": truth,
+         "model": "typesafe/jev-1.13", "probability": p}
+        for i, (truth, p) in enumerate([(True, 0.4), (False, 0.1), (True, 0.3), (False, 0.2)])
+    ])
+
+    result = runner.invoke(app, ["align", "m", "1", "--repo", str(tmp_path)])
+
+    assert result.exit_code == 0, result.stdout
+    assert "`axial tune-threshold m 1`" in (directory / "alignment.md").read_text()

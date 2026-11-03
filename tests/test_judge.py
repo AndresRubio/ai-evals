@@ -1,10 +1,15 @@
+import json
 from pathlib import Path
 
 import pytest
+from cap_helpers import LongAnswer
+from template_helpers import VERDICT_FIRST_DEFAULT_TEMPLATE
 
 from axial.dataset import Label, Splits
 from axial.errors import InvariantViolation, MalformedFile
 from axial.judge import (
+    DEFAULT_TEMPLATE,
+    JUDGE_MAX_TOKENS,
     Graded,
     JudgeSpec,
     SetAside,
@@ -12,10 +17,14 @@ from axial.judge import (
     assemble_prompt,
     grade_trace,
     parse_verdict,
+    prompt_sha256,
+    read_verdicts,
+    render_few_shot,
     resolve_few_shot,
     run_judge,
+    upgrade_verdict_first_default,
 )
-from axial.model import FakeModel
+from axial.model import Completion, FakeModel
 from axial.store import Store
 from axial.traces import Trace
 
@@ -45,6 +54,10 @@ def label(i: int, value: bool) -> Label:
 def test_parse_verdict_reads_fail_and_pass():
     assert parse_verdict('{"verdict": "fail"}') is True
     assert parse_verdict('{"verdict": "pass"}') is False
+
+
+def test_parse_verdict_reads_an_answer_that_gives_the_reason_first():
+    assert parse_verdict('{"reason": "two stories merged", "verdict": "fail"}') is True
 
 
 def test_parse_verdict_tolerates_surrounding_prose():
@@ -83,6 +96,69 @@ def test_few_shot_from_train_is_allowed():
     s = spec(few_shot_ids=["t1"])
     text = assemble_prompt(s, trace(9), few_shot=[(trace(1), label(1, True))], splits=splits)
     assert "in1" in text
+
+
+def few_shot_answer(critique: str) -> str:
+    """The ANSWER line of a one-example few-shot block."""
+    example = Label(trace_id="t1", label=True, critique=critique, annotator="andres")
+    block = render_few_shot([(trace(1), example)])
+    return block.split("ANSWER: ", 1)[1].splitlines()[0]
+
+
+def test_a_few_shot_critique_with_quotes_renders_as_json_that_reads_back():
+    critique = 'Quotes "Reuters" from C:\\desk\nand runs to a second line.'
+    assert json.loads(few_shot_answer(critique)) == {"verdict": "fail", "reason": critique}
+
+
+def test_a_few_shot_critique_keeps_its_accents_as_written():
+    assert "«El País»" in few_shot_answer("Cita «El País» sin enlace.")
+
+
+def test_a_lone_surrogate_in_a_few_shot_critique_is_written_as_an_escape():
+    # JavaScript writes "\ud83d" when it cuts an emoji in half. UTF-8 cannot encode it, so
+    # sent raw it makes the HTTP client refuse every request that carries the example.
+    answer = few_shot_answer("cut \ud83d")
+    assert "cut \\ud83d" in answer
+    assert json.loads(answer)["reason"] == "cut \ud83d"
+
+
+def test_a_whole_emoji_in_a_few_shot_critique_stays_as_written():
+    assert "cut 😀" in few_shot_answer("cut 😀")
+
+
+def test_a_few_shot_answer_gives_the_reason_before_the_verdict():
+    assert list(json.loads(few_shot_answer("because"))) == ["reason", "verdict"]
+
+
+def test_the_default_template_asks_for_the_reason_before_the_verdict():
+    prompt = assemble_prompt(JudgeSpec(mode="merged", model="fake"), trace(1), few_shot=[])
+    lead = "Answer with JSON only: "
+    line = next(text for text in prompt.splitlines() if text.startswith(lead))
+    assert list(json.loads(line.removeprefix(lead))) == ["reason", "verdict"]
+
+
+def test_the_verdict_schema_puts_the_reason_first():
+    # A model filling in a schema writes the fields in order, so this is what makes the
+    # judge reason before it commits to a verdict.
+    assert list(Verdict.model_json_schema()["properties"]) == ["reason", "verdict"]
+
+
+def test_the_verdict_schema_requires_the_reason():
+    # An optional field may be left out, and a judge that skips the reason has not
+    # reasoned at all.
+    assert Verdict.model_json_schema()["required"] == ["reason", "verdict"]
+
+
+def test_the_verdict_schema_is_pinned_to_its_exact_text():
+    # The schema goes into every text-model judge's fingerprint, and to the model where
+    # litellm says the provider can take one, so any change to it withdraws every
+    # text-model promotion. A docstring on `Verdict` would arrive as its description, and
+    # fixing a typo in one would do that unnoticed.
+    assert json.dumps(Verdict.model_json_schema()) == (
+        '{"properties": {"reason": {"title": "Reason", "type": "string"}, '
+        '"verdict": {"enum": ["pass", "fail"], "title": "Verdict", "type": "string"}}, '
+        '"required": ["reason", "verdict"], "title": "Verdict", "type": "object"}'
+    )
 
 
 def test_few_shot_from_dev_is_refused():
@@ -180,6 +256,88 @@ def test_a_damaged_rows_file_is_refused_before_any_call_and_promoted_stays(
         )
     assert prompts == []
     assert (directory / "PROMOTED").read_text() == "marker\n"
+
+
+# The answer line axial's default template ended with before it asked for the reason
+# first. A judge.yaml written then keeps its own copy.
+VERDICT_FIRST = TEMPLATE + '\nAnswer with JSON only: {{"verdict": "fail", "reason": "one sentence"}}'
+
+
+def test_a_text_judge_whose_template_asks_for_the_verdict_first_is_refused_before_any_call(
+    tmp_path: Path,
+):
+    store = Store(tmp_path)
+    directory = store.judge_dir("merged", 1)
+    directory.mkdir(parents=True)
+    (directory / "PROMOTED").write_text("marker\n")
+    model = FakeModel(lambda _p: '{"reason": "fine", "verdict": "pass"}')
+
+    with pytest.raises(InvariantViolation) as refusal:
+        run_judge(
+            store, spec(prompt_template=VERDICT_FIRST), [trace(1)], [label(1, False)],
+            Splits(dev=["t1"]), model, split="dev",
+        )
+    assert model.calls == []
+    assert (directory / "PROMOTED").read_text() == "marker\n"
+    message = str(refusal.value)
+    assert "gives an example answer with the verdict before the reason" in message
+    assert str(directory / "judge.yaml") in message
+    # judge.yaml stores the template as one escaped string, so text to paste over a line
+    # of it cannot work. Deleting the key or reordering the example can.
+    assert "delete prompt_template" in message
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        '{{"confidence": "high", "verdict": "fail", "reason": "one sentence"}}',
+        "{{'verdict': 'fail', 'reason': 'one sentence'}}",
+    ],
+    ids=["another-key-first", "single-quotes"],
+)
+def test_a_verdict_first_example_answer_is_refused_whatever_comes_before_it(
+    tmp_path: Path, answer: str
+):
+    model = FakeModel(lambda _p: '{"reason": "fine", "verdict": "pass"}')
+    with pytest.raises(InvariantViolation, match="verdict before the reason"):
+        run_judge(
+            Store(tmp_path), spec(prompt_template=f"{TEMPLATE}\nAnswer with JSON only: {answer}"),
+            [trace(1)], [label(1, False)], Splits(dev=["t1"]), model, split="dev",
+        )
+    assert model.calls == []
+
+
+def test_the_old_default_template_is_upgraded_to_the_current_one():
+    judge = spec(prompt_template=VERDICT_FIRST_DEFAULT_TEMPLATE, model="claude-opus-5")
+    assert upgrade_verdict_first_default(judge) is True
+    assert judge.prompt_template == DEFAULT_TEMPLATE
+
+
+def test_a_hand_edited_template_is_not_upgraded():
+    # Its author chose its wording, so it is refused rather than replaced.
+    edited = VERDICT_FIRST_DEFAULT_TEMPLATE.replace("Do not reward length.", "Be strict.")
+    judge = spec(prompt_template=edited, model="claude-opus-5")
+    assert upgrade_verdict_first_default(judge) is False
+    assert judge.prompt_template == edited
+
+
+def test_a_decision_judges_old_default_template_is_not_upgraded():
+    # Jev ignores the answer instructions, and a new template would change the prompt of
+    # a judge whose rows are otherwise still current.
+    judge = spec(prompt_template=VERDICT_FIRST_DEFAULT_TEMPLATE, model="typesafe/jev-1.13")
+    assert upgrade_verdict_first_default(judge) is False
+    assert judge.prompt_template == VERDICT_FIRST_DEFAULT_TEMPLATE
+
+
+def test_a_decision_judge_whose_template_asks_for_the_verdict_first_still_runs(tmp_path: Path):
+    # Jev reads the prompt as the state it decides on and is sent no answer schema, so
+    # the order the template asks for does not reach anything.
+    model = FakeModel(lambda _p: '{"reason": "fine", "verdict": "pass"}')
+    result = run_judge(
+        Store(tmp_path), spec(prompt_template=VERDICT_FIRST, model="typesafe/jev-1.13"),
+        [trace(1)], [label(1, False)], Splits(dev=["t1"]), model, split="dev",
+    )
+    assert len(result.verdicts) == 1
 
 
 def test_rerunning_a_split_replaces_only_that_split(tmp_path: Path):
@@ -349,6 +507,83 @@ def test_grade_trace_sets_aside_what_it_cannot_score(template, model, failure_cl
     assert outcome.failure_class == failure_class
 
 
+def test_a_judge_run_grades_an_answer_that_needs_more_than_512_tokens(tmp_path: Path):
+    # A model that thinks first counts its thinking against the cap, and on the newsroom
+    # corpus claude-opus-5 ran out on some reason-first answers at 512.
+    splits = Splits(train=[], dev=["t1"], test=[])
+    result = run_judge(
+        Store(tmp_path), spec(), [trace(1)], [label(1, True)], splits, LongAnswer(700),
+        split="dev",
+    )
+    assert result.errors == []
+    assert [v["verdict"] for v in result.verdicts] == [True]
+
+
+@pytest.mark.parametrize(
+    ("needs", "failure_classes"), [(JUDGE_MAX_TOKENS, []), (JUDGE_MAX_TOKENS + 1, ["truncated"])]
+)
+def test_a_judge_run_cuts_an_answer_off_only_past_the_cap(
+    tmp_path: Path, needs: int, failure_classes: list[str]
+):
+    splits = Splits(train=[], dev=["t1"], test=[])
+    result = run_judge(
+        Store(tmp_path), spec(), [trace(1)], [label(1, True)], splits, LongAnswer(needs),
+        split="dev",
+    )
+    assert [e["failure_class"] for e in result.errors] == failure_classes
+
+
+def test_judge_yaml_max_tokens_sets_the_answer_cap(tmp_path: Path):
+    splits = Splits(train=[], dev=["t1"], test=[])
+    model = LongAnswer(1500)
+    result = run_judge(
+        Store(tmp_path), spec(max_tokens=2048), [trace(1)], [label(1, True)], splits, model,
+        split="dev",
+    )
+    assert (result.errors, model.caps) == ([], [2048])
+
+
+def test_a_judge_yaml_with_no_max_tokens_gets_the_default(tmp_path: Path):
+    store = Store(tmp_path)
+    judge_yaml = store.judge_dir("merged", 1) / "judge.yaml"
+    judge_yaml.parent.mkdir(parents=True)
+    judge_yaml.write_text("mode: merged\nmodel: fake\n", encoding="utf-8")
+    assert JudgeSpec.load(store, "merged", 1).max_tokens == JUDGE_MAX_TOKENS == 1024
+
+
+@pytest.mark.parametrize(
+    ("value", "complaint"),
+    [
+        ("0", "greater than 0, got int"),
+        ("-1", "greater than 0, got int"),
+        ("true", "a valid integer, got bool"),
+        ("1.5", "a valid integer, got float"),
+        ("'1024'", "a valid integer, got str"),
+    ],
+)
+def test_a_max_tokens_that_is_not_a_positive_whole_number_is_refused(
+    tmp_path: Path, value: str, complaint: str
+):
+    store = Store(tmp_path)
+    judge_yaml = store.judge_dir("merged", 1) / "judge.yaml"
+    judge_yaml.parent.mkdir(parents=True)
+    judge_yaml.write_text(f"mode: merged\nmax_tokens: {value}\n", encoding="utf-8")
+    with pytest.raises(MalformedFile, match=f"max_tokens: Input should be {complaint}"):
+        JudgeSpec.load(store, "merged", 1)
+
+
+def test_the_fingerprint_leaves_out_max_tokens():
+    # So a judge promoted before judge.yaml had `max_tokens` stays promoted. Editing it
+    # changes judge.yaml's hash, which `measure` and `gate` check against PROMOTED.
+    assert prompt_sha256(spec(max_tokens=2048), []) == prompt_sha256(spec(), [])
+
+
+def test_a_default_judge_keeps_the_fingerprint_it_had_before_max_tokens():
+    assert prompt_sha256(JudgeSpec(mode="merged"), []) == (
+        "5ff67a4328faf89aad486856bac940fee00cca2625dc18e894ad713ac9a07b53"
+    )
+
+
 def test_grade_trace_lets_a_refusal_propagate():
     splits = Splits(train=[], dev=["t2"], test=[])
     with pytest.raises(InvariantViolation, match="not in the train split"):
@@ -363,3 +598,38 @@ def test_resolve_few_shot_refuses_an_id_it_cannot_find():
     with pytest.raises(InvariantViolation, match="'t9' could not be resolved"):
         resolve_few_shot(spec(few_shot_ids=["t9"]), [trace(1)], [gold])
     assert resolve_few_shot(spec(few_shot_ids=["t1"]), [trace(1)], [gold]) == [(trace(1), gold)]
+
+
+class _ScoringModel:
+    """A decision model's shape: a verdict plus the probability behind it."""
+
+    def __init__(self, probability: float) -> None:
+        self.probability = probability
+
+    def complete(self, prompt: str, *, max_tokens: int = 1024, schema=None) -> Completion:
+        verdict = "fail" if self.probability >= 0.5 else "pass"
+        return Completion(
+            text=f'{{"verdict": "{verdict}"}}', model="fake", probability=self.probability
+        )
+
+
+def test_a_decision_model_verdict_row_keeps_the_full_probability(tmp_path: Path):
+    store = Store(tmp_path)
+    splits = Splits(train=[], dev=["t1"], test=[])
+    result = run_judge(
+        store, spec(), [trace(1)], [label(1, True)], splits, _ScoringModel(0.123456789),
+        split="dev",
+    )
+    assert result.verdicts[0]["probability"] == 0.123456789
+    on_disk = read_verdicts(store, store.judge_dir("merged", 1) / "verdicts.jsonl")
+    assert on_disk[0]["probability"] == 0.123456789
+
+
+def test_a_text_model_verdict_row_records_no_probability(tmp_path: Path):
+    store = Store(tmp_path)
+    splits = Splits(train=[], dev=["t1"], test=[])
+    result = run_judge(
+        store, spec(), [trace(1)], [label(1, True)], splits,
+        FakeModel(lambda _p: '{"verdict": "fail"}'), split="dev",
+    )
+    assert result.verdicts[0]["probability"] is None

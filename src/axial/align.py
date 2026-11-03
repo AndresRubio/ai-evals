@@ -114,6 +114,12 @@ class Alignment:
     kappa: float
     matrix: ConfusionMatrix
     ci: dict[str, tuple[float, float] | None] = field(default_factory=dict)
+    # Only a decision model has these: it reports a probability per trace, and a
+    # text model's verdict has none to score. `brier_reference` is what always
+    # predicting this split's own failure rate would score, the number a Brier
+    # score has to beat before its probabilities say anything the base rate doesn't.
+    brier: float | None = None
+    brier_reference: float | None = None
 
     def fmt(self, key: str) -> str:
         """Point estimate plus its confidence interval for one metric, e.g.
@@ -150,6 +156,13 @@ class Alignment:
             "recall": self.recall,
             "f1": self.f1,
             "kappa": self.kappa,
+            # Written only when there is a score, so a text model's report keeps the
+            # bytes it had before decision models were scored.
+            **(
+                {"brier": self.brier, "brier_reference": self.brier_reference}
+                if self.brier is not None
+                else {}
+            ),
             "ci": {k: (list(v) if v is not None else None) for k, v in self.ci.items()},
             "matrix": {
                 "tp": self.matrix.tp,
@@ -177,10 +190,40 @@ def _point_estimates(y_true: list[bool], y_pred: list[bool]) -> dict[str, float]
     }
 
 
+def tpr_tnr(y_true: list[bool], y_pred: list[bool]) -> tuple[float, float]:
+    """TPR and TNR alone, without the intervals `align` bootstraps.
+
+    For a caller that scores many candidate verdict sets, such as a threshold
+    sweep, where a bootstrap per candidate would be wasted work.
+    """
+    m = confusion_matrix(y_true, y_pred)
+    return _safe_div(m.tp, m.tp + m.fn), _safe_div(m.tn, m.tn + m.fp)
+
+
+def brier_score(y_true: list[bool], probabilities: list[float]) -> float:
+    """Mean squared gap between each probability of a failure and the human label.
+
+    A failure counts as 1 and a pass as 0, so 0.0 is perfect and a constant 0.5
+    scores 0.25. Lower is better.
+    """
+    if len(y_true) != len(probabilities):
+        raise ValueError("y_true and probabilities must be the same length")
+    if not y_true:
+        raise ValueError("cannot score an empty set")
+    for p in probabilities:
+        # `not (0 <= p <= 1)` rather than `p < 0 or p > 1`, so nan is caught too.
+        if not 0.0 <= p <= 1.0:
+            raise ValueError(f"every probability must be between 0 and 1, got {p!r}")
+    return sum((p - float(t)) ** 2 for t, p in zip(y_true, probabilities, strict=True)) / len(
+        y_true
+    )
+
+
 def align(
     y_true: list[bool],
     y_pred: list[bool],
     *,
+    probabilities: list[float] | None = None,
     n_boot: int = 2000,
     seed: int = 0,
 ) -> Alignment:
@@ -188,6 +231,13 @@ def align(
         raise ValueError("y_true and y_pred must be the same length")
     if not y_true:
         raise ValueError("cannot align on an empty set")
+
+    brier: float | None = None
+    brier_reference: float | None = None
+    if probabilities is not None:
+        brier = brier_score(y_true, probabilities)
+        base_rate = sum(y_true) / len(y_true)
+        brier_reference = base_rate * (1 - base_rate)
 
     m = confusion_matrix(y_true, y_pred)
     point = _point_estimates(y_true, y_pred)
@@ -229,6 +279,8 @@ def align(
         n=n,
         matrix=m,
         ci=ci,
+        brier=brier,
+        brier_reference=brier_reference,
         **{k: point[k] for k in ("accuracy", "tpr", "tnr", "precision", "recall", "f1", "kappa")},
     )
 

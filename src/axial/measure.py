@@ -305,7 +305,6 @@ def measure_batch(
     build_model: Callable[[JudgeSpec], Model],
     *,
     replace: bool = False,
-    max_tokens: int = 512,
     draws: int = 20_000,
     seed: int = 0,
 ) -> Measurement:
@@ -356,7 +355,7 @@ def measure_batch(
                 }
             )
             continue
-        outcome = grade_trace(spec, trace, few_shot, splits, model, max_tokens=max_tokens)
+        outcome = grade_trace(spec, trace, few_shot, splits, model, max_tokens=spec.max_tokens)
         if isinstance(outcome, Graded):
             verdicts.append(
                 {

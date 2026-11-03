@@ -91,6 +91,16 @@ def test_reason_records_the_probability_and_the_threshold(monkeypatch):
     assert "0.5" in reason
 
 
+def test_the_answer_gives_the_reason_before_the_verdict(monkeypatch):
+    # The same order a text-model judge is asked for, so every raw answer in
+    # verdicts.jsonl reads the same way.
+    _install(monkeypatch, lambda *a, **kw: _make_response(noul=0.912))
+
+    out = _model(threshold=0.5).complete("grade this trace")
+
+    assert list(json.loads(out.text)) == ["reason", "verdict"]
+
+
 def test_probability_is_exposed_on_the_completion(monkeypatch):
     """A threshold sweep needs the raw probability, not the thresholded verdict."""
     _install(monkeypatch, lambda *a, **kw: _make_response(noul=0.4321))
@@ -125,6 +135,24 @@ def test_sends_the_prompt_as_state_with_one_noul_question(monkeypatch):
     assert question["type"] == "noul"
     assert question["instructions"] == "Is the answer unsupported by the context?"
     assert question["criteria"] == {"true": "unsupported", "false": "supported"}
+
+
+def test_a_request_carries_only_what_the_prompt_fingerprint_covers(monkeypatch):
+    # `prompt_sha256` covers the spec's model, the prompt sent as state, and `questions`.
+    # A new field in the body has to be covered there too before it is added here.
+    calls: list[dict] = []
+
+    def post(*args, **kwargs):
+        calls.append(kwargs)
+        return _make_response()
+
+    _install(monkeypatch, post)
+    model = _model()
+    model.complete("the assembled judge prompt")
+
+    body = calls[0]["json"]
+    assert sorted(body) == ["model", "questions", "state"]
+    assert body["questions"] == model.questions
 
 
 def test_posts_to_the_decisions_endpoint_with_the_api_key(monkeypatch):
@@ -234,6 +262,16 @@ def test_an_answer_of_the_wrong_type_is_an_error_not_a_guess(monkeypatch):
     )
 
     with pytest.raises(AxialError, match="noul"):
+        _model().complete("x")
+
+
+@pytest.mark.parametrize("bad", [float("nan"), 1.7, -0.2, True])
+def test_a_noul_that_is_not_a_probability_is_an_error(monkeypatch, bad):
+    # Recorded as it came, a value like this would crash `align` and `promote` later
+    # and be thresholded into a verdict now (nan >= t is False: a silent pass).
+    _install(monkeypatch, lambda *a, **kw: _make_response(noul=bad))
+
+    with pytest.raises(AxialError, match="between 0 and 1"):
         _model().complete("x")
 
 
