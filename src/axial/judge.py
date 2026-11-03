@@ -78,16 +78,16 @@ where "fail" means the failure mode IS present and "pass" means it is not.
 # and in either kind of quotes. One with a nested object between the two is missed.
 _VERDICT_FIRST = re.compile(r"""\{+[^{}]*["']verdict["']\s*:[^{}]*["']reason["']\s*:""")
 
-# The most tokens one judge answer may take, used by `run_judge` and `measure_batch`
-# so a dev trace and a new one are cut off at the same length. A model that thinks
-# before it answers counts its thinking here too, and a reason-first answer runs
-# longer, so at 512 some answers ran out. An answer cut off is set aside as `truncated`
-# and still billed. Tokens are billed as used, so a bigger cap costs more only when an
-# answer runs longer.
+# The most tokens one judge answer may take when judge.yaml sets no `max_tokens`.
+# `run_judge` and `measure_batch` both read the cap from the spec, so a dev trace and a
+# new one are cut off at the same length. A model that thinks before it answers counts
+# its thinking here too, and a reason-first answer runs longer, so at 512 some answers
+# ran out. An answer cut off is set aside as `truncated` and still billed. Tokens are
+# billed as used, so a bigger cap costs more only when an answer runs longer.
 #
-# The cap is not part of the prompt fingerprint, so changing it leaves a promotion in
-# place. A judge promoted under another cap then grades, on a new batch, traces its
-# test split set aside. Re-running dev and test and promoting again closes that gap.
+# The cap is not part of the prompt fingerprint, so a judge promoted before the default
+# rose from 512 stays promoted. On a new batch it then grades traces its test split set
+# aside. Re-running dev and test and promoting again closes that gap.
 JUDGE_MAX_TOKENS = 1024
 
 
@@ -125,6 +125,11 @@ class JudgeSpec(BaseModel):
     # verdict — and `promote` binds its marker to this file's hash, so a threshold
     # kept anywhere else could be retuned without invalidating the gate.
     decision_threshold: float = 0.5
+    # The most tokens one answer may take, thinking included, for both `judge` and
+    # `measure`. A file without it gets JUDGE_MAX_TOKENS. Changing it withdraws a
+    # promotion through this file's hash, as `decision_threshold` does, but it is left
+    # out of the prompt fingerprint. Strict, so `max_tokens: true` is not a cap of 1.
+    max_tokens: int = Field(default=JUDGE_MAX_TOKENS, gt=0, strict=True)
 
     def save(self, store: Store) -> None:
         directory = store.judge_dir(self.mode, self.version)
@@ -230,8 +235,9 @@ def prompt_sha256(spec: JudgeSpec, few_shot: list[tuple[Trace, Label]]) -> str:
 
     It covers the spec's fields, not `judge.yaml`'s bytes, so reformatting the file
     leaves it alone, and the rendered few-shot block, so a relabelled or re-ingested
-    example changes it. `ensure_ascii` writes a lone surrogate as an escape, which keeps
-    the document encodable.
+    example changes it. It leaves out `max_tokens`, which is no part of the prompt, so a
+    judge promoted before that field existed keeps its fingerprint. `ensure_ascii` writes
+    a lone surrogate as an escape, which keeps the document encodable.
 
     A text model is also sent the answer schema when litellm says its provider can take
     one, so the schema is covered for every text model. It goes in as text: the sorted
@@ -244,7 +250,7 @@ def prompt_sha256(spec: JudgeSpec, few_shot: list[tuple[Trace, Label]]) -> str:
     question as the request carries it.
     """
     document: dict[str, object] = {
-        "spec": spec.model_dump(),
+        "spec": spec.model_dump(exclude={"max_tokens"}),
         "few_shot": render_few_shot(few_shot),
     }
     if is_decision_model(spec.model):
@@ -508,7 +514,6 @@ def run_judge(
     model: Model,
     *,
     split: str,
-    max_tokens: int = JUDGE_MAX_TOKENS,
     corpus: list[Trace] | None = None,
 ) -> RunResult:
     """Run `spec` over `traces`, writing verdict and error rows to `store`.
@@ -534,7 +539,7 @@ def run_judge(
 
     result = RunResult()
     for trace in traces:
-        outcome = grade_trace(spec, trace, few_shot, splits, model, max_tokens=max_tokens)
+        outcome = grade_trace(spec, trace, few_shot, splits, model, max_tokens=spec.max_tokens)
         if isinstance(outcome, SetAside):
             result.errors.append(
                 {

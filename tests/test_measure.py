@@ -299,6 +299,21 @@ def test_measuring_cuts_an_answer_off_at_the_same_length_as_judging(
     assert result.n_set_aside == n_set_aside
 
 
+def test_measuring_uses_the_promoted_judge_yaml_max_tokens(tmp_path: Path):
+    store = Store(tmp_path)
+    build_promoted_judge(store, max_tokens=2048)
+    models: list[LongAnswer] = []
+
+    def build(spec: JudgeSpec) -> LongAnswer:
+        models.append(LongAnswer(1500, judge_reply, model=spec.model))
+        return models[-1]
+
+    result = measure_batch(
+        store, MEASURE_MODE, 1, "rel-1", batch_traces(["BAD"] + ["GOOD"] * 9), build, draws=2000
+    )
+    assert (result.n_set_aside, models[0].caps) == (0, [2048] * 10)
+
+
 def test_set_aside_traces_stay_out_of_the_rate_and_are_noted_above_five_percent(store: Store):
     result = measure(store, batch_traces(["GARBLED"] * 2 + ["BAD"] * 6 + ["GOOD"] * 12))
     assert (result.n_traces, result.n_graded, result.n_set_aside, result.flagged) == (20, 18, 2, 6)

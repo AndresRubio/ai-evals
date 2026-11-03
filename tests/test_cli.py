@@ -609,20 +609,22 @@ def test_a_hand_written_verdict_first_template_is_refused_before_judge_yaml_is_r
     assert model.calls == []
 
 
-def test_axial_judge_gives_the_model_the_shared_answer_cap(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(("line", "cap"), [("max_tokens: 2048\n", 2048), ("", 1024)])
+def test_axial_judge_gives_the_model_the_cap_judge_yaml_sets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, line: str, cap: int
 ):
     from cap_helpers import LongAnswer
 
     import axial.cli as cli_module
     from axial.config import write_default_config
-    from axial.judge import JUDGE_MAX_TOKENS
 
     store = Store(tmp_path)
     write_default_config(store)
     _seed_corpus_and_splits(store)
-    JudgeSpec(mode="m", model="claude-opus-5").save(store)
-    model = LongAnswer(JUDGE_MAX_TOKENS)
+    judge_yaml = store.judge_dir("m", 1) / "judge.yaml"
+    judge_yaml.parent.mkdir(parents=True)
+    judge_yaml.write_text(f"mode: m\nmodel: claude-opus-5\n{line}", encoding="utf-8")
+    model = LongAnswer(cap)
     monkeypatch.setattr(cli_module, "build_judge_model", lambda _spec: model)
 
     result = runner.invoke(
@@ -630,7 +632,7 @@ def test_axial_judge_gives_the_model_the_shared_answer_cap(
     )
 
     assert result.exit_code == 0, result.stdout
-    assert model.caps == [JUDGE_MAX_TOKENS] * 2
+    assert model.caps == [cap] * 2
 
 
 def _fake_run_judge_writing_verdicts(store_arg, spec, traces_arg, labels_arg, splits_arg, model_arg, **kwargs):

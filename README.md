@@ -112,8 +112,11 @@ The refusals are the product.
   error row records a fingerprint of the full prompt: `judge.yaml` plus the few-shot
   examples as resolved from the current traces and labels. It also covers the answer
   schema for a text model, which goes with each request when litellm says the provider
-  can take one, and the question a decision model is asked with each request. `axial
-  promote` refuses a
+  can take one, and the question a decision model is asked with each request. It
+  leaves out `max_tokens` in `judge.yaml`, the most tokens one answer may take with
+  the model's thinking, which is 1,024 when the file sets none. `judge` and `measure`
+  both use it, and changing it still withdraws a promotion, which is bound to the
+  file's hash. `axial promote` refuses a
   judge with no `judge.yaml`, and refuses unless every row in `verdicts.jsonl` and
   `errors.jsonl`, whatever its split, carries the current fingerprint. It then writes
   the fingerprint as the third `key=value` line of `PROMOTED`, `prompt_sha256=<hex>`,
@@ -127,9 +130,9 @@ The refusals are the product.
   covered the question it is asked, few-shot examples or not. It also goes for a judge
   whose few-shot critique holds a lone surrogate (half of a cut emoji), which the
   prompt now carries as an escape. It goes too for a judge with `truncated` rows in
-  `errors.jsonl` from before an answer could take 1,024 tokens, up from 512. Nothing
-  refuses that judge, since the cap is not in the fingerprint, but its test-split
-  rates leave out the answers that ran out, and `measure` now grades such traces. A
+  `errors.jsonl` from before the default cap on an answer rose from 512 tokens to
+  1,024. Nothing refuses that judge, since the cap is not in the fingerprint, but its
+  test-split rates leave out the answers that ran out, and `measure` now grades such traces. A
   gate that compares a batch measured since then with one measured before also mixes
   the two caps. A text-model judge from before the reason came
   first keeps its template in `judge.yaml`. If that is the old default, which asked
@@ -358,7 +361,7 @@ Two properties worth understanding before trusting a batch:
 
 - **promptfoo, DeepEval, Ragas, autoevals** — assertion and metric catalogues. `axial`
   produces a validated judge definition (`judge.yaml`: prompt template, model, few-shot
-  trace ids, decision threshold) and the alignment report behind it. There is no
+  trace ids, decision threshold, answer token cap) and the alignment report behind it. There is no
   exporter to any of these tools; to run the judge inside one, you port the prompt and
   threshold by hand, and the alignment numbers only carry over if the model and prompt
   do too.
