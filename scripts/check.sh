@@ -16,12 +16,26 @@ step() {
   "$@" || failed+=("$*")
 }
 
+# Build the wheel and run it from outside the checkout, so a file the package needs but
+# the wheel leaves out fails here instead of on a user's git install.
+package_smoke() {
+  local out
+  out="$(mktemp -d)" || return 1
+  uv build -q --wheel --out-dir "$out" &&
+    (cd "$out" && uv run -q --isolated --no-project --python 3.13 \
+      --with "$out"/*.whl axial --help >/dev/null)
+  local status=$?
+  rm -rf "$out"
+  return $status
+}
+
 step uv lock --check
 step uv run ruff check .
 step uv run mypy src/axial scripts
 step uv run pytest -q
 step env UV_PROJECT_ENVIRONMENT=.venv-3.13 uv run --python 3.13 pytest -q
 step uv run python scripts/knowledge_index.py --check
+step package_smoke
 
 if ((${#failed[@]})); then
   echo "==> failed:"
