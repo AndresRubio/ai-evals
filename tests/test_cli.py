@@ -633,6 +633,12 @@ def test_axial_judge_gives_the_model_the_cap_judge_yaml_sets(
 
     assert result.exit_code == 0, result.stdout
     assert model.caps == [cap] * 2
+    # The re-save keeps a cap the file set and adds none it didn't.
+    import yaml
+
+    assert yaml.safe_load(judge_yaml.read_text(encoding="utf-8")).get("max_tokens") == (
+        2048 if line else None
+    )
 
 
 def _fake_run_judge_writing_verdicts(store_arg, spec, traces_arg, labels_arg, splits_arg, model_arg, **kwargs):
