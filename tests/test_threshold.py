@@ -214,7 +214,7 @@ def test_tuning_refuses_a_dev_split_too_small_for_its_folds():
 
 def test_the_tuned_threshold_becomes_a_new_judge_version(tmp_path):
     store = Store(tmp_path)
-    original = _jev_spec(few_shot_ids=["t1"], mode_definition="the def")
+    original = _jev_spec(few_shot_ids=["t1"], mode_definition="the def", max_tokens=2048)
     original.save(store)
     tuning = tune_from_verdicts(_rows("dev", _separable()), original, Thresholds())
 
@@ -226,6 +226,7 @@ def test_the_tuned_threshold_becomes_a_new_judge_version(tmp_path):
     assert reloaded.prompt_template == original.prompt_template
     assert reloaded.few_shot_ids == ["t1"]
     assert reloaded.mode_definition == "the def"
+    assert reloaded.max_tokens == 2048
     assert reloaded.model == JEV
     assert JudgeSpec.load(store, "m", 1).decision_threshold == 0.5
 

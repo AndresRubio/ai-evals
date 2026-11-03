@@ -2,12 +2,14 @@ import json
 from pathlib import Path
 
 import pytest
+from cap_helpers import LongAnswer
 from template_helpers import VERDICT_FIRST_DEFAULT_TEMPLATE
 
 from axial.dataset import Label, Splits
 from axial.errors import InvariantViolation, MalformedFile
 from axial.judge import (
     DEFAULT_TEMPLATE,
+    JUDGE_MAX_TOKENS,
     Graded,
     JudgeSpec,
     SetAside,
@@ -15,6 +17,7 @@ from axial.judge import (
     assemble_prompt,
     grade_trace,
     parse_verdict,
+    prompt_sha256,
     read_verdicts,
     render_few_shot,
     resolve_few_shot,
@@ -502,6 +505,83 @@ def test_grade_trace_sets_aside_what_it_cannot_score(template, model, failure_cl
     outcome = grade_trace(spec(prompt_template=template), trace(1), [], None, model, max_tokens=64)
     assert isinstance(outcome, SetAside)
     assert outcome.failure_class == failure_class
+
+
+def test_a_judge_run_grades_an_answer_that_needs_more_than_512_tokens(tmp_path: Path):
+    # A model that thinks first counts its thinking against the cap, and on the newsroom
+    # corpus claude-opus-5 ran out on some reason-first answers at 512.
+    splits = Splits(train=[], dev=["t1"], test=[])
+    result = run_judge(
+        Store(tmp_path), spec(), [trace(1)], [label(1, True)], splits, LongAnswer(700),
+        split="dev",
+    )
+    assert result.errors == []
+    assert [v["verdict"] for v in result.verdicts] == [True]
+
+
+@pytest.mark.parametrize(
+    ("needs", "failure_classes"), [(JUDGE_MAX_TOKENS, []), (JUDGE_MAX_TOKENS + 1, ["truncated"])]
+)
+def test_a_judge_run_cuts_an_answer_off_only_past_the_cap(
+    tmp_path: Path, needs: int, failure_classes: list[str]
+):
+    splits = Splits(train=[], dev=["t1"], test=[])
+    result = run_judge(
+        Store(tmp_path), spec(), [trace(1)], [label(1, True)], splits, LongAnswer(needs),
+        split="dev",
+    )
+    assert [e["failure_class"] for e in result.errors] == failure_classes
+
+
+def test_judge_yaml_max_tokens_sets_the_answer_cap(tmp_path: Path):
+    splits = Splits(train=[], dev=["t1"], test=[])
+    model = LongAnswer(1500)
+    result = run_judge(
+        Store(tmp_path), spec(max_tokens=2048), [trace(1)], [label(1, True)], splits, model,
+        split="dev",
+    )
+    assert (result.errors, model.caps) == ([], [2048])
+
+
+def test_a_judge_yaml_with_no_max_tokens_gets_the_default(tmp_path: Path):
+    store = Store(tmp_path)
+    judge_yaml = store.judge_dir("merged", 1) / "judge.yaml"
+    judge_yaml.parent.mkdir(parents=True)
+    judge_yaml.write_text("mode: merged\nmodel: fake\n", encoding="utf-8")
+    assert JudgeSpec.load(store, "merged", 1).max_tokens == JUDGE_MAX_TOKENS == 1024
+
+
+@pytest.mark.parametrize(
+    ("value", "complaint"),
+    [
+        ("0", "greater than 0, got int"),
+        ("-1", "greater than 0, got int"),
+        ("true", "a valid integer, got bool"),
+        ("1.5", "a valid integer, got float"),
+        ("'1024'", "a valid integer, got str"),
+    ],
+)
+def test_a_max_tokens_that_is_not_a_positive_whole_number_is_refused(
+    tmp_path: Path, value: str, complaint: str
+):
+    store = Store(tmp_path)
+    judge_yaml = store.judge_dir("merged", 1) / "judge.yaml"
+    judge_yaml.parent.mkdir(parents=True)
+    judge_yaml.write_text(f"mode: merged\nmax_tokens: {value}\n", encoding="utf-8")
+    with pytest.raises(MalformedFile, match=f"max_tokens: Input should be {complaint}"):
+        JudgeSpec.load(store, "merged", 1)
+
+
+def test_the_fingerprint_leaves_out_max_tokens():
+    # So a judge promoted before judge.yaml had `max_tokens` stays promoted. Editing it
+    # changes judge.yaml's hash, which `measure` and `gate` check against PROMOTED.
+    assert prompt_sha256(spec(max_tokens=2048), []) == prompt_sha256(spec(), [])
+
+
+def test_a_default_judge_keeps_the_fingerprint_it_had_before_max_tokens():
+    assert prompt_sha256(JudgeSpec(mode="merged"), []) == (
+        "5ff67a4328faf89aad486856bac940fee00cca2625dc18e894ad713ac9a07b53"
+    )
 
 
 def test_grade_trace_lets_a_refusal_propagate():

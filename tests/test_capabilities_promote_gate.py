@@ -134,6 +134,7 @@ def test_a_dev_to_test_gap_exactly_at_the_tolerance_passes_whatever_the_float_ro
     ("field", "new_value"),
     [
         ("decision_threshold", 0.6),
+        ("max_tokens", 2048),
         ("few_shot_ids", ["t0"]),
         ("model", "typesafe/jev-1.14"),
         ("prompt_template", "Grade {input} -> {output}\n{few_shot}"),
@@ -163,6 +164,25 @@ def test_resaving_an_unchanged_spec_keeps_the_promotion_valid(tmp_path: Path):
     promoted_run(store, "m", 1, [False] * 50)
 
     JudgeSpec.load(store, "m", 1).save(store)
+    assert gate(store, "m", 1).passed
+
+
+def test_resaving_a_judge_yaml_from_before_max_tokens_leaves_it_promoted(tmp_path: Path):
+    """`axial judge` saves judge.yaml before it grades, so a re-run stopped partway must
+    leave a file written before `max_tokens` existed as it was."""
+    import yaml
+
+    store = Store(tmp_path)
+    judge_yaml = store.judge_dir("m", 1) / "judge.yaml"
+    judge_yaml.parent.mkdir(parents=True)
+    fields = JudgeSpec(mode="m", model="typesafe/jev-1.13").model_dump()
+    del fields["max_tokens"]
+    judge_yaml.write_text(yaml.safe_dump(fields, sort_keys=False), encoding="utf-8")
+    promoted_run(store, "m", 1, [False] * 50)
+    before = judge_yaml.read_bytes()
+
+    JudgeSpec.load(store, "m", 1).save(store)
+    assert judge_yaml.read_bytes() == before
     assert gate(store, "m", 1).passed
 
 

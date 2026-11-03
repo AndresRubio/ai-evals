@@ -609,6 +609,38 @@ def test_a_hand_written_verdict_first_template_is_refused_before_judge_yaml_is_r
     assert model.calls == []
 
 
+@pytest.mark.parametrize(("line", "cap"), [("max_tokens: 2048\n", 2048), ("", 1024)])
+def test_axial_judge_gives_the_model_the_cap_judge_yaml_sets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, line: str, cap: int
+):
+    from cap_helpers import LongAnswer
+
+    import axial.cli as cli_module
+    from axial.config import write_default_config
+
+    store = Store(tmp_path)
+    write_default_config(store)
+    _seed_corpus_and_splits(store)
+    judge_yaml = store.judge_dir("m", 1) / "judge.yaml"
+    judge_yaml.parent.mkdir(parents=True)
+    judge_yaml.write_text(f"mode: m\nmodel: claude-opus-5\n{line}", encoding="utf-8")
+    model = LongAnswer(cap)
+    monkeypatch.setattr(cli_module, "build_judge_model", lambda _spec: model)
+
+    result = runner.invoke(
+        app, ["judge", "m", "--split", "dev", "--version", "1", "--repo", str(tmp_path)]
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert model.caps == [cap] * 2
+    # The re-save keeps a cap the file set and adds none it didn't.
+    import yaml
+
+    assert yaml.safe_load(judge_yaml.read_text(encoding="utf-8")).get("max_tokens") == (
+        2048 if line else None
+    )
+
+
 def _fake_run_judge_writing_verdicts(store_arg, spec, traces_arg, labels_arg, splits_arg, model_arg, **kwargs):
     """A stand-in for `run_judge` that mimics its real merge-by-split disk write
     (see `run_judge`'s own tail: rows for other splits are kept, this split's rows
