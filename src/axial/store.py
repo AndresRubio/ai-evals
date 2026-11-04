@@ -22,7 +22,7 @@ import yaml
 from pydantic import BaseModel, ValidationError
 
 from axial.errors import AxialError, MalformedFile, validation_message
-from axial.traces import Trace
+from axial.traces import Trace, lone_surrogate
 
 # A mode or a batch name becomes one directory name under `.axial/`, and a review
 # session's name one file name under `.axial/reviews/`. Starting with a
@@ -213,13 +213,17 @@ class Store:
         """
         if missing_ok and not path.exists():
             return []
-        models: list[M] = []
+        return [item for _, item in self._numbered_models(path, model)]
+
+    def _numbered_models[M: BaseModel](
+        self, path: Path, model: type[M]
+    ) -> Iterator[tuple[int, M]]:
         for lineno, row in self._object_rows(path):
             try:
-                models.append(model.model_validate(row))
+                item = model.model_validate(row)
             except ValidationError as exc:
                 raise MalformedFile(path, f"line {lineno}: {validation_message(exc)}") from exc
-        return models
+            yield lineno, item
 
     def _atomic_write(self, path: Path, data: str) -> None:
         """Write `data` to `path` via a same-directory temp file plus `os.replace`.
@@ -384,10 +388,30 @@ class Store:
 
     # --- traces --------------------------------------------------------
     def write_traces(self, traces: Iterable[Trace]) -> None:
+        """Replace the corpus with `traces`, refusing all of them if one holds a lone
+        surrogate. `ingest` already refuses one in a file as it reads the row; this
+        catches an adapter's traces, which skip the file readers."""
+        traces = list(traces)
+        for trace in traces:
+            problem = lone_surrogate(trace.input, trace.output)
+            if problem:
+                raise AxialError(f"trace {trace.trace_id!r} has {problem}")
         self.write_jsonl(self.traces_path, [t.model_dump() for t in traces])
 
     def read_traces(self) -> list[Trace]:
-        return self.read_models(self.traces_path, Trace)
+        """The corpus. A trace whose input or output holds a lone surrogate is a
+        MalformedFile naming the line: a corpus written before `write_traces` refused
+        one can still hold it, and some clients fail on a prompt carrying it before
+        sending."""
+        if not self.traces_path.exists():
+            return []
+        traces: list[Trace] = []
+        for lineno, trace in self._numbered_models(self.traces_path, Trace):
+            problem = lone_surrogate(trace.input, trace.output)
+            if problem:
+                raise MalformedFile(self.traces_path, f"line {lineno} has {problem}")
+            traces.append(trace)
+        return traces
 
     # --- hashing -------------------------------------------------------
     def hash_ids(self, ids: Iterable[str]) -> str:

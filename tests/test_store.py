@@ -34,6 +34,25 @@ def test_read_traces_is_empty_before_anything_is_written(tmp_path: Path):
     assert Store(tmp_path).read_traces() == []
 
 
+@pytest.mark.parametrize("field", ["input", "output"])
+def test_read_traces_refuses_a_stored_lone_surrogate_naming_the_line_and_field(
+    tmp_path: Path, field: str
+):
+    """A corpus ingested before `ingest` refused a lone surrogate can still hold one, and
+    some clients fail on it before sending a prompt that carries the trace."""
+    s = Store(tmp_path)
+    s.write_traces([Trace(trace_id="a", input="i", output="o")])
+    row = {"trace_id": "b", "input": "i", "output": "o", "metadata": {}, field: "emoji cut \ud83d"}
+    with s.traces_path.open("a") as fh:
+        fh.write(json.dumps(row) + "\n")
+    with pytest.raises(MalformedFile) as caught:
+        s.read_traces()
+    assert str(caught.value) == (
+        f"{s.traces_path}: line 2 has an {field} that is not valid UTF-8 (a lone surrogate "
+        "at character 11, which a cut emoji can leave)"
+    )
+
+
 def test_append_jsonl_accumulates_rows(tmp_path: Path):
     s = Store(tmp_path)
     p = s.root / "x.jsonl"

@@ -157,6 +157,8 @@ def ingest(
         _fail(f"could not read {path}: {_one_line(exc)}")
     try:
         store.write_traces(traces)
+    except AxialError as exc:  # an adapter's trace the corpus refuses; nothing was written
+        _fail(f"could not ingest {path}: {exc}")
     except OSError as exc:
         _fail(f"could not write {store.traces_path}: {exc}")
     typer.echo(f"ingested {len(traces)} traces into {store.traces_path}")

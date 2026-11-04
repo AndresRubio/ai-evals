@@ -35,6 +35,29 @@ def compute_trace_id(input: str, output: str) -> str:
     return digest.hexdigest()[:16]
 
 
+def lone_surrogate(input: object, output: object) -> str | None:
+    """Name the first of a trace's input and output that holds a lone surrogate, as
+    "an input that is not valid UTF-8 (...)", or return None.
+
+    JSON allows a lone surrogate, and JavaScript writes one when it cuts an emoji in
+    half. UTF-8 has no form for it, so text holding one cannot be hashed, and Jev's
+    client on httpx 0.28 or later, and litellm's OpenAI route, fail on a prompt carrying
+    it before sending. The character is counted from 1. A value that is not a string is
+    left for `Trace` to refuse.
+    """
+    for field, text in (("input", input), ("output", output)):
+        if not isinstance(text, str):
+            continue
+        try:
+            text.encode("utf-8")
+        except UnicodeEncodeError as exc:
+            return (
+                f"an {field} that is not valid UTF-8 (a lone surrogate at character "
+                f"{exc.start + 1}, which a cut emoji can leave)"
+            )
+    return None
+
+
 def _trace_from_row(row: object, *, where: str) -> Trace:
     # json.loads returns whatever the line holds, so a bare array or number reaches here.
     # ValueError, not TypeError: it is bad file content, and callers catch ValueError for that.
@@ -45,6 +68,11 @@ def _trace_from_row(row: object, *, where: str) -> Trace:
     for key in ("input", "output"):
         if row.get(key) is None:
             raise ValueError(f"{where}: missing required field {key!r}")
+    # Checked before an id is derived, as the content hash would fail on the same text
+    # without naming the row.
+    problem = lone_surrogate(row["input"], row["output"])
+    if problem:
+        raise ValueError(f"{where} has {problem}")
     trace_id = row.get("trace_id")
     if trace_id is None or trace_id == "":
         # An empty id means no id, as an empty CSV cell does, so both formats derive the

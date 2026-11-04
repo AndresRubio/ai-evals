@@ -34,7 +34,7 @@ from axial.judge import (
 from axial.model import Model
 from axial.report import SATURATION_WARNING, require_promoted
 from axial.store import Store, json_text, jsonl_text, refuse_non_directory
-from axial.traces import Trace
+from axial.traces import Trace, lone_surrogate
 
 # Above this share of set-aside traces, a measurement says the rate may be biased.
 SET_ASIDE_NOTE_SHARE = 0.05
@@ -190,19 +190,13 @@ def _check_batch(batch: list[Trace]) -> None:
             f"the batch repeats {len(repeated)} trace id(s) ({', '.join(repeated[:3])}); "
             "each would be counted more than once"
         )
-    # JSON allows a lone surrogate (JavaScript writes one when it cuts an emoji in half).
-    # Such text has no UTF-8 form to hash or send, and finding out mid-run would come
-    # after the traces before it were graded and paid for.
+    # A lone surrogate has no UTF-8 form to hash or send. A batch file's rows were checked
+    # as they were read, but an adapter's traces or a caller's own were not, and meeting
+    # one mid-run would come after the traces before it were graded and paid for.
     for trace in batch:
-        for field, text in (("input", trace.input), ("output", trace.output)):
-            try:
-                text.encode("utf-8")
-            except UnicodeEncodeError as exc:
-                raise AxialError(
-                    f"trace {trace.trace_id!r} has an {field} that is not valid UTF-8 (a lone "
-                    f"surrogate at character {exc.start}, as a cut emoji leaves); fix it in "
-                    "the batch file"
-                ) from exc
+        problem = lone_surrogate(trace.input, trace.output)
+        if problem:
+            raise AxialError(f"trace {trace.trace_id!r} has {problem}; fix it in the batch file")
 
 
 def _refuse_case_variant(directory: Path, mode: str, batch: str) -> None:
