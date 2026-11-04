@@ -9,3 +9,7 @@ A commit message or PR description that says behaviour changed (a fix, an input 
 A test that already passes before the change guards against a looser rewrite. It is welcome, and the commit message names it as a guard.
 
 To check a commit, run `uv run python scripts/revert_check.py <commit>`. In a temporary checkout of the commit, it reverses the source changes and runs the tests the commit added or changed. Every one of those tests fails while the change is reversed, apart from the named guards, each of which you pass with its own `--guard <test id>` as well as naming it in the commit message. For a test that arrived in a later commit, name the test and add `--at <that commit>`. A test that fails only on a missing import or module attribute usually shows that a name the commit adds exists and nothing more, so the script exits 1 and the review reads what the test asserts. The script also prints what every other test failed on, and the review reads that too: a new keyword or method fails there just as a real bug would, and shows no more.
+
+## A new refusal has a test that the nearest valid input still passes
+
+A refusal that reaches too far stops someone's valid input, and a test of the refused input cannot see that. So a new refusal comes with a test on the valid input closest to it: a whole emoji (an escaped surrogate pair) for a refusal of a lone surrogate, or a 100-character name for a 100-character limit. If that test passes with the change reversed, as it usually will, the commit message names it as a guard.
