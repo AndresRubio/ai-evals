@@ -209,6 +209,72 @@ def refuse_a_verdict_first_template(store: Store, spec: JudgeSpec) -> None:
     )
 
 
+def resolve_version(store: Store, mode: str, version: int, *, new: bool) -> int:
+    """The judge version a run lands on.
+
+    `version` when it was given. Otherwise the next version with `new`, else the latest
+    existing one, or 1 when there is none: that is what lets `judge --split dev` and a
+    later `judge --split test` land on the same judge.
+    """
+    if version:
+        return version
+    if new:
+        return store.next_judge_version(mode)
+    return store.latest_judge_version(mode) or 1
+
+
+def prepare_spec(
+    store: Store,
+    mode: str,
+    version: int,
+    *,
+    model: str,
+    mode_name: str | None = None,
+    mode_definition: str | None = None,
+    few_shot_ids: list[str] | None = None,
+) -> tuple[JudgeSpec, list[str]]:
+    """The spec `axial judge` runs `mode` v`version` with, saved, and the notes to print.
+
+    `mode_name` and `mode_definition` are the taxonomy entry's, or None when the
+    taxonomy has no entry for `mode`. An existing judge.yaml is the source of truth for
+    everything it carries: a fresh spec on every run once discarded `few_shot_ids` and
+    a hand-edited template. Only a blank name or definition is filled in from the
+    entry, and a judge made with the old default template gets the current one, which
+    the notes say. Without a judge.yaml, a new spec names `model` and, with no entry,
+    calls the mode after itself. A given `few_shot_ids` replaces the saved list.
+
+    A text-model template that asks for the verdict before the reason is refused before
+    anything is written. `run_judge` refuses it too, but only after judge.yaml is saved,
+    which would rewrite a file its author still has to edit.
+    """
+    path = store.judge_dir(mode, version) / "judge.yaml"
+    notes: list[str] = []
+    if path.exists():
+        spec = JudgeSpec.load(store, mode, version)
+        if not spec.mode_name and mode_name is not None:
+            spec.mode_name = mode_name
+        if not spec.mode_definition and mode_definition is not None:
+            spec.mode_definition = mode_definition
+        if upgrade_verdict_first_default(spec):
+            notes.append(
+                f"{path}: replaced the default template it was made with, which asked "
+                "for the verdict before the reason, with the current default"
+            )
+    else:
+        spec = JudgeSpec(
+            mode=mode,
+            model=model,
+            version=version,
+            mode_name=mode if mode_name is None else mode_name,
+            mode_definition=mode_definition or "",
+        )
+    if few_shot_ids:
+        spec.few_shot_ids = few_shot_ids
+    refuse_a_verdict_first_template(store, spec)
+    spec.save(store)
+    return spec, notes
+
+
 def render_few_shot(few_shot: list[tuple[Trace, Label]]) -> str:
     """The few-shot block exactly as the prompt carries it.
 
@@ -366,6 +432,34 @@ def read_verdicts(store: Store, path: Path) -> list[dict[str, Any]]:
 def read_errors(store: Store, path: Path) -> list[dict[str, Any]]:
     """The rows of a judge's errors.jsonl, checked the same way."""
     return [row.model_dump(exclude_unset=True) for row in store.read_models(path, ErrorRow)]
+
+
+def require_human_labels(rows: list[dict[str, Any]]) -> None:
+    """Refuse verdict rows that carry no human label."""
+    missing = [v.get("trace_id") for v in rows if v.get("truth") is None]
+    if missing:
+        raise ValueError(
+            f"{len(missing)} verdict row(s) have no human label ({missing[:3]}); a judge can "
+            "only be aligned against labels a human made"
+        )
+
+
+def row_probability(row: dict[str, Any]) -> float | None:
+    """A verdict row's recorded probability, or `None` for a row without one.
+
+    `read_verdicts` already refuses such a row in a file, naming its line. This is for
+    rows a caller built in memory: a nan, a bool or a value outside [0, 1] would make
+    every number computed from it wrong, so it is refused by trace id.
+    """
+    value = row.get("probability")
+    if value is None:
+        return None
+    if not is_probability(value):
+        raise ValueError(
+            f"verdict row {row.get('trace_id')!r} records probability {value!r}, which is "
+            "not a number between 0 and 1"
+        )
+    return float(value)
 
 
 def kept_rows(store: Store, mode: str, version: int, split: str) -> dict[str, list[dict[str, Any]]]:
@@ -593,7 +687,7 @@ def run_judge(
     directory.mkdir(parents=True, exist_ok=True)
 
     # A PROMOTED marker binds specific hashes of judge.yaml and verdicts.jsonl
-    # (see report.promote) to the alignment that earned it. We are about to
+    # (see promotion.promote) to the alignment that earned it. We are about to
     # rewrite verdicts.jsonl for this split, so whatever evidence backed that
     # marker no longer describes what will be on disk -- delete it rather than
     # let a stale marker keep gating a build on a run nobody re-measured.

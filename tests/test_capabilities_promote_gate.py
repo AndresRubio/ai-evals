@@ -24,7 +24,7 @@ from axial.errors import InvariantViolation
 from axial.gate import gate
 from axial.judge import JudgeSpec, run_judge
 from axial.model import FakeModel
-from axial.report import check_promotion, promote
+from axial.promotion import check_promotion, promote
 from axial.store import Store
 from axial.traces import Trace
 
@@ -57,7 +57,7 @@ def write_run(store: Store, mode: str, version: int, verdicts: list[bool]) -> No
 
 
 def promoted_run(store: Store, mode: str, version: int, verdicts: list[bool]) -> None:
-    """Write a run and promote it through the real `report.promote`, hashes and all."""
+    """Write a run and promote it through the real `promotion.promote`, hashes and all."""
     write_run(store, mode, version, verdicts)
     stamp_run(store, mode, version)
     promote(store, mode, version, PERFECT, PERFECT, Thresholds())
@@ -115,7 +115,7 @@ def test_a_dev_to_test_gap_exactly_at_the_tolerance_passes():
 @pytest.mark.xfail(
     strict=True,
     raises=AssertionError,
-    reason="check_promotion compares `dev - test > max_gap` on floats (report.py:87): "
+    reason="check_promotion compares `dev - test > max_gap` on floats (promotion.py): "
     "67/70 - 60/70 is exactly 0.10 but evaluates to 0.10000000000000009, so a gap at the "
     "tolerance passes or fails depending on rounding",
 )

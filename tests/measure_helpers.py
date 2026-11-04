@@ -16,7 +16,8 @@ from axial.config import Thresholds
 from axial.dataset import Label, Splits, add_labels
 from axial.judge import JudgeSpec, read_verdicts, run_judge
 from axial.model import FakeModel
-from axial.report import alignment_from_verdicts, promote
+from axial.promotion import promote
+from axial.report import alignment_from_verdicts
 from axial.store import Store
 from axial.traces import Trace
 

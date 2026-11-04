@@ -18,12 +18,7 @@ from axial import cli, report
 from axial.align import align
 from axial.dataset import Label, add_labels
 from axial.errors import InvariantViolation
-from axial.report import (
-    disagreement_counts,
-    find_disagreements,
-    parse_reason,
-    write_alignment,
-)
+from axial.report import disagreement_counts, find_disagreements, parse_reason, write_alignment
 from axial.store import Store
 from axial.traces import Trace
 

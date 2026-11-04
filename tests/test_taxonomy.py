@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from axial.errors import InvariantViolation, MalformedFile
-from axial.sample import Review
+from axial.reviews import Review
 from axial.store import Store, validate_name
 from axial.taxonomy import (
     FailureMode,

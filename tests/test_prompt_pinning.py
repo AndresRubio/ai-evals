@@ -37,13 +37,8 @@ from axial.judge import (
 )
 from axial.measure import input_sha256, measure_batch
 from axial.model import FakeModel, JevModel
-from axial.report import (
-    PROMPT_HASH_KEY,
-    alignment_from_verdicts,
-    parse_promoted_marker,
-    promote,
-    require_promoted,
-)
+from axial.promotion import PROMPT_HASH_KEY, parse_promoted_marker, promote, require_promoted
+from axial.report import alignment_from_verdicts
 from axial.store import Store
 from axial.traces import Trace
 

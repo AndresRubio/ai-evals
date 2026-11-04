@@ -17,7 +17,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from axial.errors import InvariantViolation, validation_message
-from axial.sample import Review
+from axial.reviews import Review
 from axial.store import MAX_NAME_LENGTH, Store
 
 PROMPT = """\

@@ -7,8 +7,10 @@ from axial.config import Thresholds
 from axial.dataset import add_labels, labels_from_reviews, make_splits, read_labels
 from axial.judge import JudgeSpec, run_judge
 from axial.model import FakeModel
-from axial.report import alignment_from_verdicts, promote, write_alignment
-from axial.sample import create_session, read_session, sample_batch, write_session
+from axial.promotion import promote
+from axial.report import alignment_from_verdicts, write_alignment
+from axial.reviews import create_session, read_session, write_session
+from axial.sample import sample_batch
 from axial.store import Store
 from axial.taxonomy import propose_taxonomy
 from axial.traces import ingest_jsonl

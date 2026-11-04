@@ -85,7 +85,7 @@ def test_kappa_matches_a_hand_computed_asymmetric_confusion_matrix():
 @pytest.mark.parametrize(
     ("n", "expected_low"),
     [
-        (4, 0.51011),  # 4/(4+3.8415): the "around 0.51" quoted in report.check_promotion
+        (4, 0.51011),  # 4/(4+3.8415): the "around 0.51" quoted in promotion.check_promotion
         (22, 0.85134),  # 22/(22+3.8415): the smallest perfect class whose bound clears 0.85
         (30, 0.88649),  # 30/(30+3.8415): the default min_test_positives floor
     ],

@@ -141,7 +141,7 @@ def annotate_via_app(session: str, verdict_for: Callable[[str], str]) -> int:
 
 def annotate_directly(repo: Path, session: str, verdict_for: Callable[[str], str]) -> None:
     """The same result as `annotate_via_app`, written straight to the session file."""
-    from axial.sample import read_session, write_session
+    from axial.reviews import read_session, write_session
     from axial.store import Store
 
     store = Store(repo)

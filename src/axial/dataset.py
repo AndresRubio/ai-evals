@@ -27,7 +27,7 @@ import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from axial.errors import InvariantViolation
-from axial.sample import Review
+from axial.reviews import Review
 from axial.store import Store
 
 # Distinctive vendor/model terms. These are matched as a substring of the

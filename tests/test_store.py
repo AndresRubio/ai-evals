@@ -12,7 +12,7 @@ from skip_helpers import skip_off_ci
 from axial.dataset import Splits
 from axial.errors import AxialError, MalformedFile
 from axial.judge import read_verdicts
-from axial.sample import read_session
+from axial.reviews import read_session
 from axial.store import Store
 from axial.traces import Trace
 

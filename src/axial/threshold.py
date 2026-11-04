@@ -34,9 +34,8 @@ import numpy as np
 from axial.align import Alignment, align, tpr_tnr
 from axial.config import Thresholds
 from axial.errors import AxialError, InvariantViolation
-from axial.judge import JudgeSpec
+from axial.judge import JudgeSpec, require_human_labels, row_probability
 from axial.model import is_decision_model
-from axial.report import require_human_labels, row_probability
 from axial.store import Store
 
 # A threshold is rounded to this many decimals when the rounded value still falls
@@ -319,6 +318,48 @@ def tune_from_verdicts(
         choice=choice,
         cv=cv,
     )
+
+
+def tuning_summary_lines(
+    tuning: Tuning, spec: JudgeSpec, floors: Thresholds, *, quarantined: int
+) -> list[str]:
+    """What `tune-threshold` prints before it decides: the dev counts and the floors,
+    the current and the chosen threshold with their dev rates, and the cross-validated
+    estimate. `quarantined` is the number of dev calls in errors.jsonl, which none of
+    the numbers include."""
+    choice = tuning.choice
+    held_out = tuning.cv.held_out
+    lines = [
+        (
+            f"dev: {tuning.n_failures} real failures, {tuning.n_passes} real passes, "
+            f"scored by {spec.model}; floors TPR >= {floors.min_tpr:.2f}, "
+            f"TNR >= {floors.min_tnr:.2f}"
+        )
+    ]
+    if quarantined:
+        lines.append(
+            f"  {quarantined} dev call(s) quarantined in errors.jsonl are not in these numbers"
+        )
+    lines += [
+        (
+            f"current threshold {tuning.current_threshold}: "
+            f"TPR {tuning.current_tpr:.3f}  TNR {tuning.current_tnr:.3f}"
+        ),
+        (
+            f"{'chosen' if choice.feasible else 'closest'} threshold {choice.threshold}: "
+            f"TPR {choice.tpr:.3f}  TNR {choice.tnr:.3f} on dev, which it was chosen on"
+        ),
+        (
+            f"{tuning.cv.folds}-fold cross-validation on dev: TPR {held_out.fmt('tpr')}  "
+            f"TNR {held_out.fmt('tnr')}, each trace scored by a threshold chosen without it"
+        ),
+    ]
+    if tuning.cv.infeasible_folds:
+        lines.append(
+            f"  no threshold cleared the floors in {tuning.cv.infeasible_folds} of "
+            f"{tuning.cv.folds} training folds; those folds were scored at their closest one"
+        )
+    return lines
 
 
 def write_tuned_spec(store: Store, spec: JudgeSpec, tuning: Tuning) -> JudgeSpec:

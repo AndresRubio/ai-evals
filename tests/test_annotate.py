@@ -3,7 +3,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from axial.annotate.app import create_app
-from axial.sample import create_session, read_session
+from axial.reviews import create_session, read_session
 from axial.store import Store
 from axial.traces import Trace
 

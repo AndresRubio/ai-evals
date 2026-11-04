@@ -26,6 +26,7 @@ from axial.align import (
 from axial.errors import AxialError, InvariantViolation
 from axial.judge import read_verdicts
 from axial.measure import (
+    SATURATION_WARNING,
     Measurement,
     judge_test_matrix,
     load_measurement,
@@ -33,7 +34,7 @@ from axial.measure import (
     set_aside_note,
     summary_lines,
 )
-from axial.report import SATURATION_WARNING, require_promoted
+from axial.promotion import require_promoted
 from axial.store import Store
 
 # How far a stored interval bound may sit from the recomputed one. The bounds are

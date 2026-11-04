@@ -26,7 +26,7 @@ from typer.testing import CliRunner, Result
 
 from axial.cli import app
 from axial.model import FakeModel
-from axial.sample import Review, write_session
+from axial.reviews import Review, write_session
 from axial.store import Store
 from axial.traces import Trace, register_adapter
 
@@ -635,6 +635,21 @@ def test_judge_over_a_corrupt_yaml_file_fails_cleanly_and_writes_nothing(
         run("judge", MEASURE_MODE, "--split", "dev"), f"could not judge {MEASURE_MODE}", expected
     )
     assert snapshot(store.root) == before
+
+
+def test_judge_whose_judge_yaml_cannot_be_written_fails_cleanly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A file where the new judge's directory should be is refused in one line naming
+    the error, as a corrupt input is, rather than ending in a traceback."""
+    store = Store(tmp_path)
+    build_promoted_judge(store)
+    monkeypatch.setattr("axial.cli.build_judge_model", fake_judge_builder())
+    store.judge_dir(MEASURE_MODE, 2).write_text("not a directory\n")
+    assert_one_line_refusal(
+        run("judge", MEASURE_MODE, "--split", "dev", "--version", "2"),
+        f"could not judge {MEASURE_MODE}", "File exists",
+    )
 
 
 @pytest.mark.parametrize("damaged", ["traces", "verdicts", "verdicts-unreadable"])
