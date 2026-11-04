@@ -1,1 +1,1 @@
-Before each commit, run `scripts/check.sh`. It runs every CI job locally, the Python 3.13 tests included, and lists the steps that failed.
+Every commit you push has passed `scripts/check.sh`, which runs every CI job locally, the Python 3.13 tests included, and lists the steps that failed. The pre-push hook refuses one that has not, unless a remote branch already holds it. `git config core.hooksPath .githooks` turns the hook on, once per clone.

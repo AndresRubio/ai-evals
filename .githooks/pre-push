@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# Refuse to push a commit whose tree has not passed scripts/check.sh, which records each
+# tree it passes. A commit some remote branch already holds is left alone, so only new work
+# is held to this. Turn the hook on once per clone: git config core.hooksPath .githooks
+set -uo pipefail
+
+stamps="$(git rev-parse --path-format=absolute --git-common-dir)/axial-checked"
+zero='^0+$'
+unchecked=()
+
+while read -r _ local_sha remote_ref remote_sha; do
+  [[ "$local_sha" =~ $zero ]] && continue # deleting a remote branch
+  # A notes commit changes no code and never goes through check.sh.
+  [[ "$remote_ref" == refs/notes/* ]] && continue
+
+  known=(--remotes)
+  # A force push can replace a commit this clone never fetched.
+  if ! [[ "$remote_sha" =~ $zero ]] && git cat-file -e "$remote_sha^{commit}" 2>/dev/null; then
+    known+=("$remote_sha")
+  fi
+
+  # rev-list runs first so its failure refuses the push.
+  if ! commits="$(git rev-list --no-commit-header --format='%h %T %s' "$local_sha" --not "${known[@]}")"; then
+    echo "pre-push: could not list the commits in $local_sha" >&2
+    exit 1
+  fi
+  [[ -n "$commits" ]] || continue
+
+  while read -r short tree subject; do
+    [[ -e "$stamps/$tree" ]] || unchecked+=("$short $subject")
+  done <<<"$commits"
+done
+
+if ((${#unchecked[@]})); then
+  {
+    echo "pre-push: these commits have not passed scripts/check.sh:"
+    printf '%s\n' "${unchecked[@]}" | awk '!seen[$0]++ { print "  " $0 }'
+    echo "A pass counts for the exact files it ran on, so check each commit with nothing else"
+    echo "in the working tree: git switch --detach <commit> && scripts/check.sh"
+  } >&2
+  exit 1
+fi
