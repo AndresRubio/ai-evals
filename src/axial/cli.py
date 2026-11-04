@@ -27,11 +27,11 @@ from axial.judge import (
     build_judge_model,
     current_prompt_sha256,
     kept_rows,
+    prepare_spec,
     read_errors,
     read_verdicts,
-    refuse_a_verdict_first_template,
+    resolve_version,
     run_judge,
-    upgrade_verdict_first_default,
 )
 from axial.measure import measure_batch, summary_lines
 from axial.model import LiteLLMModel, is_decision_model, require_text_model
@@ -404,18 +404,12 @@ def judge(
     config = _config(store)
     if not (store.dataset_dir(mode) / "splits.json").exists():
         _fail(f"{mode} has no split yet; run `axial split {mode}` first")
-    if not version:
-        if new:
-            version = store.next_judge_version(mode)
-        else:
-            version = store.latest_judge_version(mode) or 1
+    version = resolve_version(store, mode, version, new=new)
 
     # Everything the run reads is read before judge.yaml is written, so an input that
     # is missing or corrupt leaves no half-made judge behind.
-    judge_yaml = store.judge_dir(mode, version) / "judge.yaml"
     try:
         taxonomy_modes = {m.id: m for m in Taxonomy.load(store).modes}
-        existing = JudgeSpec.load(store, mode, version) if judge_yaml.exists() else None
         splits = Splits.load(store, mode)
         # `corpus` is read once, in full, and passed separately from `traces`: the
         # split under judgment is almost never where its own few-shot examples live
@@ -430,40 +424,20 @@ def judge(
     except (OSError, ValueError) as exc:
         _fail(f"could not judge {mode}: {_one_line(exc)}")
     entry = taxonomy_modes.get(mode)
-
-    # Load an existing spec rather than overwriting it: a fresh `JudgeSpec` on
-    # every run silently discarded `few_shot_ids` and any hand-edited
-    # `prompt_template`. Only build a new spec when this mode/version has none
-    # yet; a spec that already exists is the source of truth for everything it
-    # already carries.
-    if existing is not None:
-        spec = existing
-        if not spec.mode_name and entry:
-            spec.mode_name = entry.name
-        if not spec.mode_definition and entry:
-            spec.mode_definition = entry.definition
-        if upgrade_verdict_first_default(spec):
-            typer.echo(
-                f"{judge_yaml}: replaced the default template it was made with, which asked "
-                "for the verdict before the reason, with the current default"
-            )
-    else:
-        spec = JudgeSpec(
-            mode=mode,
-            model=config.judge_model,
-            version=version,
-            mode_name=entry.name if entry else mode,
-            mode_definition=entry.definition if entry else "",
-        )
-    if few_shot:
-        spec.few_shot_ids = few_shot
-    # `run_judge` refuses this template too, but only after judge.yaml is saved, which
-    # would rewrite a refused file its author still has to edit.
     try:
-        refuse_a_verdict_first_template(store, spec)
-    except AxialError as exc:
+        spec, notes = prepare_spec(
+            store, mode, version,
+            model=config.judge_model,
+            mode_name=entry.name if entry else None,
+            mode_definition=entry.definition if entry else None,
+            few_shot_ids=few_shot,
+        )
+    except (OSError, ValueError) as exc:  # judge.yaml cannot be read, or written
+        _fail(f"could not judge {mode}: {_one_line(exc)}")
+    except AxialError as exc:  # a template that asks for the verdict first
         _fail(str(exc))
-    spec.save(store)
+    for note in notes:
+        typer.echo(note)
 
     wanted = set(getattr(splits, split_name))
     traces = [t for t in corpus if t.trace_id in wanted]
@@ -556,7 +530,7 @@ def tune_threshold(
     repo: str = RepoOption,
 ) -> None:
     """Choose a decision model's threshold from its dev verdicts. Calls no model."""
-    from axial.threshold import tune_from_verdicts, write_tuned_spec
+    from axial.threshold import tune_from_verdicts, tuning_summary_lines, write_tuned_spec
 
     store = Store(repo)
     config = _config(store)
@@ -582,35 +556,10 @@ def tune_threshold(
     except AxialError as exc:
         _fail(str(exc))
 
-    floors = config.thresholds
-    choice = tuning.choice
-    typer.echo(
-        f"dev: {tuning.n_failures} real failures, {tuning.n_passes} real passes, "
-        f"scored by {spec.model}; floors TPR >= {floors.min_tpr:.2f}, TNR >= {floors.min_tnr:.2f}"
-    )
     quarantined = sum(1 for e in errors if e.get("split") == "dev")
-    if quarantined:
-        typer.echo(
-            f"  {quarantined} dev call(s) quarantined in errors.jsonl are not in these numbers"
-        )
-    typer.echo(
-        f"current threshold {tuning.current_threshold}: "
-        f"TPR {tuning.current_tpr:.3f}  TNR {tuning.current_tnr:.3f}"
-    )
-    typer.echo(
-        f"{'chosen' if choice.feasible else 'closest'} threshold {choice.threshold}: "
-        f"TPR {choice.tpr:.3f}  TNR {choice.tnr:.3f} on dev, which it was chosen on"
-    )
-    held_out = tuning.cv.held_out
-    typer.echo(
-        f"{tuning.cv.folds}-fold cross-validation on dev: TPR {held_out.fmt('tpr')}  "
-        f"TNR {held_out.fmt('tnr')}, each trace scored by a threshold chosen without it"
-    )
-    if tuning.cv.infeasible_folds:
-        typer.echo(
-            f"  no threshold cleared the floors in {tuning.cv.infeasible_folds} of "
-            f"{tuning.cv.folds} training folds; those folds were scored at their closest one"
-        )
+    for line in tuning_summary_lines(tuning, spec, config.thresholds, quarantined=quarantined):
+        typer.echo(line)
+    choice = tuning.choice
     if not choice.feasible:
         _fail(
             "no threshold clears both floors on dev. Improve the judge prompt or the labels. "

@@ -1,9 +1,12 @@
-"""The promotion gate: what makes a judge usable in CI, and what withdraws it.
+"""The promotion gate: what makes a judge usable in CI, and what is checked before
+one is trusted.
 
 A judge becomes usable in CI only by passing `promote`, which reads the test split and
 binds a PROMOTED marker to the exact judge.yaml, verdicts.jsonl and prompt it was
 earned on. `gate` and `measure` call `require_promoted` before trusting a judge, so
-the three cannot disagree about what "promoted" means.
+they cannot disagree about what "promoted" means: a marker whose files or prompt have
+changed since is refused here. `run_judge` deletes the marker when it rewrites the
+verdicts.
 """
 
 from __future__ import annotations

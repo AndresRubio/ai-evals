@@ -17,6 +17,7 @@ from axial.threshold import (
     cross_validate,
     stratified_folds,
     tune_from_verdicts,
+    tuning_summary_lines,
     write_tuned_spec,
 )
 
@@ -474,3 +475,60 @@ def test_a_threshold_the_judge_already_uses_is_not_written_again(tmp_path):
     with pytest.raises(InvariantViolation, match="already uses"):
         write_tuned_spec(store, already, tune_from_verdicts(_rows("dev", _separable()), already, Thresholds()))
     assert store.latest_judge_version("m") == 1
+
+
+# --- what tune-threshold prints --------------------------------------------------
+
+
+def test_summary_lines_lead_with_the_counts_the_floors_and_both_thresholds():
+    floors = Thresholds()
+    tuning = tune_from_verdicts(_rows("dev", _separable()), _jev_spec(), floors)
+
+    lines = tuning_summary_lines(tuning, _jev_spec(), floors, quarantined=0)
+
+    held_out = tuning.cv.held_out
+    assert lines == [
+        (
+            f"dev: 10 real failures, 10 real passes, scored by {JEV}; "
+            f"floors TPR >= {floors.min_tpr:.2f}, TNR >= {floors.min_tnr:.2f}"
+        ),
+        "current threshold 0.5: TPR 0.000  TNR 1.000",
+        (
+            f"chosen threshold {tuning.choice.threshold}: TPR 1.000  TNR 1.000 on dev, "
+            "which it was chosen on"
+        ),
+        (
+            f"{tuning.cv.folds}-fold cross-validation on dev: TPR {held_out.fmt('tpr')}  "
+            f"TNR {held_out.fmt('tnr')}, each trace scored by a threshold chosen without it"
+        ),
+    ], "no quarantined calls and no infeasible folds, so no note for either"
+
+
+def test_summary_lines_name_the_quarantined_dev_calls_only_when_there_are_any():
+    floors = Thresholds()
+    tuning = tune_from_verdicts(_rows("dev", _separable()), _jev_spec(), floors)
+
+    lines = tuning_summary_lines(tuning, _jev_spec(), floors, quarantined=3)
+
+    assert lines[1] == "  3 dev call(s) quarantined in errors.jsonl are not in these numbers"
+    assert len(lines) == 5
+    assert lines[:1] + lines[2:] == tuning_summary_lines(tuning, _jev_spec(), floors, quarantined=0)
+
+
+def test_summary_lines_call_an_infeasible_threshold_the_closest_one():
+    floors = Thresholds(min_tpr=1.0, min_tnr=1.0)
+    scored = [(True, 0.3), (True, 0.4), (False, 0.35), (False, 0.1)] * 3
+    tuning = tune_from_verdicts(_rows("dev", scored), _jev_spec(), floors, folds=2)
+    assert not tuning.choice.feasible
+
+    lines = tuning_summary_lines(tuning, _jev_spec(), floors, quarantined=0)
+
+    choice = tuning.choice
+    assert lines[2] == (
+        f"closest threshold {choice.threshold}: TPR {choice.tpr:.3f}  TNR {choice.tnr:.3f} "
+        "on dev, which it was chosen on"
+    )
+    assert lines[-1] == (
+        f"  no threshold cleared the floors in {tuning.cv.infeasible_folds} of "
+        f"{tuning.cv.folds} training folds; those folds were scored at their closest one"
+    )

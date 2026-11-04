@@ -17,10 +17,12 @@ from axial.judge import (
     assemble_prompt,
     grade_trace,
     parse_verdict,
+    prepare_spec,
     prompt_sha256,
     read_verdicts,
     render_few_shot,
     resolve_few_shot,
+    resolve_version,
     run_judge,
     upgrade_verdict_first_default,
 )
@@ -633,3 +635,93 @@ def test_a_text_model_verdict_row_records_no_probability(tmp_path: Path):
         FakeModel(lambda _p: '{"verdict": "fail"}'), split="dev",
     )
     assert result.verdicts[0]["probability"] is None
+
+
+# --- the spec `axial judge` runs with --------------------------------------------
+
+
+def test_resolve_version_keeps_a_given_version_and_otherwise_resumes_the_latest(tmp_path):
+    store = Store(tmp_path)
+    assert resolve_version(store, "merged", 3, new=False) == 3
+    assert resolve_version(store, "merged", 0, new=False) == 1
+    assert resolve_version(store, "merged", 0, new=True) == 1
+    spec(version=2).save(store)
+    assert resolve_version(store, "merged", 0, new=False) == 2
+    assert resolve_version(store, "merged", 0, new=True) == 3
+
+
+def test_prepare_spec_builds_and_saves_a_new_spec_from_the_taxonomy_entry(tmp_path):
+    store = Store(tmp_path)
+    made, notes = prepare_spec(
+        store, "merged", 1, model="fake", mode_name="Merged", mode_definition="two in one"
+    )
+    assert notes == []
+    assert (made.model, made.mode_name, made.mode_definition) == ("fake", "Merged", "two in one")
+    assert made.prompt_template == DEFAULT_TEMPLATE
+    assert JudgeSpec.load(store, "merged", 1) == made
+
+
+def test_prepare_spec_names_the_mode_after_itself_without_a_taxonomy_entry(tmp_path):
+    made, _ = prepare_spec(Store(tmp_path), "merged", 1, model="fake")
+    assert (made.mode_name, made.mode_definition) == ("merged", "")
+
+
+def test_prepare_spec_keeps_a_taxonomy_entry_with_a_blank_name_blank(tmp_path):
+    """An entry with `name: ""` is an entry, so the name is not the mode id."""
+    store = Store(tmp_path)
+    made, _ = prepare_spec(store, "merged", 1, model="fake", mode_name="", mode_definition="")
+    assert (made.mode_name, made.mode_definition) == ("", "")
+
+    spec(mode_name="").save(store)
+    assert prepare_spec(store, "merged", 1, model="fake")[0].mode_name == "", (
+        "with no entry, a blank saved name stays blank"
+    )
+
+
+def test_prepare_spec_keeps_a_saved_spec_and_fills_only_its_blanks(tmp_path):
+    store = Store(tmp_path)
+    spec(few_shot_ids=["t1"], model="claude-opus-5", mode_definition="kept").save(store)
+
+    made, notes = prepare_spec(
+        store, "merged", 1, model="fake", mode_name="Merged", mode_definition="ignored"
+    )
+
+    assert notes == []
+    assert made.model == "claude-opus-5", "the saved model, not the config's"
+    assert made.prompt_template == TEMPLATE, "a hand-edited template survives"
+    assert made.few_shot_ids == ["t1"]
+    assert made.mode_name == "Merged", "a blank name is filled from the taxonomy"
+    assert made.mode_definition == "kept", "a definition that was set is left alone"
+    assert JudgeSpec.load(store, "merged", 1) == made, "what was saved is what came back"
+
+
+def test_prepare_spec_replaces_the_few_shot_list_only_when_one_is_given(tmp_path):
+    store = Store(tmp_path)
+    spec(few_shot_ids=["t1"]).save(store)
+    assert prepare_spec(store, "merged", 1, model="fake", few_shot_ids=["t2", "t3"])[0].few_shot_ids == ["t2", "t3"]
+    assert prepare_spec(store, "merged", 1, model="fake", few_shot_ids=[])[0].few_shot_ids == ["t2", "t3"]
+    assert JudgeSpec.load(store, "merged", 1).few_shot_ids == ["t2", "t3"]
+
+
+def test_prepare_spec_upgrades_the_old_default_template_and_says_so(tmp_path):
+    store = Store(tmp_path)
+    spec(prompt_template=VERDICT_FIRST_DEFAULT_TEMPLATE, model="claude-opus-5").save(store)
+
+    made, notes = prepare_spec(store, "merged", 1, model="fake")
+
+    assert made.prompt_template == DEFAULT_TEMPLATE
+    assert len(notes) == 1 and "replaced the default template" in notes[0]
+    assert str(store.judge_dir("merged", 1) / "judge.yaml") in notes[0]
+    assert JudgeSpec.load(store, "merged", 1).prompt_template == DEFAULT_TEMPLATE
+
+
+def test_prepare_spec_refuses_a_verdict_first_template_before_writing(tmp_path):
+    store = Store(tmp_path)
+    spec(prompt_template=VERDICT_FIRST, model="claude-opus-5").save(store)
+    path = store.judge_dir("merged", 1) / "judge.yaml"
+    before = path.read_bytes()
+
+    with pytest.raises(InvariantViolation, match="verdict before the reason"):
+        prepare_spec(store, "merged", 1, model="fake", few_shot_ids=["t1"])
+
+    assert path.read_bytes() == before, "the refused file is left for its author to edit"
