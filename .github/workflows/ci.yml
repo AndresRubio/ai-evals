@@ -15,6 +15,7 @@ jobs:
       - run: uv sync --locked
       - run: uv run ruff check .
       - run: uv run mypy src/axial scripts
+      - run: uv run lint-imports
       - run: uv run pytest -v -n auto
 
   compat:

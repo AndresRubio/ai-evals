@@ -91,6 +91,7 @@ package_smoke() {
 step uv lock --check
 step uv run ruff check .
 step uv run mypy src/axial scripts
+step uv run lint-imports
 step uv run pytest -q -n auto
 step env UV_PROJECT_ENVIRONMENT=.venv-3.13 uv run --python 3.13 pytest -q -n auto
 step uv run python scripts/knowledge_index.py --check

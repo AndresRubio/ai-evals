@@ -30,6 +30,7 @@ dev = [
     "httpx>=0.27",
     "types-PyYAML>=6.0",
     "pytest-xdist>=3.6",
+    "import-linter>=2.3",
 ]
 
 [build-system]
@@ -69,3 +70,29 @@ testpaths = ["tests"]
 # An xfail whose test starts passing fails the run, so a fixed defect or a changed
 # design question gets looked at.
 xfail_strict = true
+
+# Each module imports only what sits below it, and a module in the same row as another never
+# imports it. Moving a name down a row is fine; a new import upward is a design change, and
+# the row it breaks says which seam it crosses. Every module in the package has a row, so a
+# new file is placed before it can import anything.
+[tool.importlinter]
+root_package = "axial"
+
+[[tool.importlinter.contracts]]
+name = "axial is layered"
+type = "layers"
+containers = ["axial"]
+exhaustive = true
+layers = [
+    "cli",
+    "gate | annotate",
+    "measure | threshold | report",
+    "promotion | checks",
+    "judge",
+    "dataset | taxonomy",
+    "reviews | sample",
+    "align | config | model | perplexity",
+    "store",
+    "traces",
+    "errors",
+]
