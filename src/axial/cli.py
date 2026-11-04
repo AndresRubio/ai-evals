@@ -45,14 +45,8 @@ from axial.report import (
     find_disagreements,
     write_alignment,
 )
-from axial.sample import (
-    all_reviews,
-    check_sample_options,
-    create_session,
-    read_session,
-    refuse_existing_session,
-    sample_batch,
-)
+from axial.reviews import all_reviews, create_session, read_session, refuse_existing_session
+from axial.sample import check_sample_options, sample_batch
 from axial.store import Store, validate_name
 from axial.taxonomy import Taxonomy, count_open_codes, propose_taxonomy, saturation_curve
 from axial.traces import ingest as do_ingest

@@ -31,7 +31,7 @@ from axial.config import write_default_config
 from axial.dataset import Label, add_labels
 from axial.judge import JudgeSpec, current_prompt_sha256
 from axial.model import FakeModel
-from axial.sample import Review, write_session
+from axial.reviews import Review, write_session
 from axial.store import Store
 from axial.taxonomy import FailureMode, Taxonomy
 

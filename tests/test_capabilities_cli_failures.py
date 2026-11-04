@@ -26,7 +26,7 @@ from typer.testing import CliRunner, Result
 
 from axial.cli import app
 from axial.model import FakeModel
-from axial.sample import Review, write_session
+from axial.reviews import Review, write_session
 from axial.store import Store
 from axial.traces import Trace, register_adapter
 

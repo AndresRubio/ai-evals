@@ -159,7 +159,7 @@ def test_label_from_reviews_converts_completed_reviews_across_sessions(tmp_path:
     src = write_traces_file(tmp_path, 4)
     runner.invoke(app, ["ingest", str(src), "--repo", str(tmp_path)])
 
-    from axial.sample import create_session, read_session, write_session
+    from axial.reviews import create_session, read_session, write_session
 
     traces = store.read_traces()
     create_session(store, traces[:2], name="s1")

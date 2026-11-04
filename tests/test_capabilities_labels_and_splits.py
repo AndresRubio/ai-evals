@@ -25,7 +25,7 @@ from axial.dataset import (
     verify_test_manifest,
 )
 from axial.errors import AxialError, InvariantViolation
-from axial.sample import Review, write_session
+from axial.reviews import Review, write_session
 from axial.store import Store
 from axial.traces import Trace
 

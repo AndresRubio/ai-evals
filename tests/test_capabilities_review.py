@@ -23,13 +23,8 @@ from axial.annotate.app import create_app
 from axial.errors import InvariantViolation
 from axial.model import FakeModel
 from axial.perplexity import DEGENERATE_SPREAD, CharNgramLM, score_traces, spread
-from axial.sample import (
-    STRATEGIES,
-    Review,
-    create_session,
-    read_session,
-    sample_batch,
-)
+from axial.reviews import Review, create_session, read_session
+from axial.sample import STRATEGIES, sample_batch
 from axial.store import Store
 from axial.taxonomy import (
     FailureMode,

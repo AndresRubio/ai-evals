@@ -13,7 +13,7 @@ from axial.dataset import (
     verify_test_manifest,
 )
 from axial.errors import InvariantViolation
-from axial.sample import Review
+from axial.reviews import Review
 from axial.store import Store
 
 
