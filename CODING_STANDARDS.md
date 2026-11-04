@@ -2,9 +2,11 @@
 
 The review step reads this file. Each rule here needs judgement; a rule a tool can check belongs in ruff, mypy or a test.
 
-## Every behaviour a commit claims has a test that fails without it
+## Every behaviour a commit claims has a test
 
-A commit message or PR description that says behaviour changed (a fix, an input now accepted, a new refusal) is backed by a test that fails when the change is reverted. Check claims one by one: a message saying five readers now accept something needs a test for each reader, or it names the one it tested.
+A commit message or PR description that says behaviour changed (a fix, an input now accepted, a new refusal) is backed by a test that fails when the change is reverted. Check claims one by one: a message saying five readers now accept something needs a test for each reader.
+
+A claim the reader will act on needs a test even when the behaviour predates the commit: how to recover from a new refusal, which commands keep working after it, or a limit they would plan around. Saying a claim is untested is enough only for a remark nobody will rely on. A fact about a system outside the repo, such as what CI runs, cannot have a test here, so the message says where it comes from.
 
 A test that already passes before the change guards against a looser rewrite. It is welcome, and the commit message names it as a guard.
 
