@@ -15,3 +15,9 @@ To check a commit, run `uv run python scripts/revert_check.py <commit>`. In a te
 ## A new refusal has a test that the nearest valid input still passes
 
 A refusal that reaches too far stops someone's valid input, and a test of the refused input cannot see that. So a new refusal comes with a test on the valid input closest to it: a whole emoji (an escaped surrogate pair) for a refusal of a lone surrogate, or a 100-character name for a 100-character limit. If that test passes with the change reversed, as it usually will, the commit message names it as a guard.
+
+## A commit that says nothing changed is read as if it did
+
+A move, a hoist or a rename comes with the claim that behaviour stayed the same, and that claim gets no test, so the review checks it line by line: every condition, default and exception clause in the old code has its counterpart in the new, and a difference is either a behaviour change the message states and a test covers, or a defect. A draft of the judge hoist carried two such changes under a message saying nothing changed: a mode missing from the taxonomy lost the mode id it used to get as its name, and a failure to write judge.yaml stopped reaching the user.
+
+Tests move with the code they test. A test of a function that moved to another module lives in that module's test file, so a reader looking for the function's tests finds them beside it, and the old file stops carrying tests of code its module no longer holds.
