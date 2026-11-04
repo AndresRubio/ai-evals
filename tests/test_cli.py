@@ -7,7 +7,7 @@ from typer.testing import CliRunner
 
 from axial.cli import app
 from axial.judge import JudgeSpec, current_prompt_sha256, read_verdicts
-from axial.report import format_promoted_marker
+from axial.promotion import format_promoted_marker
 from axial.store import Store
 
 runner = CliRunner()

@@ -32,7 +32,7 @@ from axial.judge import (
     read_verdicts,
 )
 from axial.model import Model
-from axial.report import SATURATION_WARNING, require_promoted
+from axial.promotion import require_promoted
 from axial.store import Store, json_text, jsonl_text, refuse_non_directory
 from axial.traces import Trace, lone_surrogate
 
@@ -47,6 +47,11 @@ ASSUMPTION_NOTE = (
     "the correction assumes the judge errs on this batch at the rates it showed on its "
     "test split; only labels on this batch can confirm that for outputs unlike the "
     "labelled corpus"
+)
+
+SATURATION_WARNING = (
+    "saturation warning: no trace failed. A suite nothing fails has stopped carrying "
+    "signal while still costing maintenance — consider harder cases or retiring it."
 )
 
 

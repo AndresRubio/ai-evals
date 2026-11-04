@@ -37,14 +37,14 @@ from axial.measure import measure_batch, summary_lines
 from axial.model import LiteLLMModel, is_decision_model, require_text_model
 from axial.perplexity import DEGENERATE_SPREAD, score_traces
 from axial.perplexity import spread as perplexity_spread
+from axial.promotion import check_promotion
+from axial.promotion import promote as do_promote
 from axial.report import (
     alignment_from_verdicts,
-    check_promotion,
     disagreement_counts,
     find_disagreements,
     write_alignment,
 )
-from axial.report import promote as do_promote
 from axial.sample import (
     all_reviews,
     check_sample_options,

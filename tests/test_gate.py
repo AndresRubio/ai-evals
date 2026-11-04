@@ -10,12 +10,7 @@ from axial.errors import InvariantViolation
 from axial.gate import compare, gate
 from axial.judge import JudgeSpec, current_prompt_sha256, run_judge
 from axial.model import FakeModel
-from axial.report import (
-    JUDGE_YAML_HASH_KEY,
-    VERDICTS_HASH_KEY,
-    format_promoted_marker,
-    promote,
-)
+from axial.promotion import JUDGE_YAML_HASH_KEY, VERDICTS_HASH_KEY, format_promoted_marker, promote
 from axial.store import Store
 from axial.traces import Trace
 
@@ -56,7 +51,7 @@ def _perfect_alignment(n: int = 60):
 
 
 def _promote_with_real_hashes(store: Store, mode: str, version: int, verdicts: list[bool]) -> None:
-    """Promote through the real `report.promote`, so the marker is bound to
+    """Promote through the real `promotion.promote`, so the marker is bound to
     whatever judge.yaml/verdicts.jsonl actually exist on disk -- the setup
     every test of the hash-binding invariant below needs."""
     directory = store.judge_dir(mode, version)

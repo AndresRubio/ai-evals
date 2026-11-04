@@ -35,7 +35,8 @@ from axial.gate import gate_batches
 from axial.judge import JudgeSpec, run_judge
 from axial.measure import measure_batch
 from axial.model import FakeModel
-from axial.report import alignment_from_verdicts, promote, require_promoted
+from axial.promotion import promote, require_promoted
+from axial.report import alignment_from_verdicts
 from axial.store import Store
 from axial.traces import Trace
 

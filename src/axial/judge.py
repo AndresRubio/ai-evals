@@ -368,6 +368,34 @@ def read_errors(store: Store, path: Path) -> list[dict[str, Any]]:
     return [row.model_dump(exclude_unset=True) for row in store.read_models(path, ErrorRow)]
 
 
+def require_human_labels(rows: list[dict[str, Any]]) -> None:
+    """Refuse verdict rows that carry no human label."""
+    missing = [v.get("trace_id") for v in rows if v.get("truth") is None]
+    if missing:
+        raise ValueError(
+            f"{len(missing)} verdict row(s) have no human label ({missing[:3]}); a judge can "
+            "only be aligned against labels a human made"
+        )
+
+
+def row_probability(row: dict[str, Any]) -> float | None:
+    """A verdict row's recorded probability, or `None` for a row without one.
+
+    `read_verdicts` already refuses such a row in a file, naming its line. This is for
+    rows a caller built in memory: a nan, a bool or a value outside [0, 1] would make
+    every number computed from it wrong, so it is refused by trace id.
+    """
+    value = row.get("probability")
+    if value is None:
+        return None
+    if not is_probability(value):
+        raise ValueError(
+            f"verdict row {row.get('trace_id')!r} records probability {value!r}, which is "
+            "not a number between 0 and 1"
+        )
+    return float(value)
+
+
 def kept_rows(store: Store, mode: str, version: int, split: str) -> dict[str, list[dict[str, Any]]]:
     """The verdict and error rows a run of `split` leaves in place: every other split's."""
     directory = store.judge_dir(mode, version)
@@ -593,7 +621,7 @@ def run_judge(
     directory.mkdir(parents=True, exist_ok=True)
 
     # A PROMOTED marker binds specific hashes of judge.yaml and verdicts.jsonl
-    # (see report.promote) to the alignment that earned it. We are about to
+    # (see promotion.promote) to the alignment that earned it. We are about to
     # rewrite verdicts.jsonl for this split, so whatever evidence backed that
     # marker no longer describes what will be on disk -- delete it rather than
     # let a stale marker keep gating a build on a run nobody re-measured.

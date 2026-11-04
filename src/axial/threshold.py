@@ -34,9 +34,8 @@ import numpy as np
 from axial.align import Alignment, align, tpr_tnr
 from axial.config import Thresholds
 from axial.errors import AxialError, InvariantViolation
-from axial.judge import JudgeSpec
+from axial.judge import JudgeSpec, require_human_labels, row_probability
 from axial.model import is_decision_model
-from axial.report import require_human_labels, row_probability
 from axial.store import Store
 
 # A threshold is rounded to this many decimals when the rounded value still falls

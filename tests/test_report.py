@@ -8,16 +8,15 @@ from promotion_helpers import stamp_run
 from axial.align import align, brier_score
 from axial.config import Thresholds
 from axial.errors import InvariantViolation
-from axial.report import (
+from axial.judge import read_verdicts
+from axial.promotion import (
     JUDGE_YAML_HASH_KEY,
     VERDICTS_HASH_KEY,
-    alignment_from_verdicts,
     check_promotion,
     parse_promoted_marker,
     promote,
-    read_verdicts,
-    write_alignment,
 )
+from axial.report import alignment_from_verdicts, write_alignment
 from axial.store import Store
 
 
@@ -253,7 +252,7 @@ def test_write_alignment_surfaces_notes(tmp_path: Path):
 
 
 def test_require_promoted_returns_the_hashes_the_marker_recorded(tmp_path: Path):
-    from axial.report import require_promoted
+    from axial.promotion import require_promoted
 
     store = Store(tmp_path)
     directory = store.judge_dir("merged", 1)
@@ -273,7 +272,7 @@ def test_require_promoted_returns_the_hashes_the_marker_recorded(tmp_path: Path)
 
 
 def test_require_promoted_refuses_an_unpromoted_or_edited_judge(tmp_path: Path):
-    from axial.report import require_promoted
+    from axial.promotion import require_promoted
 
     store = Store(tmp_path)
     directory = store.judge_dir("merged", 1)
