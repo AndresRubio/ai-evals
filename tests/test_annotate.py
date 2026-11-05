@@ -2,10 +2,10 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from axial.annotate.app import create_app
-from axial.reviews import create_session, read_session
-from axial.store import Store
-from axial.traces import Trace
+from axial.analysis.annotate.app import create_app
+from axial.core.reviews import create_session, read_session
+from axial.core.store import Store
+from axial.core.traces import Trace
 
 
 def build(tmp_path: Path) -> tuple[Store, TestClient]:

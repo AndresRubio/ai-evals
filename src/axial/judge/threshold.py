@@ -31,12 +31,13 @@ from typing import Any
 
 import numpy as np
 
-from axial.align import Alignment, align, tpr_tnr
-from axial.config import Thresholds
+from axial.core.config import Thresholds
+from axial.core.model import is_decision_model
+from axial.core.store import Store
 from axial.errors import AxialError, InvariantViolation
-from axial.judge import JudgeSpec, require_human_labels, row_probability
-from axial.model import is_decision_model
-from axial.store import Store
+from axial.judge.run import require_human_labels, row_probability
+from axial.judge.spec import JudgeSpec
+from axial.stats.align import Alignment, align, tpr_tnr
 
 # A threshold is rounded to this many decimals when the rounded value still falls
 # strictly between the two scores it separates, so judge.yaml reads 0.22 instead of

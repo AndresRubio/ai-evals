@@ -1,7 +1,7 @@
 """The default judge template as it was before the judge was asked to reason first.
 
 It never changed from the first commit until then, and a judge.yaml written in that time
-holds an exact copy. This is that copy, kept apart from `axial.judge` so a test catches
+holds an exact copy. This is that copy, kept apart from `axial.judge.spec` so a test catches
 the upgrade matching the wrong text.
 """
 

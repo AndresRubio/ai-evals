@@ -21,8 +21,8 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, ValidationError
 
+from axial.core.traces import Trace, lone_surrogate
 from axial.errors import AxialError, MalformedFile, validation_message
-from axial.traces import Trace, lone_surrogate
 
 # A mode or a batch name becomes one directory name under `.axial/`, and a review
 # session's name one file name under `.axial/reviews/`. Starting with a

@@ -16,11 +16,12 @@ import re
 from pathlib import Path
 from typing import NamedTuple
 
-from axial.align import Alignment
-from axial.config import Thresholds
+from axial.core.config import Thresholds
+from axial.core.store import Store
 from axial.errors import InvariantViolation, MalformedFile
-from axial.judge import JudgeSpec, current_prompt_sha256, read_errors, read_verdicts
-from axial.store import Store
+from axial.judge.run import read_errors, read_verdicts
+from axial.judge.spec import JudgeSpec, current_prompt_sha256
+from axial.stats.align import Alignment
 
 
 class PromotionCheck:

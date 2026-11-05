@@ -12,8 +12,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from axial.core.model import JevModel, ServedModelMismatch
 from axial.errors import AxialError
-from axial.model import JevModel, ServedModelMismatch
 
 PINNED = "typesafe/jev-1.13"
 
@@ -315,7 +315,7 @@ def test_exhausting_the_retries_raises(monkeypatch):
 
 
 def test_a_typesafe_id_is_recognised_as_a_decision_model():
-    from axial.model import is_decision_model
+    from axial.core.model import is_decision_model
 
     assert is_decision_model("typesafe/jev-1.13") is True
     assert is_decision_model("openrouter/typesafe/jev-1.13") is True
@@ -323,7 +323,7 @@ def test_a_typesafe_id_is_recognised_as_a_decision_model():
 
 
 def test_a_text_model_id_is_not_a_decision_model():
-    from axial.model import is_decision_model
+    from axial.core.model import is_decision_model
 
     assert is_decision_model("claude-opus-5") is False
     assert is_decision_model("anthropic/claude-opus-5") is False
@@ -331,7 +331,7 @@ def test_a_text_model_id_is_not_a_decision_model():
 
 def test_a_decision_model_is_refused_where_prose_is_required():
     """Taxonomy proposal needs generated text. Jev cannot write a sentence."""
-    from axial.model import require_text_model
+    from axial.core.model import require_text_model
 
     with pytest.raises(AxialError, match="cannot generate text"):
         require_text_model("typesafe/jev-1.13")
@@ -341,8 +341,8 @@ def test_the_judge_spec_threshold_is_written_into_judge_yaml(tmp_path):
     """The threshold changes every verdict, so judge.yaml's hash must cover it."""
     import yaml
 
-    from axial.judge import JudgeSpec
-    from axial.store import Store
+    from axial.core.store import Store
+    from axial.judge.spec import JudgeSpec
 
     store = Store(str(tmp_path))
     spec = JudgeSpec(mode="unsupported", model=PINNED, decision_threshold=0.8)
@@ -353,7 +353,7 @@ def test_the_judge_spec_threshold_is_written_into_judge_yaml(tmp_path):
 
 
 def test_a_spec_naming_jev_builds_a_jev_model_carrying_its_threshold():
-    from axial.judge import JudgeSpec, build_judge_model
+    from axial.judge.spec import JudgeSpec, build_judge_model
 
     spec = JudgeSpec(
         mode="unsupported",
@@ -372,8 +372,8 @@ def test_a_spec_naming_jev_builds_a_jev_model_carrying_its_threshold():
 
 
 def test_a_spec_naming_a_text_model_builds_a_litellm_model():
-    from axial.judge import JudgeSpec, build_judge_model
-    from axial.model import LiteLLMModel
+    from axial.core.model import LiteLLMModel
+    from axial.judge.spec import JudgeSpec, build_judge_model
 
     model = build_judge_model(JudgeSpec(mode="unsupported", model="claude-opus-5"))
 

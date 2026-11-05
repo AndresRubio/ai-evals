@@ -10,8 +10,8 @@ import math
 
 import pytest
 
-from axial.perplexity import DEGENERATE_SPREAD, CharNgramLM, score_traces, spread
-from axial.traces import Trace
+from axial.core.traces import Trace
+from axial.stats.perplexity import DEGENERATE_SPREAD, CharNgramLM, score_traces, spread
 
 CORPUS = [
     "what is the refund policy for annual plans",

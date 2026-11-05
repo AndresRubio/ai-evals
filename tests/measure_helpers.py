@@ -12,14 +12,15 @@ import json
 from collections.abc import Callable
 from pathlib import Path
 
-from axial.config import Thresholds
-from axial.dataset import Label, Splits, add_labels
-from axial.judge import JudgeSpec, read_verdicts, run_judge
-from axial.model import FakeModel
-from axial.promotion import promote
-from axial.report import alignment_from_verdicts
-from axial.store import Store
-from axial.traces import Trace
+from axial.analysis.dataset import Label, Splits, add_labels
+from axial.core.config import Thresholds
+from axial.core.model import FakeModel
+from axial.core.store import Store
+from axial.core.traces import Trace
+from axial.judge.alignment import alignment_from_verdicts
+from axial.judge.promotion import promote
+from axial.judge.run import read_verdicts, run_judge
+from axial.judge.spec import JudgeSpec
 
 MEASURE_MODE = "merged"
 MEASURE_TEMPLATE = "{few_shot}\nINPUT: {input}\nOUTPUT: {output}"

@@ -19,21 +19,21 @@ from urllib.parse import quote
 import pytest
 from fastapi.testclient import TestClient
 
-from axial.annotate.app import create_app
-from axial.errors import InvariantViolation
-from axial.model import FakeModel
-from axial.perplexity import DEGENERATE_SPREAD, CharNgramLM, score_traces, spread
-from axial.reviews import Review, create_session, read_session
-from axial.sample import STRATEGIES, sample_batch
-from axial.store import Store
-from axial.taxonomy import (
+from axial.analysis.annotate.app import create_app
+from axial.analysis.sample import STRATEGIES, sample_batch
+from axial.analysis.taxonomy import (
     FailureMode,
     Taxonomy,
     count_open_codes,
     propose_taxonomy,
     saturation_curve,
 )
-from axial.traces import Trace, ingest_jsonl
+from axial.core.model import FakeModel
+from axial.core.reviews import Review, create_session, read_session
+from axial.core.store import Store
+from axial.core.traces import Trace, ingest_jsonl
+from axial.errors import InvariantViolation
+from axial.stats.perplexity import DEGENERATE_SPREAD, CharNgramLM, score_traces, spread
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 

@@ -7,8 +7,9 @@ from pathlib import Path
 import pytest
 from measure_helpers import MEASURE_MODE, batch_traces, build_promoted_judge, fake_judge_builder
 
-from axial.measure import input_sha256, load_measurement, measure_batch, pair_batches
-from axial.store import Store
+from axial.core.store import Store
+from axial.monitor.measure import input_sha256, load_measurement, measure_batch
+from axial.monitor.pairing import pair_batches
 
 
 @pytest.fixture

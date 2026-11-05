@@ -14,10 +14,10 @@ from pathlib import Path
 
 import pytest
 
-from axial.config import Config, load_config, load_env, write_default_config
+from axial.core.config import Config, load_config, load_env, write_default_config
+from axial.core.store import Store
+from axial.core.traces import Trace
 from axial.errors import AxialError
-from axial.store import Store
-from axial.traces import Trace
 
 # --- Store: layout ---------------------------------------------------------------
 

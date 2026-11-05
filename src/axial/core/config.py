@@ -14,8 +14,8 @@ from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Any
 
+from axial.core.store import Store
 from axial.errors import AxialError
-from axial.store import Store
 
 DEFAULT_CONFIG = """\
 # axial configuration. See docs for where each default comes from.

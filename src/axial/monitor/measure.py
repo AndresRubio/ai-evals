@@ -1,4 +1,4 @@
-"""Grading new traces with a promoted judge, and pairing two measured batches.
+"""Grading new traces with a promoted judge.
 
 A promoted judge's own verdicts say how well it agrees with the human labels; they
 say nothing about what the system has produced since. `measure_batch` grades a named
@@ -21,26 +21,18 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
-from axial.align import ConfusionMatrix, CorrectedRate, confusion_matrix, corrected_rate
+from axial.core.model import Model
+from axial.core.store import Store, json_text, jsonl_text, refuse_non_directory
+from axial.core.traces import Trace, lone_surrogate
 from axial.errors import AxialError, InvariantViolation, MalformedFile
-from axial.judge import (
-    Graded,
-    JudgeSpec,
-    grade_trace,
-    load_few_shot,
-    prompt_sha256,
-    read_verdicts,
-)
-from axial.model import Model
-from axial.promotion import require_promoted
-from axial.store import Store, json_text, jsonl_text, refuse_non_directory
-from axial.traces import Trace, lone_surrogate
+from axial.judge.promotion import require_promoted
+from axial.judge.run import Graded, grade_trace, read_verdicts
+from axial.judge.spec import JudgeSpec, load_few_shot, prompt_sha256
+from axial.stats.align import ConfusionMatrix, confusion_matrix
+from axial.stats.corrected import CorrectedRate, corrected_rate
 
 # Above this share of set-aside traces, a measurement says the rate may be biased.
 SET_ASIDE_NOTE_SHARE = 0.05
-
-# Two batches are compared pair by pair only if the pairs cover this share of each.
-MIN_PAIRED_SHARE = 0.8
 
 
 ASSUMPTION_NOTE = (
@@ -239,7 +231,7 @@ def judge_test_matrix(store: Store, mode: str, version: int) -> ConfusionMatrix:
     return matrix
 
 
-def _percent(part: int, whole: int, *, round_up: bool) -> str:
+def percent(part: int, whole: int, *, round_up: bool) -> str:
     """`part / whole` as a percentage to one decimal, rounded in the direction given.
 
     A share is printed beside the threshold it was compared with, so it is rounded away
@@ -260,7 +252,7 @@ def set_aside_note(n_set_aside: int, n_traces: int) -> str | None:
     """
     if n_set_aside <= SET_ASIDE_NOTE_SHARE * n_traces:
         return None
-    share = _percent(n_set_aside, n_traces, round_up=True)
+    share = percent(n_set_aside, n_traces, round_up=True)
     return (
         f"{n_set_aside} of {n_traces} traces ({share}) were set "
         "aside (see errors.jsonl); if what set them aside correlates with failure, as "
@@ -518,71 +510,3 @@ def load_measurement(
             f"measurement {batch!r} for {mode} {problem}; it was edited by hand. {redo}"
         )
     return measurement, rows
-
-
-@dataclass(frozen=True)
-class Pairing:
-    """How two measured batches line up by input.
-
-    `cells` is `(n11, n10, n01, n00)` over the pairs: flagged in both, baseline only,
-    candidate only, neither. `share` is the smaller of the two batches' paired shares.
-    """
-
-    cells: tuple[int, int, int, int]
-    pairs: int
-    unmatched_baseline: int
-    unmatched_candidate: int
-    share: float
-    paired: bool
-
-    def describe(self) -> str:
-        if self.paired:
-            return (
-                f"paired on {self.pairs} shared inputs ({self.unmatched_baseline} baseline "
-                f"and {self.unmatched_candidate} candidate traces unmatched)"
-            )
-        # `share` from the counts: the pairs over the larger batch, rounded down.
-        larger = self.pairs + max(self.unmatched_baseline, self.unmatched_candidate)
-        shown = _percent(self.pairs, larger, round_up=False) if larger else "0.0%"
-        return f"unpaired: only {shown} of inputs shared"
-
-
-def _graded_once(rows: list[dict[str, Any]]) -> dict[str, bool]:
-    """Each input graded exactly once, with its verdict. An input graded twice has no
-    single partner to compare with, so it is left out."""
-    counts = Counter(str(r["input_sha256"]) for r in rows)
-    return {
-        str(r["input_sha256"]): bool(r["verdict"])
-        for r in rows
-        if counts[str(r["input_sha256"])] == 1
-    }
-
-
-def pair_batches(
-    baseline_rows: list[dict[str, Any]], candidate_rows: list[dict[str, Any]]
-) -> Pairing:
-    """Match two batches' graded rows by `input_sha256`.
-
-    Only graded rows are passed in, so a set-aside trace never pairs.
-    """
-    baseline = _graded_once(baseline_rows)
-    candidate = _graded_once(candidate_rows)
-    shared = baseline.keys() & candidate.keys()
-    n11 = sum(1 for k in shared if baseline[k] and candidate[k])
-    n10 = sum(1 for k in shared if baseline[k] and not candidate[k])
-    n01 = sum(1 for k in shared if not baseline[k] and candidate[k])
-    n00 = len(shared) - n11 - n10 - n01
-    pairs = len(shared)
-    share = (
-        min(pairs / len(baseline_rows), pairs / len(candidate_rows))
-        if baseline_rows and candidate_rows
-        else 0.0
-    )
-    return Pairing(
-        cells=(n11, n10, n01, n00),
-        pairs=pairs,
-        unmatched_baseline=len(baseline_rows) - pairs,
-        unmatched_candidate=len(candidate_rows) - pairs,
-        share=share,
-        paired=pairs > 0 and share >= MIN_PAIRED_SHARE,
-    )

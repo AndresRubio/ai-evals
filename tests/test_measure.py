@@ -19,10 +19,11 @@ from measure_helpers import (
     judge_reply,
 )
 
-from axial.align import ConfusionMatrix
+from axial.core.store import Store
+from axial.core.traces import Trace
 from axial.errors import AxialError, InvariantViolation
-from axial.judge import JUDGE_MAX_TOKENS, JudgeSpec
-from axial.measure import (
+from axial.judge.spec import JUDGE_MAX_TOKENS, JudgeSpec
+from axial.monitor.measure import (
     ASSUMPTION_NOTE,
     Measurement,
     input_sha256,
@@ -30,8 +31,7 @@ from axial.measure import (
     measure_batch,
     set_aside_note,
 )
-from axial.store import Store
-from axial.traces import Trace
+from axial.stats.align import ConfusionMatrix
 
 MEASUREMENT_FIELDS = {
     "mode", "batch", "judge_version", "judge_yaml_sha256", "verdicts_sha256", "prompt_sha256",

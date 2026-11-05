@@ -5,10 +5,10 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from axial.core.reviews import Review, all_reviews, create_session, read_session, write_session
+from axial.core.store import Store
+from axial.core.traces import Trace
 from axial.errors import AxialError
-from axial.reviews import Review, all_reviews, create_session, read_session, write_session
-from axial.store import Store
-from axial.traces import Trace
 
 
 def traces(n: int, **meta_by_index) -> list[Trace]:

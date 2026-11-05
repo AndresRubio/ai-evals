@@ -16,18 +16,19 @@ from measure_helpers import (
     judge_reply,
 )
 
-from axial.align import corrected_rate
-from axial.config import Thresholds
-from axial.dataset import Splits, read_labels
+from axial.analysis.dataset import Splits, read_labels
+from axial.core.config import Thresholds
+from axial.core.model import FakeModel
+from axial.core.store import Store
+from axial.core.traces import Trace
 from axial.errors import AxialError, InvariantViolation
-from axial.gate import gate_batches
-from axial.judge import JudgeSpec, run_judge
-from axial.measure import judge_test_matrix, measure_batch
-from axial.model import FakeModel
-from axial.promotion import promote
-from axial.report import alignment_from_verdicts
-from axial.store import Store
-from axial.traces import Trace
+from axial.judge.alignment import alignment_from_verdicts
+from axial.judge.promotion import promote
+from axial.judge.run import run_judge
+from axial.judge.spec import JudgeSpec
+from axial.monitor.gate import gate_batches
+from axial.monitor.measure import judge_test_matrix, measure_batch
+from axial.stats.corrected import corrected_rate
 
 
 @pytest.fixture

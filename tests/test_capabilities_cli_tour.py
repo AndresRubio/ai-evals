@@ -35,10 +35,10 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from typer.testing import CliRunner, Result
 
-import axial.judge as judge_module
+import axial.judge.spec as judge_module
 from axial import cli
 from axial.cli import app
-from axial.model import FakeModel
+from axial.core.model import FakeModel
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 README = (REPO_ROOT / "README.md").read_text()
@@ -141,8 +141,8 @@ def annotate_via_app(session: str, verdict_for: Callable[[str], str]) -> int:
 
 def annotate_directly(repo: Path, session: str, verdict_for: Callable[[str], str]) -> None:
     """The same result as `annotate_via_app`, written straight to the session file."""
-    from axial.reviews import read_session, write_session
-    from axial.store import Store
+    from axial.core.reviews import read_session, write_session
+    from axial.core.store import Store
 
     store = Store(repo)
     planted = planted_modes()
@@ -482,9 +482,9 @@ def test_offline_commands_call_no_model_and_need_no_key(
         raise AssertionError("a model was constructed by a command documented as model-free")
 
     real_fake_init = FakeModel.__init__
-    monkeypatch.setattr("axial.model.LiteLLMModel.__init__", forbidden)
-    monkeypatch.setattr("axial.model.JevModel.__init__", forbidden)
-    monkeypatch.setattr("axial.model.FakeModel.__init__", forbidden)
+    monkeypatch.setattr("axial.core.model.LiteLLMModel.__init__", forbidden)
+    monkeypatch.setattr("axial.core.model.JevModel.__init__", forbidden)
+    monkeypatch.setattr("axial.core.model.FakeModel.__init__", forbidden)
     monkeypatch.setattr(cli, "build_judge_model", forbidden)
     assert not any(name in os.environ for name in MODEL_ENV_VARS)
 
@@ -501,7 +501,7 @@ def test_offline_commands_call_no_model_and_need_no_key(
 
     # `judge` is the documented exception: it alone gets a (fake) model, briefly.
     with pytest.MonkeyPatch.context() as judge_only:
-        judge_only.setattr("axial.model.FakeModel.__init__", real_fake_init)
+        judge_only.setattr("axial.core.model.FakeModel.__init__", real_fake_init)
         use_fake_judge(judge_only, perfect_judge)
         axial("judge", MODE, "--split", "dev")
         axial("judge", MODE, "--split", "test")

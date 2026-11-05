@@ -9,12 +9,12 @@ from pathlib import Path
 import pytest
 from skip_helpers import skip_off_ci
 
-from axial.dataset import Splits
+from axial.analysis.dataset import Splits
+from axial.core.reviews import read_session
+from axial.core.store import Store
+from axial.core.traces import Trace
 from axial.errors import AxialError, MalformedFile
-from axial.judge import read_verdicts
-from axial.reviews import read_session
-from axial.store import Store
-from axial.traces import Trace
+from axial.judge.run import read_verdicts
 
 
 def test_store_creates_the_artifact_tree(tmp_path: Path):
@@ -292,7 +292,7 @@ def test_a_hand_edited_verdicts_file_that_starts_with_a_byte_order_mark_loads(tm
 READ_UNDER_ANY_LOCALE = r"""
 import json, locale, sys
 from pathlib import Path
-from axial.store import Store
+from axial.core.store import Store
 
 print(locale.getencoding(), flush=True)
 store, root = Store(sys.argv[1]), Path(sys.argv[1])

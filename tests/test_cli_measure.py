@@ -20,8 +20,8 @@ from measure_helpers import (
 from typer.testing import CliRunner, Result
 
 from axial import cli
-from axial.judge import JUDGE_MAX_TOKENS
-from axial.store import Store
+from axial.core.store import Store
+from axial.judge.spec import JUDGE_MAX_TOKENS
 
 runner = CliRunner()
 

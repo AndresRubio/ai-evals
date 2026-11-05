@@ -26,9 +26,9 @@ from pathlib import Path
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from axial.core.reviews import Review
+from axial.core.store import Store
 from axial.errors import InvariantViolation
-from axial.reviews import Review
-from axial.store import Store
 
 # Distinctive vendor/model terms. These are matched as a substring of the
 # annotator name (after separators are normalised to "-" and digits are

@@ -1,8 +1,8 @@
 
 import pytest
 
-from axial.sample import sample_batch
-from axial.traces import Trace
+from axial.analysis.sample import sample_batch
+from axial.core.traces import Trace
 
 
 def traces(n: int, **meta_by_index) -> list[Trace]:

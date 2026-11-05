@@ -8,8 +8,8 @@ section 2) to within Monte Carlo error. None is the implementation's own output 
 import numpy as np
 import pytest
 
-from axial.align import (
-    ConfusionMatrix,
+from axial.stats.align import ConfusionMatrix
+from axial.stats.corrected import (
     corrected_difference_paired,
     corrected_difference_unpaired,
     corrected_rate,

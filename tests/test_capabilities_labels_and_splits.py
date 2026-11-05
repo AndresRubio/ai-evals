@@ -13,8 +13,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from axial.cli import app
-from axial.dataset import (
+from axial.analysis.dataset import (
     Label,
     Splits,
     add_labels,
@@ -24,10 +23,11 @@ from axial.dataset import (
     read_labels,
     verify_test_manifest,
 )
+from axial.cli import app
+from axial.core.reviews import Review, write_session
+from axial.core.store import Store
+from axial.core.traces import Trace
 from axial.errors import AxialError, InvariantViolation
-from axial.reviews import Review, write_session
-from axial.store import Store
-from axial.traces import Trace
 
 runner = CliRunner()
 

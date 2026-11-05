@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from axial.model import Completion
+from axial.core.model import Completion
 
 REASON_FIRST_FAIL = '{"reason": "both stories share one headline", "verdict": "fail"}'
 

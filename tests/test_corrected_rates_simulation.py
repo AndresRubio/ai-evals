@@ -9,7 +9,8 @@ for review; the band does not move.
 import numpy as np
 import pytest
 
-from axial.align import ConfusionMatrix, corrected_difference_paired, corrected_rate
+from axial.stats.align import ConfusionMatrix
+from axial.stats.corrected import corrected_difference_paired, corrected_rate
 
 # (TPR, TNR, real failures on test, real passes on test)
 STRONG = (0.93, 0.94, 30, 70)

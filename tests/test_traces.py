@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from axial.traces import Trace, compute_trace_id, ingest_csv, ingest_jsonl
+from axial.core.traces import Trace, compute_trace_id, ingest_csv, ingest_jsonl
 
 
 def test_compute_trace_id_is_stable_and_short():

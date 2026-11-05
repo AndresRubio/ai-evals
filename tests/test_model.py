@@ -5,8 +5,8 @@ from types import SimpleNamespace
 import pytest
 from pydantic import BaseModel
 
+from axial.core.model import Completion, FakeModel, LiteLLMModel, ServedModelMismatch
 from axial.errors import AxialError
-from axial.model import Completion, FakeModel, LiteLLMModel, ServedModelMismatch
 
 
 def test_fake_model_returns_a_mapped_response():

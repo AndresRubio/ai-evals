@@ -16,17 +16,18 @@ import pytest
 from promotion_helpers import stamp_run
 from typer.testing import CliRunner
 
-from axial.align import align, paired_bootstrap_ci
+from axial.analysis.dataset import Label, Splits
 from axial.cli import app
-from axial.config import Thresholds
-from axial.dataset import Label, Splits
+from axial.core.config import Thresholds
+from axial.core.model import FakeModel
+from axial.core.store import Store
+from axial.core.traces import Trace
 from axial.errors import InvariantViolation
-from axial.gate import gate
-from axial.judge import JudgeSpec, run_judge
-from axial.model import FakeModel
-from axial.promotion import check_promotion, promote
-from axial.store import Store
-from axial.traces import Trace
+from axial.judge.promotion import check_promotion, promote
+from axial.judge.run import run_judge
+from axial.judge.spec import JudgeSpec
+from axial.monitor.gate import gate
+from axial.stats.align import align, paired_bootstrap_ci
 
 
 def rates(pos_caught: int, pos: int, neg_correct: int, neg: int):

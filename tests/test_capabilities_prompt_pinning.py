@@ -28,17 +28,18 @@ from measure_helpers import (
     judge_reply,
 )
 
-from axial.config import Thresholds
-from axial.dataset import Label, Splits, add_labels, read_labels
+from axial.analysis.dataset import Label, Splits, add_labels, read_labels
+from axial.core.config import Thresholds
+from axial.core.model import FakeModel
+from axial.core.store import Store
+from axial.core.traces import Trace
 from axial.errors import AxialError
-from axial.gate import gate_batches
-from axial.judge import JudgeSpec, run_judge
-from axial.measure import measure_batch
-from axial.model import FakeModel
-from axial.promotion import promote, require_promoted
-from axial.report import alignment_from_verdicts
-from axial.store import Store
-from axial.traces import Trace
+from axial.judge.alignment import alignment_from_verdicts
+from axial.judge.promotion import promote, require_promoted
+from axial.judge.run import run_judge
+from axial.judge.spec import JudgeSpec
+from axial.monitor.gate import gate_batches
+from axial.monitor.measure import measure_batch
 
 
 def test_repromoting_after_a_dev_only_rerun_binds_test_rows_from_another_prompt(

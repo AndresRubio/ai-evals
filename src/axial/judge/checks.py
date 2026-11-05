@@ -15,9 +15,9 @@ from typing import Any
 
 import numpy as np
 
-from axial.align import Alignment, align
-from axial.judge import JudgeSpec
-from axial.traces import Trace
+from axial.core.traces import Trace
+from axial.judge.spec import JudgeSpec
+from axial.stats.align import Alignment, align
 
 # Dollars per million tokens, (input, output).
 PRICES: dict[str, tuple[float, float]] = {

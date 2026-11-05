@@ -9,7 +9,8 @@ import math
 
 import pytest
 
-from axial.align import ConfusionMatrix, corrected_rate
+from axial.stats.align import ConfusionMatrix
+from axial.stats.corrected import corrected_rate
 
 # The design's worked judge: TPR 28/30 = 0.9333, TNR 66/70 = 0.9429, J = 0.8762.
 JUDGE = ConfusionMatrix(tp=28, fn=2, tn=66, fp=4)
