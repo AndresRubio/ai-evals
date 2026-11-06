@@ -6,9 +6,10 @@ from promotion_helpers import stamp_run
 from typer.testing import CliRunner
 
 from axial.cli import app
-from axial.judge import JudgeSpec, current_prompt_sha256, read_verdicts
-from axial.promotion import format_promoted_marker
-from axial.store import Store
+from axial.core.store import Store
+from axial.judge.promotion import format_promoted_marker
+from axial.judge.run import read_verdicts
+from axial.judge.spec import JudgeSpec, current_prompt_sha256
 
 runner = CliRunner()
 
@@ -159,7 +160,7 @@ def test_label_from_reviews_converts_completed_reviews_across_sessions(tmp_path:
     src = write_traces_file(tmp_path, 4)
     runner.invoke(app, ["ingest", str(src), "--repo", str(tmp_path)])
 
-    from axial.reviews import create_session, read_session, write_session
+    from axial.core.reviews import create_session, read_session, write_session
 
     traces = store.read_traces()
     create_session(store, traces[:2], name="s1")
@@ -180,7 +181,7 @@ def test_label_from_reviews_converts_completed_reviews_across_sessions(tmp_path:
     assert result.exit_code == 0, result.stdout
     assert "0 pending review(s) skipped" in result.stdout
 
-    from axial.dataset import read_labels
+    from axial.analysis.dataset import read_labels
 
     labels = read_labels(store, "merged")
     assert len(labels) == 4
@@ -209,7 +210,7 @@ def test_label_import_records_labels_from_a_jsonl_file(tmp_path: Path):
     assert result.exit_code == 0, result.stdout
     assert "2 labels recorded for merged" in result.stdout
 
-    from axial.dataset import read_labels
+    from axial.analysis.dataset import read_labels
 
     labels = read_labels(Store(tmp_path), "merged")
     assert len(labels) == 2
@@ -230,7 +231,7 @@ def test_label_import_refuses_a_machine_looking_annotator(tmp_path: Path):
     assert result.exit_code == 1
     assert "human" in result.stdout.lower()
 
-    from axial.dataset import read_labels
+    from axial.analysis.dataset import read_labels
 
     assert read_labels(Store(tmp_path), "merged") == []
 
@@ -276,9 +277,9 @@ def test_judge_passes_the_full_corpus_alongside_the_splits_traces(
     under judgment.
     """
     import axial.cli as cli_module
-    from axial.config import write_default_config
-    from axial.dataset import Splits
-    from axial.judge import RunResult
+    from axial.analysis.dataset import Splits
+    from axial.core.config import write_default_config
+    from axial.judge.run import RunResult
 
     store = Store(tmp_path)
     write_default_config(store)
@@ -311,7 +312,7 @@ def test_align_carries_check_promotion_notes_into_alignment_md(tmp_path: Path):
     side), `align` should pass those notes through to `write_alignment` so they
     land in alignment.md instead of vanishing.
     """
-    from axial.config import write_default_config
+    from axial.core.config import write_default_config
 
     store = Store(tmp_path)
     write_default_config(store)
@@ -343,7 +344,7 @@ def test_promote_prints_every_failure_reason_on_one_line_each(tmp_path: Path):
     when those (and other bars) are why promotion fails, every reason must show
     up in the CLI output, not just the first.
     """
-    from axial.config import write_default_config
+    from axial.core.config import write_default_config
 
     store = Store(tmp_path)
     write_default_config(store)
@@ -378,7 +379,7 @@ def test_promote_prints_every_failure_reason_on_one_line_each(tmp_path: Path):
 def test_promote_refuses_an_invalid_judge_yaml_without_a_traceback(
     tmp_path: Path, judge_yaml: str
 ):
-    from axial.config import write_default_config
+    from axial.core.config import write_default_config
 
     store = Store(tmp_path)
     write_default_config(store)
@@ -402,7 +403,7 @@ def test_promote_refuses_an_invalid_judge_yaml_without_a_traceback(
 
 
 def _seed_corpus_and_splits(store: Store, mode: str = "m") -> None:
-    from axial.dataset import Splits
+    from axial.analysis.dataset import Splits
 
     traces = [{"input": f"in{i}", "output": f"out{i}", "trace_id": f"t{i}"} for i in range(6)]
     store.write_jsonl(store.traces_path, traces)
@@ -412,7 +413,7 @@ def _seed_corpus_and_splits(store: Store, mode: str = "m") -> None:
 def test_judge_rejects_an_invalid_split_name_with_a_clean_message(tmp_path: Path):
     """A typo'd --split used to reach `getattr(splits, split_name)` directly and
     raise a bare AttributeError traceback."""
-    from axial.config import write_default_config
+    from axial.core.config import write_default_config
 
     store = Store(tmp_path)
     write_default_config(store)
@@ -443,8 +444,8 @@ def test_few_shot_option_is_written_and_survives_a_second_run(
     import yaml
 
     import axial.cli as cli_module
-    from axial.config import write_default_config
-    from axial.judge import RunResult
+    from axial.core.config import write_default_config
+    from axial.judge.run import RunResult
 
     store = Store(tmp_path)
     write_default_config(store)
@@ -473,8 +474,8 @@ def test_few_shot_from_dev_split_exits_1_with_the_train_only_message(tmp_path: P
     for exactly this case; the `judge` command must catch it and exit 1 with the
     refusal message, not let it propagate as a traceback.
     """
-    from axial.config import write_default_config
-    from axial.dataset import Label, add_labels
+    from axial.analysis.dataset import Label, add_labels
+    from axial.core.config import write_default_config
 
     store = Store(tmp_path)
     write_default_config(store)
@@ -511,8 +512,8 @@ def test_second_judge_run_does_not_clobber_a_hand_edited_prompt_template(
     import yaml
 
     import axial.cli as cli_module
-    from axial.config import write_default_config
-    from axial.judge import RunResult
+    from axial.core.config import write_default_config
+    from axial.judge.run import RunResult
 
     store = Store(tmp_path)
     write_default_config(store)
@@ -546,9 +547,9 @@ def test_rerunning_a_judge_made_with_the_old_default_template_upgrades_it(
     from template_helpers import VERDICT_FIRST_DEFAULT_TEMPLATE
 
     import axial.cli as cli_module
-    from axial.config import write_default_config
-    from axial.judge import DEFAULT_TEMPLATE
-    from axial.model import FakeModel
+    from axial.core.config import write_default_config
+    from axial.core.model import FakeModel
+    from axial.judge.spec import DEFAULT_TEMPLATE
 
     store = Store(tmp_path)
     write_default_config(store)
@@ -575,8 +576,8 @@ def test_a_hand_written_verdict_first_template_is_refused_before_judge_yaml_is_r
 ):
     """Its author has to change it, so the file is left as they wrote it."""
     import axial.cli as cli_module
-    from axial.config import write_default_config
-    from axial.model import FakeModel
+    from axial.core.config import write_default_config
+    from axial.core.model import FakeModel
 
     store = Store(tmp_path)
     write_default_config(store)
@@ -616,7 +617,7 @@ def test_axial_judge_gives_the_model_the_cap_judge_yaml_sets(
     from cap_helpers import LongAnswer
 
     import axial.cli as cli_module
-    from axial.config import write_default_config
+    from axial.core.config import write_default_config
 
     store = Store(tmp_path)
     write_default_config(store)
@@ -646,7 +647,7 @@ def _fake_run_judge_writing_verdicts(store_arg, spec, traces_arg, labels_arg, sp
     (see `run_judge`'s own tail: rows for other splits are kept, this split's rows
     are replaced) without touching a model or a provider.
     """
-    from axial.judge import RunResult
+    from axial.judge.run import RunResult
 
     split = kwargs["split"]
     directory = store_arg.judge_dir(spec.mode, spec.version)
@@ -679,8 +680,8 @@ def test_default_version_keeps_dev_and_test_verdicts_in_the_same_judge_directory
     import yaml
 
     import axial.cli as cli_module
-    from axial.config import write_default_config
-    from axial.judge import DEFAULT_TEMPLATE
+    from axial.core.config import write_default_config
+    from axial.judge.spec import DEFAULT_TEMPLATE
 
     store = Store(tmp_path)
     write_default_config(store)
@@ -723,8 +724,8 @@ def test_new_flag_starts_a_fresh_version_that_does_not_inherit_the_previous_one(
     import yaml
 
     import axial.cli as cli_module
-    from axial.config import write_default_config
-    from axial.judge import DEFAULT_TEMPLATE
+    from axial.core.config import write_default_config
+    from axial.judge.spec import DEFAULT_TEMPLATE
 
     store = Store(tmp_path)
     write_default_config(store)
@@ -847,7 +848,7 @@ def test_align_prints_the_brier_score_for_a_decision_model(tmp_path: Path):
 
     assert result.exit_code == 0, result.stdout
     assert "no Brier score" not in (store.judge_dir("m", 1) / "alignment.md").read_text()
-    from axial.align import brier_score
+    from axial.stats.align import brier_score
 
     expected = brier_score([r["truth"] for r in rows], [r["probability"] for r in rows])
     assert f"dev  Brier {expected:.3f} (base-rate reference 0.250)" in result.stdout
@@ -941,7 +942,7 @@ def test_tune_threshold_reports_without_writing_unless_asked(tmp_path: Path):
 
 
 def test_tune_threshold_write_saves_the_next_judge_version(tmp_path: Path):
-    from axial.judge import JudgeSpec
+    from axial.judge.spec import JudgeSpec
 
     store = Store(tmp_path)
     _seed_jev_judge(store, _SEPARABLE)
@@ -1008,8 +1009,8 @@ def test_tune_threshold_passes_its_seed_to_the_cross_validation(tmp_path: Path):
     # Guard: the folds, and so the held-out line, depend on --seed.
     import numpy as np
 
-    from axial.config import Thresholds
-    from axial.threshold import tune_from_verdicts
+    from axial.core.config import Thresholds
+    from axial.judge.threshold import tune_from_verdicts
 
     rng = np.random.default_rng(3)
     scored = [(True, round(float(x), 2)) for x in rng.beta(3, 2, 15)] + [

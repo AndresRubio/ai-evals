@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from axial.judge import JudgeSpec, current_prompt_sha256
-from axial.store import Store
+from axial.core.store import Store
+from axial.judge.spec import JudgeSpec, current_prompt_sha256
 
 
 def stamp_run(store: Store, mode: str, version: int) -> None:

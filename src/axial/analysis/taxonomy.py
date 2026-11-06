@@ -16,9 +16,9 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from axial.core.reviews import Review
+from axial.core.store import MAX_NAME_LENGTH, Store
 from axial.errors import InvariantViolation, validation_message
-from axial.reviews import Review
-from axial.store import MAX_NAME_LENGTH, Store
 
 PROMPT = """\
 You are helping with axial coding of qualitative annotations on LLM traces.

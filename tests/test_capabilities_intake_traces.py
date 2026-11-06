@@ -15,8 +15,8 @@ from skip_helpers import skip_off_ci
 from typer.testing import CliRunner
 
 from axial.cli import app
-from axial.store import Store
-from axial.traces import Trace, compute_trace_id, ingest, ingest_csv, ingest_jsonl
+from axial.core.store import Store
+from axial.core.traces import Trace, compute_trace_id, ingest, ingest_csv, ingest_jsonl
 
 runner = CliRunner()
 

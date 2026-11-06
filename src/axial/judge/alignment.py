@@ -14,12 +14,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from axial.align import Alignment, align
-from axial.dataset import Label
+from axial.analysis.dataset import Label
+from axial.core.store import Store
+from axial.core.traces import Trace
 from axial.errors import InvariantViolation
-from axial.judge import require_human_labels, row_probability
-from axial.store import Store
-from axial.traces import Trace
+from axial.judge.run import require_human_labels, row_probability
+from axial.stats.align import Alignment, align
 
 
 def alignment_from_verdicts(

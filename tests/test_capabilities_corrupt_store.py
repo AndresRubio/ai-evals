@@ -26,14 +26,14 @@ from pydantic import BaseModel, ConfigDict, create_model
 from typer.testing import CliRunner, Result
 
 from axial import cli
+from axial.analysis.dataset import Label, add_labels
+from axial.analysis.taxonomy import FailureMode, Taxonomy
 from axial.cli import app
-from axial.config import write_default_config
-from axial.dataset import Label, add_labels
-from axial.judge import JudgeSpec, current_prompt_sha256
-from axial.model import FakeModel
-from axial.reviews import Review, write_session
-from axial.store import Store
-from axial.taxonomy import FailureMode, Taxonomy
+from axial.core.config import write_default_config
+from axial.core.model import FakeModel
+from axial.core.reviews import Review, write_session
+from axial.core.store import Store
+from axial.judge.spec import JudgeSpec, current_prompt_sha256
 
 runner = CliRunner()
 

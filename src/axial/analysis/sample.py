@@ -11,8 +11,8 @@ import math
 
 import numpy as np
 
-from axial.perplexity import DEFAULT_ORDER, FIELDS, score_traces
-from axial.traces import Trace
+from axial.core.traces import Trace
+from axial.stats.perplexity import DEFAULT_ORDER, FIELDS, score_traces
 
 STRATEGIES = ("random", "outlier", "longest", "perplexity")
 

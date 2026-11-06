@@ -4,10 +4,10 @@ from pathlib import Path
 
 import pytest
 
-from axial.align import align, brier_score
-from axial.judge import read_verdicts
-from axial.report import alignment_from_verdicts, write_alignment
-from axial.store import Store
+from axial.core.store import Store
+from axial.judge.alignment import alignment_from_verdicts, write_alignment
+from axial.judge.run import read_verdicts
+from axial.stats.align import align, brier_score
 
 
 def perfect(n: int = 60):

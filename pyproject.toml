@@ -56,7 +56,7 @@ extend-select = ["TID251", "SLF001", "RUF100"]
 "yaml.safe_load".msg = "read YAML through Store.read_yaml, so a bad file is refused in one line naming it"
 
 [tool.ruff.lint.per-file-ignores]
-"src/axial/store.py" = ["TID251"]
+"src/axial/core/store.py" = ["TID251"]
 # The ban is about .axial/ state; these read their own files directly.
 "scripts/**" = ["TID251"]
 "tests/**" = ["TID251", "SLF001"]
@@ -71,28 +71,79 @@ testpaths = ["tests"]
 # design question gets looked at.
 xfail_strict = true
 
-# Each module imports only what sits below it, and a module in the same row as another never
-# imports it. Moving a name down a row is fine; a new import upward is a design change, and
-# the row it breaks says which seam it crosses. Every module in the package has a row, so a
-# new file is placed before it can import anything.
+# The packages follow the method: shared plumbing, statistics, error analysis, judge
+# development, production measurement. Each imports only the packages below it, and inside
+# a package each module imports only the rows below its own; two modules in one row never
+# import each other. A new import upward is a design change, and the row it breaks says
+# which seam it crosses. Every module has a row, so a new file is placed before it can
+# import anything.
 [tool.importlinter]
 root_package = "axial"
 
 [[tool.importlinter.contracts]]
-name = "axial is layered"
+name = "the packages are layered"
 type = "layers"
 containers = ["axial"]
 exhaustive = true
-layers = [
-    "cli",
-    "gate | annotate",
-    "measure | threshold | report",
-    "promotion | checks",
-    "judge",
-    "dataset | taxonomy",
-    "reviews | sample",
-    "align | config | model | perplexity",
-    "store",
-    "traces",
-    "errors",
-]
+layers = ["cli", "monitor", "judge", "analysis", "stats", "core", "errors"]
+
+[[tool.importlinter.contracts]]
+name = "monitor is layered"
+type = "layers"
+containers = ["axial.monitor"]
+exhaustive = true
+layers = ["gate", "pairing", "measure"]
+
+[[tool.importlinter.contracts]]
+name = "judge is layered"
+type = "layers"
+containers = ["axial.judge"]
+exhaustive = true
+layers = ["threshold | alignment", "promotion | checks", "run", "spec"]
+
+[[tool.importlinter.contracts]]
+name = "analysis is layered"
+type = "layers"
+containers = ["axial.analysis"]
+exhaustive = true
+layers = ["annotate", "dataset | taxonomy", "sample"]
+
+[[tool.importlinter.contracts]]
+name = "stats is layered"
+type = "layers"
+containers = ["axial.stats"]
+exhaustive = true
+layers = ["corrected", "align | perplexity"]
+
+[[tool.importlinter.contracts]]
+name = "core is layered"
+type = "layers"
+containers = ["axial.core"]
+exhaustive = true
+layers = ["reviews", "config | model", "store", "traces"]
+
+# The three rules below are ones the package order alone would let through.
+
+# annotate is a FastAPI front end. Only the cli starts it.
+[[tool.importlinter.contracts]]
+name = "only the cli imports the annotate app"
+type = "forbidden"
+source_modules = ["axial.monitor", "axial.judge"]
+forbidden_modules = ["axial.analysis.annotate"]
+
+# Measuring a batch and pairing two of them depend on a promoted judge. How its alignment
+# is reported and how its threshold was tuned are no part of either.
+[[tool.importlinter.contracts]]
+name = "measure and pairing import neither the alignment report nor threshold tuning"
+type = "forbidden"
+source_modules = ["axial.monitor.measure", "axial.monitor.pairing"]
+forbidden_modules = ["axial.judge.alignment", "axial.judge.threshold"]
+
+# The statistics are arithmetic on counts and scores, so they can be checked without a
+# .axial tree or a model. A Trace, which perplexity reads, is all they take from core.
+[[tool.importlinter.contracts]]
+name = "stats takes only traces from core"
+type = "forbidden"
+source_modules = ["axial.stats"]
+forbidden_modules = ["axial.core"]
+ignore_imports = ["axial.stats.* -> axial.core.traces"]

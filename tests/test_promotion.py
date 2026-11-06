@@ -5,17 +5,17 @@ from pathlib import Path
 import pytest
 from promotion_helpers import stamp_run
 
-from axial.align import align
-from axial.config import Thresholds
+from axial.core.config import Thresholds
+from axial.core.store import Store
 from axial.errors import InvariantViolation
-from axial.promotion import (
+from axial.judge.promotion import (
     JUDGE_YAML_HASH_KEY,
     VERDICTS_HASH_KEY,
     check_promotion,
     parse_promoted_marker,
     promote,
 )
-from axial.store import Store
+from axial.stats.align import align
 
 
 def perfect(n: int = 60):
@@ -165,7 +165,7 @@ def test_reverse_gap_test_far_above_dev_passes():
 
 
 def test_require_promoted_returns_the_hashes_the_marker_recorded(tmp_path: Path):
-    from axial.promotion import require_promoted
+    from axial.judge.promotion import require_promoted
 
     store = Store(tmp_path)
     directory = store.judge_dir("merged", 1)
@@ -185,7 +185,7 @@ def test_require_promoted_returns_the_hashes_the_marker_recorded(tmp_path: Path)
 
 
 def test_require_promoted_refuses_an_unpromoted_or_edited_judge(tmp_path: Path):
-    from axial.promotion import require_promoted
+    from axial.judge.promotion import require_promoted
 
     store = Store(tmp_path)
     directory = store.judge_dir("merged", 1)

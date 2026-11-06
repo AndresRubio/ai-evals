@@ -2,7 +2,7 @@ import math
 
 import pytest
 
-from axial.align import align, brier_score, confusion_matrix, paired_bootstrap_ci, tpr_tnr
+from axial.stats.align import align, brier_score, confusion_matrix, paired_bootstrap_ci, tpr_tnr
 
 
 def test_confusion_matrix_counts_each_cell():

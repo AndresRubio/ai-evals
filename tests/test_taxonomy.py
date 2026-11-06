@@ -4,16 +4,16 @@ from pathlib import Path
 
 import pytest
 
-from axial.errors import InvariantViolation, MalformedFile
-from axial.reviews import Review
-from axial.store import Store, validate_name
-from axial.taxonomy import (
+from axial.analysis.taxonomy import (
     FailureMode,
     Taxonomy,
     count_open_codes,
     propose_taxonomy,
     saturation_curve,
 )
+from axial.core.reviews import Review
+from axial.core.store import Store, validate_name
+from axial.errors import InvariantViolation, MalformedFile
 
 
 def coded(n: int) -> list[Review]:

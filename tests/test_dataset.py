@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from axial.dataset import (
+from axial.analysis.dataset import (
     Label,
     Splits,
     add_labels,
@@ -12,9 +12,9 @@ from axial.dataset import (
     read_labels,
     verify_test_manifest,
 )
+from axial.core.reviews import Review
+from axial.core.store import Store
 from axial.errors import InvariantViolation
-from axial.reviews import Review
-from axial.store import Store
 
 
 def labels(n_fail: int, n_pass: int, annotator: str = "andres") -> list[Label]:
@@ -180,7 +180,7 @@ MACHINE_LOOKING_ANNOTATORS = [
 ]
 
 # "ai" used to be here, but it's a real Japanese given name and is no longer
-# refused on its own — see the "ai" rationale in axial/dataset.py, where it
+# refused on its own — see the "ai" rationale in axial/analysis/dataset.py, where it
 # was dropped from `_MACHINE_SEGMENT_TERMS` entirely (fix round 2, Fix 3).
 
 

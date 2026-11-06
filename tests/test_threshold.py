@@ -8,11 +8,11 @@ from __future__ import annotations
 
 import pytest
 
-from axial.config import Thresholds
+from axial.core.config import Thresholds
+from axial.core.store import Store
 from axial.errors import AxialError, InvariantViolation
-from axial.judge import JudgeSpec
-from axial.store import Store
-from axial.threshold import (
+from axial.judge.spec import JudgeSpec
+from axial.judge.threshold import (
     choose_threshold,
     cross_validate,
     stratified_folds,
@@ -253,7 +253,7 @@ def _exact_rank(y, pred, min_tpr, min_tnr):
     """The ranking `choose_threshold` documents, in exact arithmetic."""
     from fractions import Fraction
 
-    from axial.align import confusion_matrix
+    from axial.stats.align import confusion_matrix
 
     m = confusion_matrix(y, pred)
     tpr = Fraction(m.tp, m.tp + m.fn)
@@ -264,7 +264,7 @@ def _exact_rank(y, pred, min_tpr, min_tnr):
 def test_choose_threshold_agrees_with_a_brute_force_search_on_random_scores():
     import numpy as np
 
-    from axial.align import tpr_tnr
+    from axial.stats.align import tpr_tnr
 
     rng = np.random.default_rng(20261022)
     for _ in range(2000):
@@ -346,7 +346,7 @@ def test_cross_validation_scores_every_dev_trace_exactly_once():
 def test_each_fold_is_scored_by_a_threshold_chosen_without_it(floors):
     import numpy as np
 
-    from axial.align import ConfusionMatrix, confusion_matrix
+    from axial.stats.align import ConfusionMatrix, confusion_matrix
 
     rng = np.random.default_rng(11)
     y = [True] * 15 + [False] * 15

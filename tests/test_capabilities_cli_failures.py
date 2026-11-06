@@ -25,10 +25,10 @@ from skip_helpers import skip_off_ci
 from typer.testing import CliRunner, Result
 
 from axial.cli import app
-from axial.model import FakeModel
-from axial.reviews import Review, write_session
-from axial.store import Store
-from axial.traces import Trace, register_adapter
+from axial.core.model import FakeModel
+from axial.core.reviews import Review, write_session
+from axial.core.store import Store
+from axial.core.traces import Trace, register_adapter
 
 runner = CliRunner()
 
@@ -253,7 +253,7 @@ def test_ingest_of_a_cut_emoji_from_an_adapter_fails_cleanly(
     """An adapter's traces skip the file readers, so the corpus refuses the lone surrogate
     itself, naming the trace, before anything is written."""
     cut = Trace(trace_id="b", input="fine", output="emoji cut \ud83d")
-    monkeypatch.setattr("axial.traces._ADAPTERS", {})
+    monkeypatch.setattr("axial.core.traces._ADAPTERS", {})
     register_adapter("cut", lambda _path: [cut])
     export = tmp_path / "export.log"
     assert_one_line_refusal(

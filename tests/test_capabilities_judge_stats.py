@@ -20,16 +20,17 @@ from types import SimpleNamespace
 import pytest
 from typer.testing import CliRunner
 
-from axial.align import align
-from axial.checks import ci_half_width, slice_alignment, verbosity_bias
+from axial.analysis.dataset import Label, Splits
 from axial.cli import app
-from axial.dataset import Label, Splits
+from axial.core.model import FakeModel
+from axial.core.store import Store
+from axial.core.traces import Trace
 from axial.errors import InvariantViolation
-from axial.judge import JudgeSpec, assemble_prompt, build_judge_model, run_judge
-from axial.model import FakeModel
-from axial.report import alignment_from_verdicts, write_alignment
-from axial.store import Store
-from axial.traces import Trace
+from axial.judge.alignment import alignment_from_verdicts, write_alignment
+from axial.judge.checks import ci_half_width, slice_alignment, verbosity_bias
+from axial.judge.run import run_judge
+from axial.judge.spec import JudgeSpec, assemble_prompt, build_judge_model
+from axial.stats.align import align
 
 Z2 = 1.959963984540054**2  # 3.841459...
 

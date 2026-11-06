@@ -55,7 +55,7 @@ from contextlib import contextmanager
 
 import numpy as np
 
-from axial.traces import Trace
+from axial.core.traces import Trace
 
 DEFAULT_ORDER = 5
 FIELDS = ("input", "output", "both")

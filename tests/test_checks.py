@@ -3,15 +3,15 @@ from pathlib import Path
 
 import pytest
 
-from axial.checks import (
+from axial.core.traces import Trace, ingest, register_adapter
+from axial.judge.checks import (
     ablated_spec,
     ci_half_width,
     cost_usd,
     slice_alignment,
     verbosity_bias,
 )
-from axial.judge import JudgeSpec
-from axial.traces import Trace, ingest, register_adapter
+from axial.judge.spec import JudgeSpec
 
 
 def verdicts(rows):

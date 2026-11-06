@@ -14,13 +14,19 @@ from measure_helpers import MEASURE_MODE, build_promoted_judge
 from skip_helpers import skip_off_ci
 from typer.testing import CliRunner
 
-from axial import cli, report
-from axial.align import align
-from axial.dataset import Label, add_labels
+from axial import cli
+from axial.analysis.dataset import Label, add_labels
+from axial.core.store import Store
+from axial.core.traces import Trace
 from axial.errors import InvariantViolation
-from axial.report import disagreement_counts, find_disagreements, parse_reason, write_alignment
-from axial.store import Store
-from axial.traces import Trace
+from axial.judge import alignment
+from axial.judge.alignment import (
+    disagreement_counts,
+    find_disagreements,
+    parse_reason,
+    write_alignment,
+)
+from axial.stats.align import align
 
 
 def row(trace_id: str, truth: bool, verdict: bool, *, split: str = "dev", raw: str | None = None):
@@ -239,11 +245,11 @@ def test_without_disagreements_the_report_is_byte_identical_to_before(tmp_path: 
 # Non-ASCII text goes in as escapes: under the C locale argv is not decoded as UTF-8.
 WRITE_UNDER_ANY_LOCALE = r"""
 import locale, sys
-from axial.align import align
-from axial.dataset import Label
-from axial.report import find_disagreements, write_alignment
-from axial.store import Store
-from axial.traces import Trace
+from axial.stats.align import align
+from axial.analysis.dataset import Label
+from axial.judge.alignment import find_disagreements, write_alignment
+from axial.core.store import Store
+from axial.core.traces import Trace
 
 print(locale.getencoding(), flush=True)
 y = [True] * 30 + [False] * 30
@@ -287,7 +293,7 @@ def test_a_report_that_fails_to_render_leaves_alignment_json_as_it_was(
     def broken(*_args: object, **_kwargs: object) -> list[str]:
         raise RuntimeError("rendering failed")
 
-    monkeypatch.setattr(report, "_disagreement_section", broken)
+    monkeypatch.setattr(alignment, "_disagreement_section", broken)
     with pytest.raises(RuntimeError, match="rendering failed"):
         write_alignment(store, "merged", 1, perfect(), None, n_errors=0, disagreements=[])
     assert (path.parent / "alignment.json").read_bytes() == before

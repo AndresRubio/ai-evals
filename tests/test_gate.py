@@ -3,16 +3,22 @@ from pathlib import Path
 import pytest
 from promotion_helpers import stamp_run
 
-from axial.align import align
-from axial.config import Thresholds
-from axial.dataset import Label, Splits
+from axial.analysis.dataset import Label, Splits
+from axial.core.config import Thresholds
+from axial.core.model import FakeModel
+from axial.core.store import Store
+from axial.core.traces import Trace
 from axial.errors import InvariantViolation
-from axial.gate import compare, gate
-from axial.judge import JudgeSpec, current_prompt_sha256, run_judge
-from axial.model import FakeModel
-from axial.promotion import JUDGE_YAML_HASH_KEY, VERDICTS_HASH_KEY, format_promoted_marker, promote
-from axial.store import Store
-from axial.traces import Trace
+from axial.judge.promotion import (
+    JUDGE_YAML_HASH_KEY,
+    VERDICTS_HASH_KEY,
+    format_promoted_marker,
+    promote,
+)
+from axial.judge.run import run_judge
+from axial.judge.spec import JudgeSpec, current_prompt_sha256
+from axial.monitor.gate import compare, gate
+from axial.stats.align import align
 
 
 def write_verdicts(

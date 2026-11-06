@@ -15,8 +15,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
-from axial.reviews import read_session, write_session
-from axial.store import Store
+from axial.core.reviews import read_session, write_session
+from axial.core.store import Store
 
 STATIC = Path(__file__).parent / "static"
 

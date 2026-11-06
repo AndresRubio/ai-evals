@@ -10,8 +10,7 @@ from typing import Any, NoReturn
 import typer
 from pydantic import ValidationError
 
-from axial.config import Config, load_config, load_env, write_default_config
-from axial.dataset import (
+from axial.analysis.dataset import (
     add_labels,
     class_balance_report,
     labels_from_reviews,
@@ -19,37 +18,35 @@ from axial.dataset import (
     read_label_file,
     read_labels,
 )
+from axial.analysis.sample import check_sample_options, sample_batch
+from axial.analysis.taxonomy import Taxonomy, count_open_codes, propose_taxonomy, saturation_curve
+from axial.core.config import Config, load_config, load_env, write_default_config
+from axial.core.model import LiteLLMModel, is_decision_model, require_text_model
+from axial.core.reviews import all_reviews, create_session, read_session, refuse_existing_session
+from axial.core.store import Store, validate_name
+from axial.core.traces import ingest as do_ingest
 from axial.errors import AxialError, MalformedFile, validation_message
-from axial.gate import gate as run_gate
-from axial.gate import gate_batches
-from axial.judge import (
-    JudgeSpec,
-    build_judge_model,
-    current_prompt_sha256,
-    kept_rows,
-    prepare_spec,
-    read_errors,
-    read_verdicts,
-    resolve_version,
-    run_judge,
-)
-from axial.measure import measure_batch, summary_lines
-from axial.model import LiteLLMModel, is_decision_model, require_text_model
-from axial.perplexity import DEGENERATE_SPREAD, score_traces
-from axial.perplexity import spread as perplexity_spread
-from axial.promotion import check_promotion
-from axial.promotion import promote as do_promote
-from axial.report import (
+from axial.judge.alignment import (
     alignment_from_verdicts,
     disagreement_counts,
     find_disagreements,
     write_alignment,
 )
-from axial.reviews import all_reviews, create_session, read_session, refuse_existing_session
-from axial.sample import check_sample_options, sample_batch
-from axial.store import Store, validate_name
-from axial.taxonomy import Taxonomy, count_open_codes, propose_taxonomy, saturation_curve
-from axial.traces import ingest as do_ingest
+from axial.judge.promotion import check_promotion
+from axial.judge.promotion import promote as do_promote
+from axial.judge.run import kept_rows, read_errors, read_verdicts, run_judge
+from axial.judge.spec import (
+    JudgeSpec,
+    build_judge_model,
+    current_prompt_sha256,
+    prepare_spec,
+    resolve_version,
+)
+from axial.monitor.gate import gate as run_gate
+from axial.monitor.gate import gate_batches
+from axial.monitor.measure import measure_batch, summary_lines
+from axial.stats.perplexity import DEGENERATE_SPREAD, score_traces
+from axial.stats.perplexity import spread as perplexity_spread
 
 app = typer.Typer(help="Error-analysis-first eval toolkit: from traces to a judge you can trust.")
 
@@ -243,7 +240,7 @@ def annotate(
     """Open the annotation app in a local server."""
     import uvicorn
 
-    from axial.annotate.app import create_app
+    from axial.analysis.annotate.app import create_app
 
     store = Store(repo)
     config = _config(store)
@@ -393,7 +390,7 @@ def judge(
     repo: str = RepoOption,
 ) -> None:
     """Run the judge over one split."""
-    from axial.dataset import Splits
+    from axial.analysis.dataset import Splits
 
     valid_splits = ("train", "dev", "test")
     if split_name not in valid_splits:
@@ -530,7 +527,7 @@ def tune_threshold(
     repo: str = RepoOption,
 ) -> None:
     """Choose a decision model's threshold from its dev verdicts. Calls no model."""
-    from axial.threshold import tune_from_verdicts, tuning_summary_lines, write_tuned_spec
+    from axial.judge.threshold import tune_from_verdicts, tuning_summary_lines, write_tuned_spec
 
     store = Store(repo)
     config = _config(store)
@@ -592,7 +589,7 @@ def checks(
     repo: str = RepoOption,
 ) -> None:
     """Slice breakdown, verbosity-bias correlation, cost, and the noise floor for this set."""
-    from axial.checks import ci_half_width, cost_usd, slice_alignment, verbosity_bias
+    from axial.judge.checks import ci_half_width, cost_usd, slice_alignment, verbosity_bias
 
     store = Store(repo)
     try:

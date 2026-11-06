@@ -17,25 +17,25 @@ from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any
 
-from axial.align import (
-    corrected_difference_paired,
-    corrected_difference_unpaired,
-    corrected_rate,
-    paired_bootstrap_ci,
-)
+from axial.core.store import Store
 from axial.errors import AxialError, InvariantViolation
-from axial.judge import read_verdicts
-from axial.measure import (
+from axial.judge.promotion import require_promoted
+from axial.judge.run import read_verdicts
+from axial.monitor.measure import (
     SATURATION_WARNING,
     Measurement,
     judge_test_matrix,
     load_measurement,
-    pair_batches,
     set_aside_note,
     summary_lines,
 )
-from axial.promotion import require_promoted
-from axial.store import Store
+from axial.monitor.pairing import pair_batches
+from axial.stats.align import paired_bootstrap_ci
+from axial.stats.corrected import (
+    corrected_difference_paired,
+    corrected_difference_unpaired,
+    corrected_rate,
+)
 
 # How far a stored interval bound may sit from the recomputed one. The bounds are
 # percentiles of Beta draws, and numpy does not promise the same stream across versions,

@@ -21,26 +21,26 @@ from measure_helpers import (
 )
 from pydantic import BaseModel, ConfigDict
 
-import axial.judge
-import axial.measure
-from axial.config import Thresholds
-from axial.dataset import Label, Splits, add_labels, read_labels
+import axial.judge.spec
+import axial.monitor.measure
+from axial.analysis.dataset import Label, Splits, add_labels, read_labels
+from axial.core.config import Thresholds
+from axial.core.model import FakeModel, JevModel
+from axial.core.store import Store
+from axial.core.traces import Trace
 from axial.errors import AxialError, InvariantViolation
-from axial.gate import gate_batches
-from axial.judge import (
+from axial.judge.alignment import alignment_from_verdicts
+from axial.judge.promotion import PROMPT_HASH_KEY, parse_promoted_marker, promote, require_promoted
+from axial.judge.run import run_judge
+from axial.judge.spec import (
     JudgeSpec,
     build_judge_model,
     current_prompt_sha256,
     load_few_shot,
     prompt_sha256,
-    run_judge,
 )
-from axial.measure import input_sha256, measure_batch
-from axial.model import FakeModel, JevModel
-from axial.promotion import PROMPT_HASH_KEY, parse_promoted_marker, promote, require_promoted
-from axial.report import alignment_from_verdicts
-from axial.store import Store
-from axial.traces import Trace
+from axial.monitor.gate import gate_batches
+from axial.monitor.measure import input_sha256, measure_batch
 
 TEMPLATE = "Grade it.\n{few_shot}\nINPUT: {input}\nOUTPUT: {output}"
 
@@ -134,7 +134,7 @@ class VerdictFirst(BaseModel):
 def fingerprint_with_schema(
     monkeypatch: pytest.MonkeyPatch, schema: type[BaseModel], judge: JudgeSpec
 ) -> str:
-    monkeypatch.setattr(axial.judge, "Verdict", schema)
+    monkeypatch.setattr(axial.judge.spec, "Verdict", schema)
     return prompt_sha256(judge, [example()])
 
 
@@ -194,7 +194,7 @@ def test_a_decision_models_fingerprint_changes_with_every_part_of_its_question(
     parts = question_parts(build_judge_model(jev).questions)
     unchanged = []
     for part in parts:
-        monkeypatch.setattr(axial.judge, "JevModel", jev_asking(part))
+        monkeypatch.setattr(axial.judge.spec, "JevModel", jev_asking(part))
         if prompt_sha256(jev, [example()]) == asked:
             unchanged.append(part)
     assert ("verdict", "type") in parts
@@ -450,7 +450,7 @@ def test_require_promoted_names_the_answer_schema_among_the_changes(
     # were, so the refusal has to name the schema for the reader to find the cause.
     store = Store(tmp_path)
     build_promoted_judge(store)
-    monkeypatch.setattr(axial.judge, "Verdict", VerdictFirst)
+    monkeypatch.setattr(axial.judge.spec, "Verdict", VerdictFirst)
     with pytest.raises(InvariantViolation, match="not the prompt it was promoted with") as caught:
         require_promoted(store, MEASURE_MODE, 1)
     assert "the answer schema" in str(caught.value)
@@ -461,7 +461,7 @@ def test_require_promoted_names_a_decision_models_question_among_the_changes(
 ):
     store = Store(tmp_path)
     build_promoted_judge(store, model="typesafe/jev-1.13")
-    monkeypatch.setattr(axial.judge, "JevModel", jev_asking(("verdict", "criteria", "true")))
+    monkeypatch.setattr(axial.judge.spec, "JevModel", jev_asking(("verdict", "criteria", "true")))
     with pytest.raises(InvariantViolation, match="not the prompt it was promoted with") as caught:
         require_promoted(store, MEASURE_MODE, 1)
     assert "the question a decision model is asked" in str(caught.value)
@@ -544,7 +544,7 @@ def test_measure_refuses_examples_that_change_after_the_promotion_check(
         relabel_train_0(store)
         return hashes
 
-    monkeypatch.setattr(axial.measure, "require_promoted", then_relabel)
+    monkeypatch.setattr(axial.monitor.measure, "require_promoted", then_relabel)
     prompts: list[str] = []
     with pytest.raises(InvariantViolation, match="changed while"):
         measure_batch(
