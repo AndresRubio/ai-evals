@@ -7,19 +7,30 @@ earned on. `gate` and `measure` call `require_promoted` before trusting a judge,
 they cannot disagree about what "promoted" means: a marker whose files or prompt have
 changed since is refused here. `run_judge` deletes the marker when it rewrites the
 verdicts.
+
+A verdict row also records the trace it judged and the label it was scored against, and
+`promote` refuses rows that no longer match the corpus and labels on disk. `gate` and
+`measure` do not read the corpus for a judge without few-shot examples, so the data is
+guarded where it changes instead: `ingest` and the label commands ask
+`promotions_hit_by_traces` and `promotions_hit_by_labels` which promoted judges a change
+would leave stale, and `guard_promotions` refuses the change or withdraws those
+promotions.
 """
 
 from __future__ import annotations
 
 import math
 import re
+from collections.abc import Iterable, Mapping
 from pathlib import Path
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
+from axial.analysis.dataset import Label, read_labels
 from axial.core.config import Thresholds
 from axial.core.store import Store
+from axial.core.traces import Trace, trace_sha256
 from axial.errors import InvariantViolation, MalformedFile
-from axial.judge.run import read_errors, read_verdicts
+from axial.judge.run import TRACE_HASH_KEY, read_errors, read_verdicts
 from axial.judge.spec import JudgeSpec, current_prompt_sha256
 from axial.stats.align import Alignment
 
@@ -290,6 +301,225 @@ def require_promoted(store: Store, mode: str, version: int) -> PromotedHashes:
     return PromotedHashes(recorded_judge_hash, recorded_verdicts_hash, recorded_prompt_hash)
 
 
+# --- the evidence a promotion rests on -------------------------------------------------
+
+
+class StaleVerdict(NamedTuple):
+    """A verdict row that no longer describes the data on disk, and why."""
+
+    trace_id: str
+    split: str | None
+    # One of the keys of `_STALE_REASONS`.
+    reason: str
+
+
+class PromotionHit(NamedTuple):
+    """A promoted judge, and the verdicts of it a change would leave stale."""
+
+    mode: str
+    version: int
+    stale: list[StaleVerdict]
+
+
+# How each reason reads after "N trace(s)".
+_STALE_REASONS = {
+    "changed": "whose text changed after judging",
+    "missing": "no longer in the corpus",
+    "unhashed": "judged before axial recorded the text it judged",
+    "relabelled": "relabelled after judging",
+    "unlabelled": "with no label now",
+}
+
+
+def _split_of(row: Mapping[str, Any]) -> str | None:
+    split = row.get("split")
+    return split if split is None else str(split)
+
+
+def _trace_problem(
+    row: Mapping[str, Any], corpus: Mapping[str, Trace], judged: str | None
+) -> str | None:
+    """Why the row's trace in `corpus` is not the trace it judged, whose hash is `judged`
+    (`None` when nothing recorded it), or `None` when it still is."""
+    trace = corpus.get(str(row["trace_id"]))
+    if trace is None:
+        return "missing"
+    if judged is None:
+        return "unhashed"
+    if trace_sha256(trace) != judged:
+        return "changed"
+    return None
+
+
+def _label_problem(row: Mapping[str, Any], labels: Mapping[str, bool]) -> str | None:
+    """Why the row's label in `labels` is not the one it was scored against, or `None`.
+
+    A row that recorded no label is left alone: alignment refuses it on its own.
+    """
+    truth = row.get("truth")
+    if truth is None:
+        return None
+    label = labels.get(str(row["trace_id"]))
+    if label is None:
+        return "unlabelled"
+    if label != bool(truth):
+        return "relabelled"
+    return None
+
+
+def _verdict_rows(store: Store, mode: str, version: int) -> list[dict[str, Any]]:
+    return read_verdicts(store, store.judge_dir(mode, version) / "verdicts.jsonl")
+
+
+def stale_verdicts(store: Store, mode: str, version: int) -> list[StaleVerdict]:
+    """The verdicts of judge `mode` v`version` that no longer describe the corpus and
+    labels on disk: their trace is gone or its text changed, their label changed, or
+    they recorded no hash of the trace they judged, so whether it changed is unknown."""
+    rows = _verdict_rows(store, mode, version)
+    if not rows:
+        return []
+    corpus = {t.trace_id: t for t in store.read_traces()}
+    labels = {lbl.trace_id: lbl.label for lbl in read_labels(store, mode)}
+    stale: list[StaleVerdict] = []
+    for row in rows:
+        reason = _trace_problem(row, corpus, row.get(TRACE_HASH_KEY)) or _label_problem(
+            row, labels
+        )
+        if reason:
+            stale.append(StaleVerdict(str(row["trace_id"]), _split_of(row), reason))
+    return stale
+
+
+def _promoted_judges(store: Store, mode: str | None = None) -> list[tuple[str, int]]:
+    return [
+        (m, v)
+        for m, v in store.judge_versions()
+        if (mode is None or m == mode) and (store.judge_dir(m, v) / "PROMOTED").exists()
+    ]
+
+
+def promotions_hit_by_traces(store: Store, traces: list[Trace]) -> list[PromotionHit]:
+    """The promoted judges whose verdicts `traces`, written as the new corpus, would
+    leave stale: a trace they judged would be gone or have other text.
+
+    A row compares the new text with the hash it recorded. A row written before axial
+    recorded one is compared with the corpus being replaced, the nearest thing to what
+    it judged that is left, and counts as stale when that corpus cannot be read or does
+    not hold its trace, since then nothing says what it judged.
+    """
+    new = {t.trace_id: t for t in traces}
+    replaced: dict[str, str] | None = None
+    hits: list[PromotionHit] = []
+    for mode, version in _promoted_judges(store):
+        stale: list[StaleVerdict] = []
+        for row in _verdict_rows(store, mode, version):
+            judged = row.get(TRACE_HASH_KEY)
+            if judged is None:
+                if replaced is None:
+                    try:
+                        replaced = {t.trace_id: trace_sha256(t) for t in store.read_traces()}
+                    except (OSError, ValueError):  # unreadable, so nothing can be compared
+                        replaced = {}
+                judged = replaced.get(str(row["trace_id"]))
+            reason = _trace_problem(row, new, judged)
+            if reason:
+                stale.append(StaleVerdict(str(row["trace_id"]), _split_of(row), reason))
+        if stale:
+            hits.append(PromotionHit(mode, version, stale))
+    return hits
+
+
+def promotions_hit_by_labels(store: Store, mode: str, labels: list[Label]) -> list[PromotionHit]:
+    """The promoted judges of `mode` whose verdicts `labels`, added to the mode's labels,
+    would leave stale: a trace they judged would get the other label. A new critique
+    under the same label changes no verdict's score, so it hits nothing."""
+    incoming = {lbl.trace_id: lbl.label for lbl in labels}
+    hits: list[PromotionHit] = []
+    for judge_mode, version in _promoted_judges(store, mode):
+        stale = [
+            StaleVerdict(str(row["trace_id"]), _split_of(row), reason)
+            for row in _verdict_rows(store, judge_mode, version)
+            if str(row["trace_id"]) in incoming
+            and (reason := _label_problem(row, incoming)) is not None
+        ]
+        if stale:
+            hits.append(PromotionHit(judge_mode, version, stale))
+    return hits
+
+
+def _stale_lines(stale: list[StaleVerdict], prefix: str = "") -> list[str]:
+    """One line per split and reason, naming up to three traces."""
+    groups: dict[tuple[str | None, str], list[str]] = {}
+    for verdict in stale:
+        groups.setdefault((verdict.split, verdict.reason), []).append(verdict.trace_id)
+
+    def order(key: tuple[str | None, str]) -> tuple[bool, str, str]:
+        split, reason = key
+        return split is None, split or "", reason
+
+    lines = []
+    for (split, reason), ids in sorted(groups.items(), key=lambda item: order(item[0])):
+        named = ", ".join(ids[:3]) + (", ..." if len(ids) > 3 else "")
+        where = split if split is not None else "rows with no split"
+        lines.append(
+            f"  - {prefix}{where}: {len(ids)} trace(s) {_STALE_REASONS[reason]} ({named})"
+        )
+    return lines
+
+
+def _rerun_advice(mode: str, version: int, splits: Iterable[str | None]) -> str:
+    """What to run so the rows of `splits` are judged again, then promoted."""
+    found = set(splits)
+    named = sorted(s for s in found if s is not None)
+    advice: list[str] = []
+    if named:
+        rerun = " and ".join(
+            f"`axial judge {mode} --version {version} --split {split}`" for split in named
+        )
+        advice.append(f"Run {rerun}, then promote.")
+    if None in found:
+        advice.append(
+            "Rows with no split cannot be re-run by split; run `axial judge --new` to "
+            "score a fresh version."
+        )
+    return " ".join(advice)
+
+
+def guard_promotions(store: Store, hits: list[PromotionHit], *, withdraw: bool) -> list[str]:
+    """Refuse a change that `hits` says would leave promoted judges' verdicts stale, or,
+    with `withdraw`, withdraw those promotions so the change can be written, and say so.
+
+    Called before the change is written, as `run_judge` deletes PROMOTED before it
+    rewrites the verdicts: a write that then fails leaves a judge unpromoted, and `axial
+    promote` restores it while its verdicts still match the data.
+    """
+    if not hits:
+        return []
+    if not withdraw:
+        lines = [
+            line
+            for hit in hits
+            for line in _stale_lines(hit.stale, prefix=f"{hit.mode} v{hit.version}, ")
+        ]
+        raise InvariantViolation(
+            "this change would alter what promoted judges were scored on, so their "
+            "promotions would no longer describe the data:\n"
+            + "\n".join(lines)
+            + "\nNothing was written. Pass --withdraw-promotions to write it and withdraw "
+            "these promotions; `axial promote` then refuses each judge until the splits "
+            "named above are judged again."
+        )
+    notes = []
+    for hit in hits:
+        (store.judge_dir(hit.mode, hit.version) / "PROMOTED").unlink(missing_ok=True)
+        notes.append(
+            f"withdrew the promotion of {hit.mode} v{hit.version}: {len(hit.stale)} of its "
+            "verdicts no longer describe the data. "
+            + _rerun_advice(hit.mode, hit.version, (s.split for s in hit.stale))
+        )
+    return notes
+
+
 def promote(
     store: Store,
     mode: str,
@@ -306,23 +536,21 @@ def promote(
         subject = f"its {' and '.join(named)} rows" if named else ""
         if None in stale:
             subject += " and its rows with no split" if named else "its rows with no split"
-        rerun = " and ".join(
-            f"`axial judge {mode} --version {version} --split {split}`" for split in named
-        )
-        advice: list[str] = []
-        if named:
-            advice.append(f"Run {rerun}, then promote.")
-        if None in stale:
-            advice.append(
-                "Rows with no split cannot be re-run by split; run `axial judge --new` to "
-                "score a fresh version."
-            )
         raise InvariantViolation(
             f"judge {mode} v{version} cannot be promoted: {subject} "
             "were not produced by the prompt its judge.yaml, traces and labels give now. "
             "judge.yaml was edited, a few-shot example was relabelled or re-ingested, or an "
             "axial upgrade changed how the prompt is built, after they ran. "
-            f"{' '.join(advice)}"
+            f"{_rerun_advice(mode, version, stale)}"
+        )
+    stale_rows = stale_verdicts(store, mode, version)
+    if stale_rows:
+        raise InvariantViolation(
+            f"judge {mode} v{version} cannot be promoted: some of its verdicts no longer "
+            "describe the traces and labels on disk.\n"
+            + "\n".join(_stale_lines(stale_rows))
+            + "\n"
+            + _rerun_advice(mode, version, (s.split for s in stale_rows))
         )
     check = check_promotion(dev, test, thresholds)
     if not check.ok:

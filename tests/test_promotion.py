@@ -198,3 +198,326 @@ def test_require_promoted_refuses_an_unpromoted_or_edited_judge(tmp_path: Path):
     (directory / "judge.yaml").write_text("mode: merged\nprompt_template: edited\n")
     with pytest.raises(InvariantViolation, match="judge.yaml has changed"):
         require_promoted(store, "merged", 1)
+
+
+# --- the evidence a promotion rests on ---------------------------------------------
+# A verdict row records the trace it judged (`trace_sha256`) and the label it was
+# scored against (`truth`). `promote` refuses rows that no longer match the corpus and
+# labels; `ingest` and the label commands refuse to change what a promoted judge was
+# scored on unless asked to withdraw the promotion.
+
+
+def _promoted(store: Store, version: int = 1) -> None:
+    from measure_helpers import build_promoted_judge
+
+    build_promoted_judge(store, version=version)
+
+
+def _promote_again(store: Store, version: int = 1) -> None:
+    from measure_helpers import MEASURE_MODE
+
+    from axial.judge.alignment import alignment_from_verdicts
+    from axial.judge.run import read_verdicts
+
+    directory = store.judge_dir(MEASURE_MODE, version)
+    (directory / "PROMOTED").unlink(missing_ok=True)
+    rows = read_verdicts(store, directory / "verdicts.jsonl")
+    promote(
+        store,
+        MEASURE_MODE,
+        version,
+        alignment_from_verdicts(rows, "dev"),
+        alignment_from_verdicts(rows, "test"),
+        Thresholds(),
+    )
+
+
+def _with_trace(store: Store, trace_id: str, **update: object) -> list:
+    return [
+        t.model_copy(update=update) if t.trace_id == trace_id else t for t in store.read_traces()
+    ]
+
+
+def _label(trace_id: str, value: bool, critique: str = "looked again"):
+    from axial.analysis.dataset import Label
+
+    return Label(trace_id=trace_id, label=value, critique=critique, annotator="andres")
+
+
+def _relabel(store: Store, trace_id: str, value: bool, critique: str = "looked again") -> None:
+    from measure_helpers import MEASURE_MODE
+
+    from axial.analysis.dataset import add_labels
+
+    add_labels(store, MEASURE_MODE, [_label(trace_id, value, critique)])
+
+
+def test_promote_refuses_a_verdict_whose_trace_text_changed_after_it_was_judged(tmp_path: Path):
+    store = Store(tmp_path)
+    _promoted(store)
+    store.write_traces(_with_trace(store, "test-000", output="GOOD"))
+    with pytest.raises(InvariantViolation) as caught:
+        _promote_again(store)
+    assert "test-000" in str(caught.value)
+    assert "--split test" in str(caught.value)
+
+
+def test_promote_refuses_a_verdict_whose_trace_left_the_corpus(tmp_path: Path):
+    store = Store(tmp_path)
+    _promoted(store)
+    store.write_traces([t for t in store.read_traces() if t.trace_id != "dev-00"])
+    with pytest.raises(InvariantViolation) as caught:
+        _promote_again(store)
+    assert "dev-00" in str(caught.value)
+    assert "--split dev" in str(caught.value)
+
+
+def test_promote_refuses_a_verdict_whose_label_changed_after_it_was_judged(tmp_path: Path):
+    store = Store(tmp_path)
+    _promoted(store)
+    _relabel(store, "test-000", False)
+    with pytest.raises(InvariantViolation) as caught:
+        _promote_again(store)
+    assert "test-000" in str(caught.value)
+    assert "relabelled" in str(caught.value)
+
+
+def test_promote_refuses_verdicts_judged_before_trace_hashes_were_recorded(tmp_path: Path):
+    from measure_helpers import MEASURE_MODE
+
+    store = Store(tmp_path)
+    _promoted(store)
+    path = store.judge_dir(MEASURE_MODE, 1) / "verdicts.jsonl"
+    store.write_jsonl(
+        path,
+        [
+            {k: v for k, v in row.items() if not (k == "trace_sha256" and row["split"] == "dev")}
+            for row in store._read_jsonl(path)
+        ],
+    )
+    with pytest.raises(InvariantViolation) as caught:
+        _promote_again(store)
+    assert "--split dev" in str(caught.value)
+    assert "--split test" not in str(caught.value)
+
+
+def test_promote_takes_verdicts_whose_data_changed_only_where_the_judge_does_not_read(
+    tmp_path: Path,
+):
+    """The nearest valid input to the refusals above: new metadata, a new critique with
+    the same label, and a trace no verdict cites leave the evidence as it was."""
+    from axial.core.traces import Trace
+
+    store = Store(tmp_path)
+    _promoted(store)
+    corpus = _with_trace(store, "test-000", metadata={"span_id": "abc"})
+    store.write_traces([*corpus, Trace(trace_id="later", input="new", output="new")])
+    _relabel(store, "test-001", True, critique="still bad, put better")
+    _promote_again(store)
+    assert (store.judge_dir("merged", 1) / "PROMOTED").exists()
+
+
+def test_judging_the_split_again_lets_a_refused_judge_be_promoted(tmp_path: Path):
+    """The way out the refusal names: re-run the split, then promote."""
+    from measure_helpers import MEASURE_MODE, judge_reply
+
+    from axial.analysis.dataset import Splits, read_labels
+    from axial.core.model import FakeModel
+    from axial.judge.run import run_judge
+    from axial.judge.spec import JudgeSpec
+
+    store = Store(tmp_path)
+    _promoted(store)
+    store.write_traces(_with_trace(store, "test-000", output="GOOD"))
+    with pytest.raises(InvariantViolation):
+        _promote_again(store)
+
+    corpus = store.read_traces()
+    splits = Splits.load(store, MEASURE_MODE)
+    by_id = {t.trace_id: t for t in corpus}
+    run_judge(
+        store,
+        JudgeSpec.load(store, MEASURE_MODE, 1),
+        [by_id[t] for t in splits.test],
+        read_labels(store, MEASURE_MODE),
+        splits,
+        FakeModel(judge_reply, model="fake-judge"),
+        split="test",
+        corpus=corpus,
+    )
+    _promote_again(store)
+    assert (store.judge_dir(MEASURE_MODE, 1) / "PROMOTED").exists()
+
+
+def test_a_corpus_that_changes_or_drops_a_judged_trace_hits_the_promoted_judge(tmp_path: Path):
+    from axial.judge.promotion import promotions_hit_by_traces
+
+    store = Store(tmp_path)
+    _promoted(store)
+    corpus = _with_trace(store, "test-000", output="GOOD")
+    corpus = [t for t in corpus if t.trace_id != "dev-00"]
+    hits = promotions_hit_by_traces(store, corpus)
+    assert [(h.mode, h.version) for h in hits] == [("merged", 1)]
+    assert {(s.trace_id, s.split, s.reason) for s in hits[0].stale} == {
+        ("test-000", "test", "changed"),
+        ("dev-00", "dev", "missing"),
+    }
+
+
+def test_a_corpus_that_only_adds_traces_or_metadata_hits_nothing(tmp_path: Path):
+    from axial.core.traces import Trace
+    from axial.judge.promotion import promotions_hit_by_traces
+
+    store = Store(tmp_path)
+    _promoted(store)
+    corpus = _with_trace(store, "test-000", metadata={"span_id": "abc"})
+    corpus.append(Trace(trace_id="later", input="new", output="new"))
+    assert promotions_hit_by_traces(store, corpus) == []
+
+
+def test_a_judge_that_is_not_promoted_is_not_guarded(tmp_path: Path):
+    from axial.judge.promotion import promotions_hit_by_labels, promotions_hit_by_traces
+
+    store = Store(tmp_path)
+    _promoted(store)
+    (store.judge_dir("merged", 1) / "PROMOTED").unlink()
+    assert promotions_hit_by_traces(store, []) == []
+    assert promotions_hit_by_labels(store, "merged", [_label("test-000", False)]) == []
+
+
+def _promoted_before_trace_hashes(store: Store) -> None:
+    """A judge promoted by an axial that recorded no trace hash: its rows carry none, and
+    its marker binds the verdicts file as it is."""
+    from measure_helpers import MEASURE_MODE
+
+    from axial.judge.promotion import PROMPT_HASH_KEY, format_promoted_marker
+
+    _promoted(store)
+    directory = store.judge_dir(MEASURE_MODE, 1)
+    rows = store._read_jsonl(directory / "verdicts.jsonl")
+    store.write_jsonl(
+        directory / "verdicts.jsonl",
+        [{k: v for k, v in row.items() if k != "trace_sha256"} for row in rows],
+    )
+    recorded = parse_promoted_marker((directory / "PROMOTED").read_text())
+    (directory / "PROMOTED").write_text(
+        format_promoted_marker(
+            "dev",
+            "test",
+            store.hash_file(directory / "judge.yaml"),
+            store.hash_file(directory / "verdicts.jsonl"),
+            recorded[PROMPT_HASH_KEY],
+        )
+    )
+
+
+def test_a_judge_promoted_before_trace_hashes_still_gates(tmp_path: Path):
+    """A guard: the change asks for nothing from a promotion until its data changes."""
+    from axial.judge.promotion import require_promoted
+
+    store = Store(tmp_path)
+    _promoted_before_trace_hashes(store)
+    require_promoted(store, "merged", 1)
+
+
+def test_a_judge_promoted_before_trace_hashes_is_guarded_against_the_corpus_it_replaces(
+    tmp_path: Path,
+):
+    from axial.judge.promotion import promotions_hit_by_traces
+
+    store = Store(tmp_path)
+    _promoted_before_trace_hashes(store)
+    assert promotions_hit_by_traces(store, store.read_traces()) == []
+    hits = promotions_hit_by_traces(store, _with_trace(store, "test-000", output="GOOD"))
+    assert {(s.trace_id, s.reason) for s in hits[0].stale} == {("test-000", "changed")}
+
+
+def test_a_label_that_flips_a_judged_verdict_hits_the_promoted_judge(tmp_path: Path):
+    from axial.judge.promotion import promotions_hit_by_labels
+
+    store = Store(tmp_path)
+    _promoted(store)
+    hits = promotions_hit_by_labels(store, "merged", [_label("test-000", False)])
+    assert [(h.mode, h.version) for h in hits] == [("merged", 1)]
+    assert {(s.trace_id, s.split, s.reason) for s in hits[0].stale} == {
+        ("test-000", "test", "relabelled")
+    }
+
+
+def test_a_label_that_keeps_the_judged_value_or_names_another_trace_hits_nothing(
+    tmp_path: Path,
+):
+    from axial.judge.promotion import promotions_hit_by_labels
+
+    store = Store(tmp_path)
+    _promoted(store)
+    labels = [_label("test-000", True, critique="reworded"), _label("later", False)]
+    assert promotions_hit_by_labels(store, "merged", labels) == []
+    assert promotions_hit_by_labels(store, "wrong_topic", [_label("test-000", False)]) == []
+
+
+def test_the_guard_refuses_a_hit_and_leaves_every_marker_in_place(tmp_path: Path):
+    from axial.judge.promotion import guard_promotions, promotions_hit_by_labels
+
+    store = Store(tmp_path)
+    _promoted(store)
+    hits = promotions_hit_by_labels(store, "merged", [_label("test-000", False)])
+    with pytest.raises(InvariantViolation) as caught:
+        guard_promotions(store, hits, withdraw=False)
+    assert "merged v1" in str(caught.value)
+    assert "test-000" in str(caught.value)
+    assert (store.judge_dir("merged", 1) / "PROMOTED").exists()
+
+
+def test_withdrawing_removes_the_markers_of_the_hit_judges_only(tmp_path: Path):
+    from axial.judge.promotion import PromotionHit, StaleVerdict, guard_promotions
+
+    store = Store(tmp_path)
+    _promoted(store, version=1)
+    _promoted(store, version=2)
+    hit = PromotionHit("merged", 1, [StaleVerdict("test-000", "test", "relabelled")])
+    notes = guard_promotions(store, [hit], withdraw=True)
+    assert not (store.judge_dir("merged", 1) / "PROMOTED").exists()
+    assert (store.judge_dir("merged", 2) / "PROMOTED").exists()
+    assert any("merged v1" in note for note in notes)
+
+
+def test_no_hit_needs_no_flag_and_withdraws_nothing(tmp_path: Path):
+    from axial.judge.promotion import guard_promotions
+
+    store = Store(tmp_path)
+    _promoted(store)
+    assert guard_promotions(store, [], withdraw=False) == []
+    assert (store.judge_dir("merged", 1) / "PROMOTED").exists()
+
+
+def test_a_change_made_without_the_commands_passes_the_gate_until_the_next_promotion(
+    tmp_path: Path,
+):
+    """The limit the README states: an edit outside `ingest` and the label commands goes
+    past the guard, `gate` keeps passing because it reads no corpus for a judge without
+    examples, and `promote` is where it is caught."""
+    from axial.judge.promotion import require_promoted
+
+    store = Store(tmp_path)
+    _promoted(store)
+    store.write_traces(_with_trace(store, "test-000", output="GOOD"))
+    require_promoted(store, "merged", 1)
+    with pytest.raises(InvariantViolation, match="test-000"):
+        _promote_again(store)
+
+
+def test_a_judge_promoted_before_trace_hashes_counts_as_hit_when_the_old_corpus_is_unreadable(
+    tmp_path: Path,
+):
+    """With no hash and no readable corpus, nothing says what the judge read, so the
+    guard refuses rather than let the change through unchecked."""
+    from axial.judge.promotion import promotions_hit_by_traces
+
+    store = Store(tmp_path)
+    _promoted_before_trace_hashes(store)
+    corpus = store.read_traces()
+    store.traces_path.write_text("not json\n")
+    hits = promotions_hit_by_traces(store, corpus)
+    assert [(h.mode, h.version) for h in hits] == [("merged", 1)]
+    assert {s.reason for s in hits[0].stale} == {"unhashed"}

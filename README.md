@@ -100,6 +100,22 @@ The refusals are the product.
   nothing.
 - **No promotion below the bar.** Test TPR and TNR must clear your threshold and the
   dev→test gap must be within tolerance.
+- **No promotion on verdicts the data has moved past.** Every verdict row records a
+  hash of the trace it judged, its input and output, beside the label it was scored
+  against. `axial promote` refuses a split with a verdict whose trace has left the
+  corpus, whose text changed under the same id, or whose label changed since, names
+  those traces and says which split to judge again. `gate` and `measure` do not read
+  the corpus for a judge without few-shot examples, so the change is caught where it
+  is made instead: `axial ingest`, `label-import` and `label-from-reviews` refuse to
+  drop or change a trace, or flip a label, that a promoted judge was scored on, and
+  write nothing. With `--withdraw-promotions` they write it and withdraw those
+  promotions, so the gate fails until the judge is judged again and promoted. New
+  traces, new metadata and a new critique under the same label go through. A file
+  edited by hand under `.axial/` goes past these commands, and the gate keeps passing
+  until the judge is next promoted, when `promote` refuses. A judge promoted before
+  verdict rows recorded the hash keeps gating, and these commands check it against
+  the corpus they replace, but `promote` refuses its rows until each split is judged
+  again.
 - **Gates compare intervals, not point estimates.** `gate --batch` gates on batches
   that `measure` graded: `--max-rate` fails when the upper end of a batch's corrected
   failure rate interval is above the ceiling, and `--baseline-batch` fails when the

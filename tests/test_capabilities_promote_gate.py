@@ -16,7 +16,7 @@ import pytest
 from promotion_helpers import stamp_run
 from typer.testing import CliRunner
 
-from axial.analysis.dataset import Label, Splits
+from axial.analysis.dataset import Label, Splits, add_labels
 from axial.cli import app
 from axial.core.config import Thresholds
 from axial.core.model import FakeModel
@@ -51,7 +51,10 @@ def write_run(store: Store, mode: str, version: int, verdicts: list[bool]) -> No
     store.write_jsonl(
         directory / "verdicts.jsonl",
         [
-            {"trace_id": f"t{i}", "split": "test", "verdict": v, "truth": v}
+            # Every version of a mode is scored against the one label set on disk, and
+            # `promote` refuses rows whose label no longer matches it. The judge-vs-judge
+            # gate reads the verdicts alone, so one label per case serves every run.
+            {"trace_id": f"t{i}", "split": "test", "verdict": v, "truth": False}
             for i, v in enumerate(verdicts)
         ],
     )
@@ -290,6 +293,9 @@ def test_the_gate_pairs_cases_by_id_not_by_their_order_in_verdicts_jsonl(tmp_pat
               for t in traces]
     splits = Splits(dev=["d0", "d1"], test=["t0", "t1"])
     model = FakeModel(lambda _p: '{"verdict": "pass"}')
+    # `axial judge` reads both from the store, and `promote` checks the verdicts against it.
+    store.write_traces(traces)
+    add_labels(store, "m", labels)
 
     def judge(version: int, order: tuple[str, ...]) -> None:
         spec = JudgeSpec(mode="m", model="fake", version=version)

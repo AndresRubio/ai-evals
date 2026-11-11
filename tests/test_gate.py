@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 from promotion_helpers import stamp_run
 
-from axial.analysis.dataset import Label, Splits
+from axial.analysis.dataset import Label, Splits, add_labels
 from axial.core.config import Thresholds
 from axial.core.model import FakeModel
 from axial.core.store import Store
@@ -224,6 +224,11 @@ def test_the_reported_sequence_fails_at_gate(tmp_path: Path):
     ]
     spec = JudgeSpec(mode="m", model="fake", version=1)
     spec.save(store)
+    # `axial judge` reads both from the store, and `promote` checks the verdicts against it.
+    store.write_traces(
+        [Trace(trace_id="d0", input="i", output="o"), Trace(trace_id="t0", input="i", output="o")]
+    )
+    add_labels(store, "m", labels)
     run_judge(store, spec, [Trace(trace_id="d0", input="i", output="o")], labels, splits,
               FakeModel(lambda _p: '{"verdict": "pass"}'), split="dev")
     run_judge(store, spec, [Trace(trace_id="t0", input="i", output="o")], labels, splits,

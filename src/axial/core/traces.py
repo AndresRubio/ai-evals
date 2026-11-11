@@ -35,6 +35,20 @@ def compute_trace_id(input: str, output: str) -> str:
     return digest.hexdigest()[:16]
 
 
+def trace_sha256(trace: Trace) -> str:
+    """The hash of the text a judge reads from `trace`: its input and its output.
+
+    A verdict row records it, so a trace whose text changes under the same id is seen
+    to no longer be the trace that was judged. The id and the metadata are left out,
+    as no prompt carries them. The two fields go in as a JSON array, so text moved
+    across the boundary between them changes the hash, which `compute_trace_id`'s
+    NUL-joined string does not guarantee. `ensure_ascii` writes a lone surrogate as an
+    escape, which keeps the text encodable.
+    """
+    text = json.dumps([trace.input, trace.output], ensure_ascii=True)
+    return hashlib.sha256(text.encode("ascii")).hexdigest()
+
+
 def lone_surrogate(input: object, output: object) -> str | None:
     """Name the first of a trace's input and output that holds a lone surrogate, as
     "an input that is not valid UTF-8 (...)", or return None.

@@ -1127,3 +1127,136 @@ def test_align_points_a_decision_model_at_tune_threshold(tmp_path: Path):
 
     assert result.exit_code == 0, result.stdout
     assert "`axial tune-threshold m 1`" in (directory / "alignment.md").read_text()
+
+
+# --- the guard on data a promoted judge was scored on --------------------------------
+
+
+def _promoted_judge(tmp_path: Path) -> Store:
+    from measure_helpers import build_promoted_judge
+
+    store = Store(tmp_path)
+    build_promoted_judge(store)
+    return store
+
+
+def _corpus_file(tmp_path: Path, store: Store, **changed_outputs: str) -> Path:
+    p = tmp_path / "export.jsonl"
+    rows = [
+        {"trace_id": t.trace_id, "input": t.input, "output": changed_outputs.get(t.trace_id, t.output)}
+        for t in store.read_traces()
+    ]
+    p.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+    return p
+
+
+def test_ingest_refuses_a_corpus_that_changes_what_a_promoted_judge_was_scored_on(
+    tmp_path: Path,
+):
+    store = _promoted_judge(tmp_path)
+    before = store.traces_path.read_bytes()
+    src = _corpus_file(tmp_path, store, **{"test-000": "GOOD"})
+    result = runner.invoke(app, ["ingest", str(src), "--repo", str(tmp_path)])
+    assert result.exit_code == 1
+    assert "merged v1" in result.stdout
+    assert "test-000" in result.stdout
+    assert "--withdraw-promotions" in result.stdout
+    assert store.traces_path.read_bytes() == before
+    assert (store.judge_dir("merged", 1) / "PROMOTED").exists()
+
+
+def test_ingest_takes_a_corpus_that_leaves_every_judged_trace_as_it_was(tmp_path: Path):
+    """The nearest valid input: the same corpus with one more trace."""
+    store = _promoted_judge(tmp_path)
+    src = _corpus_file(tmp_path, store)
+    with src.open("a") as fh:
+        fh.write(json.dumps({"trace_id": "later", "input": "new", "output": "new"}) + "\n")
+    result = runner.invoke(app, ["ingest", str(src), "--repo", str(tmp_path)])
+    assert result.exit_code == 0, result.stdout
+    assert any(t.trace_id == "later" for t in store.read_traces())
+    assert (store.judge_dir("merged", 1) / "PROMOTED").exists()
+
+
+def test_ingest_with_withdraw_promotions_writes_the_corpus_and_promote_then_refuses(
+    tmp_path: Path,
+):
+    store = _promoted_judge(tmp_path)
+    src = _corpus_file(tmp_path, store, **{"test-000": "GOOD"})
+    result = runner.invoke(
+        app, ["ingest", str(src), "--withdraw-promotions", "--repo", str(tmp_path)]
+    )
+    assert result.exit_code == 0, result.stdout
+    assert "withdrew" in result.stdout
+    assert {t.trace_id: t.output for t in store.read_traces()}["test-000"] == "GOOD"
+    assert not (store.judge_dir("merged", 1) / "PROMOTED").exists()
+
+    gated = runner.invoke(app, ["gate", "merged", "--version", "1", "--repo", str(tmp_path)])
+    assert gated.exit_code == 1
+    assert "has not been promoted" in gated.stdout
+
+    promoted = runner.invoke(app, ["promote", "merged", "1", "--repo", str(tmp_path)])
+    assert promoted.exit_code == 1
+    assert "test-000" in promoted.stdout
+    assert not (store.judge_dir("merged", 1) / "PROMOTED").exists()
+
+
+def test_label_import_refuses_a_label_that_flips_a_judged_verdict(tmp_path: Path):
+    from axial.analysis.dataset import read_labels
+
+    store = _promoted_judge(tmp_path)
+    before = {lbl.trace_id: lbl.label for lbl in read_labels(store, "merged")}
+    labels_path = write_labels_file(
+        tmp_path,
+        [{"trace_id": "test-000", "label": False, "critique": "fine", "annotator": "andres"}],
+    )
+    args = ["label-import", "merged", "--path", str(labels_path), "--repo", str(tmp_path)]
+    result = runner.invoke(app, args)
+    assert result.exit_code == 1
+    assert "test-000" in result.stdout
+    assert {lbl.trace_id: lbl.label for lbl in read_labels(store, "merged")} == before
+    assert (store.judge_dir("merged", 1) / "PROMOTED").exists()
+
+    result = runner.invoke(app, [*args, "--withdraw-promotions"])
+    assert result.exit_code == 0, result.stdout
+    assert {lbl.trace_id: lbl.label for lbl in read_labels(store, "merged")}["test-000"] is False
+    assert not (store.judge_dir("merged", 1) / "PROMOTED").exists()
+
+
+def test_label_import_takes_a_new_critique_that_keeps_the_judged_label(tmp_path: Path):
+    """The nearest valid input: the same label value, reworded."""
+    store = _promoted_judge(tmp_path)
+    labels_path = write_labels_file(
+        tmp_path,
+        [{"trace_id": "test-000", "label": True, "critique": "reworded", "annotator": "andres"}],
+    )
+    result = runner.invoke(
+        app, ["label-import", "merged", "--path", str(labels_path), "--repo", str(tmp_path)]
+    )
+    assert result.exit_code == 0, result.stdout
+    assert (store.judge_dir("merged", 1) / "PROMOTED").exists()
+
+
+def test_label_from_reviews_refuses_a_label_that_flips_a_judged_verdict(tmp_path: Path):
+    from axial.analysis.dataset import read_labels
+    from axial.core.reviews import create_session, read_session, write_session
+
+    store = _promoted_judge(tmp_path)
+    trace = next(t for t in store.read_traces() if t.trace_id == "test-000")
+    create_session(store, [trace], name="second-look")
+    reviews = read_session(store, "second-look")
+    for review in reviews:
+        review.verdict = "pass"
+        review.critique = "fine on a second look"
+        review.annotator = "andres"
+        review.status = "done"
+    write_session(store, "second-look", reviews)
+
+    args = ["label-from-reviews", "merged", "second-look", "--repo", str(tmp_path)]
+    result = runner.invoke(app, args)
+    assert result.exit_code == 1
+    assert "test-000" in result.stdout
+    assert {lbl.trace_id: lbl.label for lbl in read_labels(store, "merged")}["test-000"] is True
+
+    result = runner.invoke(app, [*args, "--withdraw-promotions"])
+    assert result.exit_code == 0, result.stdout
+    assert not (store.judge_dir("merged", 1) / "PROMOTED").exists()

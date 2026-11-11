@@ -67,6 +67,27 @@ def test_hash_ids_is_order_independent(tmp_path: Path):
     assert s.hash_ids(["a"]) != s.hash_ids(["a", "b"])
 
 
+def test_judge_versions_lists_every_judge_directory_by_mode_and_version(tmp_path: Path):
+    s = Store(tmp_path)
+    for mode, version in (("merged", 2), ("merged", 1), ("wrong_topic", 1)):
+        s.judge_dir(mode, version).mkdir(parents=True)
+    assert s.judge_versions() == [("merged", 1), ("merged", 2), ("wrong_topic", 1)]
+
+
+def test_judge_versions_skips_copies_files_and_names_that_are_not_modes(tmp_path: Path):
+    s = Store(tmp_path)
+    s.judge_dir("merged", 1).mkdir(parents=True)
+    (s.judge_dir("merged", 1).parent / "v1-backup").mkdir()
+    (s.judge_dir("merged", 1).parent / "v3").write_text("not a directory")
+    (s.root / "judges" / ".DS_Store").write_text("")
+    (s.root / "judges" / "not a mode").mkdir()
+    assert s.judge_versions() == [("merged", 1)]
+
+
+def test_judge_versions_is_empty_before_any_judge_exists(tmp_path: Path):
+    assert Store(tmp_path).judge_versions() == []
+
+
 def test_next_judge_version_starts_at_one_and_increments(tmp_path: Path):
     s = Store(tmp_path)
     assert s.next_judge_version("mode") == 1

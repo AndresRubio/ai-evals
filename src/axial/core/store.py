@@ -152,6 +152,30 @@ class Store:
         versions = [int(m.group(1)) for m in matches if m]
         return max(versions) if versions else None
 
+    def judge_versions(self) -> list[tuple[str, int]]:
+        """Every judge on disk as `(mode, version)`, sorted.
+
+        As in `latest_judge_version`, only `v<digits>` is a version, and only a
+        directory is a judge. A name under `judges/` that is not a valid mode name was
+        not made by axial and is left alone.
+        """
+        root = self.root / "judges"
+        if not root.is_dir():
+            return []
+        found: list[tuple[str, int]] = []
+        for mode_dir in root.iterdir():
+            if not mode_dir.is_dir():
+                continue
+            try:
+                validate_name(mode_dir.name, "mode")
+            except AxialError:
+                continue
+            for entry in mode_dir.iterdir():
+                match = VERSION_RE.fullmatch(entry.name)
+                if match and entry.is_dir():
+                    found.append((mode_dir.name, int(match.group(1))))
+        return sorted(found)
+
     def next_judge_version(self, mode: str) -> int:
         return (self.latest_judge_version(mode) or 0) + 1
 

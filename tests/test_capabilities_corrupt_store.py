@@ -77,11 +77,12 @@ BATCH = [
 
 READS: dict[str, list[str]] = {
     "init": [],
-    "ingest": [],
+    # The promoted judge's verdicts, to refuse a change to what it was scored on.
+    "ingest": [VERDICTS],
     "sample": [TRACES],
     "taxonomy": [SESSION],
-    "label-import": [LABELS],
-    "label-from-reviews": [SESSION, LABELS],
+    "label-import": [LABELS, VERDICTS],
+    "label-from-reviews": [SESSION, LABELS, VERDICTS],
     "split": [f".axial/datasets/{OTHER}/labels.jsonl", f".axial/datasets/{OTHER}/splits.json"],
     "judge": [TAXONOMY, JUDGE, VERDICTS, ERRORS, *FEW_SHOT],
     "align": [JUDGE, VERDICTS, ERRORS, LABELS, TRACES],
@@ -121,9 +122,11 @@ def template(tmp_path_factory: pytest.TempPathFactory) -> Path:
         modes=[FailureMode(id=M, name="Merged", definition="the answer merges two questions")]
     ).save(store)
     reviewed = [f"train-{i}" for i in range(4)] + [f"dev-{i:02d}" for i in range(26)]
+    # The same verdicts the judge's labels hold, so `label-from-reviews` relabels nothing
+    # the promoted judge was scored on and runs cleanly.
     reviews = [
         Review(
-            trace_id=trace_id, open_code=f"code {i}", verdict="fail" if i % 2 else "pass",
+            trace_id=trace_id, open_code=f"code {i}", verdict="fail" if i % 2 == 0 else "pass",
             critique="read the whole answer", annotator="andres", status="done",
         )
         for i, trace_id in enumerate(reviewed)
@@ -135,9 +138,11 @@ def template(tmp_path_factory: pytest.TempPathFactory) -> Path:
         store, OTHER,
         [Label(trace_id=f"t{i}", label=i % 2 == 0, critique="c", annotator="andres") for i in range(60)],
     )
-    (root / "in.jsonl").write_text(
-        "".join(json.dumps({"trace_id": f"t{i}", "input": "q", "output": "a"}) + "\n" for i in range(3))
-    )
+    # The corpus again with three new traces, so `ingest` changes nothing the promoted
+    # judge was scored on and runs cleanly.
+    rows = [{"trace_id": t.trace_id, "input": t.input, "output": t.output} for t in store.read_traces()]
+    rows += [{"trace_id": f"t{i}", "input": "q", "output": "a"} for i in range(3)]
+    (root / "in.jsonl").write_text("".join(json.dumps(row) + "\n" for row in rows))
     (root / "import.jsonl").write_text(
         json.dumps({"trace_id": "dev-00", "label": True, "critique": "c", "annotator": "andres"}) + "\n"
     )
