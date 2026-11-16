@@ -47,6 +47,25 @@ def test_the_text_parse_still_handles_a_model_that_ignored_the_schema(tmp_path: 
     assert result.verdicts[0]["verdict"] is True
 
 
+def test_a_verdict_row_records_the_hash_of_the_trace_it_judged(tmp_path: Path):
+    """`promote` compares this hash with the corpus, so a trace whose text changed after
+    it was judged cannot be promoted on its old verdict."""
+    from axial.core.traces import trace_sha256
+
+    store = Store(tmp_path)
+    splits = Splits(train=[], dev=["t1", "t2"], test=[])
+    model = FakeModel(lambda _p: '{"reason": "fine", "verdict": "pass"}')
+    run_judge(
+        store, spec(), [trace(1), trace(2)], [label(1, False), label(2, False)], splits, model,
+        split="dev",
+    )
+    rows = read_verdicts(store, store.judge_dir("merged", 1) / "verdicts.jsonl")
+    assert {r["trace_id"]: r["trace_sha256"] for r in rows} == {
+        "t1": trace_sha256(trace(1)),
+        "t2": trace_sha256(trace(2)),
+    }
+
+
 def test_run_judge_writes_one_verdict_per_trace(tmp_path: Path):
     store = Store(tmp_path)
     splits = Splits(train=[], dev=["t1", "t2"], test=[])

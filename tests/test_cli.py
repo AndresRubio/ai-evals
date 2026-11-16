@@ -1127,3 +1127,390 @@ def test_align_points_a_decision_model_at_tune_threshold(tmp_path: Path):
 
     assert result.exit_code == 0, result.stdout
     assert "`axial tune-threshold m 1`" in (directory / "alignment.md").read_text()
+
+
+# --- the guard on data a promoted judge was scored on --------------------------------
+
+
+def _promoted_judge(tmp_path: Path) -> Store:
+    from measure_helpers import build_promoted_judge
+
+    store = Store(tmp_path)
+    build_promoted_judge(store)
+    return store
+
+
+def _corpus_file(tmp_path: Path, store: Store, **changed_outputs: str) -> Path:
+    p = tmp_path / "export.jsonl"
+    rows = [
+        {"trace_id": t.trace_id, "input": t.input, "output": changed_outputs.get(t.trace_id, t.output)}
+        for t in store.read_traces()
+    ]
+    p.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+    return p
+
+
+def test_ingest_refuses_a_corpus_that_changes_what_a_promoted_judge_was_scored_on(
+    tmp_path: Path,
+):
+    store = _promoted_judge(tmp_path)
+    before = store.traces_path.read_bytes()
+    src = _corpus_file(tmp_path, store, **{"test-000": "GOOD"})
+    result = runner.invoke(app, ["ingest", str(src), "--repo", str(tmp_path)])
+    assert result.exit_code == 1
+    assert "merged v1" in result.stdout
+    assert "test-000" in result.stdout
+    assert "--withdraw-promotions" in result.stdout
+    assert store.traces_path.read_bytes() == before
+    assert (store.judge_dir("merged", 1) / "PROMOTED").exists()
+
+
+def test_ingest_takes_a_corpus_that_leaves_every_judged_trace_as_it_was(tmp_path: Path):
+    """The nearest valid input: the same corpus with one more trace."""
+    store = _promoted_judge(tmp_path)
+    src = _corpus_file(tmp_path, store)
+    with src.open("a") as fh:
+        fh.write(json.dumps({"trace_id": "later", "input": "new", "output": "new"}) + "\n")
+    result = runner.invoke(app, ["ingest", str(src), "--repo", str(tmp_path)])
+    assert result.exit_code == 0, result.stdout
+    assert any(t.trace_id == "later" for t in store.read_traces())
+    assert (store.judge_dir("merged", 1) / "PROMOTED").exists()
+
+
+def test_ingest_with_withdraw_promotions_writes_the_corpus_and_promote_then_refuses(
+    tmp_path: Path,
+):
+    store = _promoted_judge(tmp_path)
+    src = _corpus_file(tmp_path, store, **{"test-000": "GOOD"})
+    result = runner.invoke(
+        app, ["ingest", str(src), "--withdraw-promotions", "--repo", str(tmp_path)]
+    )
+    assert result.exit_code == 0, result.stdout
+    assert "withdrew" in result.stdout
+    assert {t.trace_id: t.output for t in store.read_traces()}["test-000"] == "GOOD"
+    assert not (store.judge_dir("merged", 1) / "PROMOTED").exists()
+
+    gated = runner.invoke(app, ["gate", "merged", "--version", "1", "--repo", str(tmp_path)])
+    assert gated.exit_code == 1
+    assert "has not been promoted" in gated.stdout
+
+    promoted = runner.invoke(app, ["promote", "merged", "1", "--repo", str(tmp_path)])
+    assert promoted.exit_code == 1
+    assert "test-000" in promoted.stdout
+    assert not (store.judge_dir("merged", 1) / "PROMOTED").exists()
+
+
+def test_label_import_refuses_a_label_that_flips_a_judged_verdict(tmp_path: Path):
+    from axial.analysis.dataset import read_labels
+
+    store = _promoted_judge(tmp_path)
+    before = {lbl.trace_id: lbl.label for lbl in read_labels(store, "merged")}
+    labels_path = write_labels_file(
+        tmp_path,
+        [{"trace_id": "test-000", "label": False, "critique": "fine", "annotator": "andres"}],
+    )
+    args = ["label-import", "merged", "--path", str(labels_path), "--repo", str(tmp_path)]
+    result = runner.invoke(app, args)
+    assert result.exit_code == 1
+    assert "test-000" in result.stdout
+    assert {lbl.trace_id: lbl.label for lbl in read_labels(store, "merged")} == before
+    assert (store.judge_dir("merged", 1) / "PROMOTED").exists()
+
+    result = runner.invoke(app, [*args, "--withdraw-promotions"])
+    assert result.exit_code == 0, result.stdout
+    assert {lbl.trace_id: lbl.label for lbl in read_labels(store, "merged")}["test-000"] is False
+    assert not (store.judge_dir("merged", 1) / "PROMOTED").exists()
+
+
+def test_label_import_takes_a_new_critique_that_keeps_the_judged_label(tmp_path: Path):
+    """The nearest valid input: the same label value, reworded."""
+    store = _promoted_judge(tmp_path)
+    labels_path = write_labels_file(
+        tmp_path,
+        [{"trace_id": "test-000", "label": True, "critique": "reworded", "annotator": "andres"}],
+    )
+    result = runner.invoke(
+        app, ["label-import", "merged", "--path", str(labels_path), "--repo", str(tmp_path)]
+    )
+    assert result.exit_code == 0, result.stdout
+    assert (store.judge_dir("merged", 1) / "PROMOTED").exists()
+
+
+def test_label_from_reviews_refuses_a_label_that_flips_a_judged_verdict(tmp_path: Path):
+    from axial.analysis.dataset import read_labels
+    from axial.core.reviews import create_session, read_session, write_session
+
+    store = _promoted_judge(tmp_path)
+    trace = next(t for t in store.read_traces() if t.trace_id == "test-000")
+    create_session(store, [trace], name="second-look")
+    reviews = read_session(store, "second-look")
+    for review in reviews:
+        review.verdict = "pass"
+        review.critique = "fine on a second look"
+        review.annotator = "andres"
+        review.status = "done"
+    write_session(store, "second-look", reviews)
+
+    args = ["label-from-reviews", "merged", "second-look", "--repo", str(tmp_path)]
+    result = runner.invoke(app, args)
+    assert result.exit_code == 1
+    assert "test-000" in result.stdout
+    assert {lbl.trace_id: lbl.label for lbl in read_labels(store, "merged")}["test-000"] is True
+
+    result = runner.invoke(app, [*args, "--withdraw-promotions"])
+    assert result.exit_code == 0, result.stdout
+    assert not (store.judge_dir("merged", 1) / "PROMOTED").exists()
+
+
+def test_label_import_keeps_the_promotion_when_the_labels_are_refused_anyway(tmp_path: Path):
+    """The labels are checked before any promotion is withdrawn, so a refused import with
+    --withdraw-promotions leaves the judge promoted and says nothing went stale."""
+    from axial.analysis.dataset import read_labels
+
+    store = _promoted_judge(tmp_path)
+    before = {lbl.trace_id: lbl.label for lbl in read_labels(store, "merged")}
+    labels_path = write_labels_file(
+        tmp_path,
+        [{"trace_id": "test-000", "label": False, "critique": "  ", "annotator": "andres"}],
+    )
+    result = runner.invoke(
+        app,
+        ["label-import", "merged", "--path", str(labels_path), "--withdraw-promotions",
+         "--repo", str(tmp_path)],
+    )
+    assert result.exit_code == 1
+    assert "empty critique" in result.stdout
+    assert "withdrew" not in result.stdout
+    assert (store.judge_dir("merged", 1) / "PROMOTED").exists()
+    assert {lbl.trace_id: lbl.label for lbl in read_labels(store, "merged")} == before
+
+
+def test_label_from_reviews_keeps_the_promotion_when_the_labels_are_refused_anyway(
+    tmp_path: Path,
+):
+    from axial.core.reviews import create_session, read_session, write_session
+
+    store = _promoted_judge(tmp_path)
+    trace = next(t for t in store.read_traces() if t.trace_id == "test-000")
+    create_session(store, [trace], name="by-a-model")
+    reviews = read_session(store, "by-a-model")
+    for review in reviews:
+        review.verdict = "pass"
+        review.critique = "fine"
+        review.annotator = "gpt-4o"
+        review.status = "done"
+    write_session(store, "by-a-model", reviews)
+    result = runner.invoke(
+        app,
+        ["label-from-reviews", "merged", "by-a-model", "--withdraw-promotions",
+         "--repo", str(tmp_path)],
+    )
+    assert result.exit_code == 1
+    assert "withdrew" not in result.stdout
+    assert (store.judge_dir("merged", 1) / "PROMOTED").exists()
+
+
+def test_ingest_keeps_the_promotion_when_an_adapters_traces_are_refused_anyway(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from axial.core.traces import register_adapter
+
+    store = _promoted_judge(tmp_path)
+    before = store.traces_path.read_bytes()
+    cut = [t for t in store.read_traces() if t.trace_id != "test-000"]
+    cut.append(cut[0].model_copy(update={"trace_id": "cut", "output": "emoji cut \ud83d"}))
+    monkeypatch.setattr("axial.core.traces._ADAPTERS", {})
+    register_adapter("cut", lambda _path: cut)
+    result = runner.invoke(
+        app,
+        ["ingest", str(tmp_path / "export.log"), "--adapter", "cut", "--withdraw-promotions",
+         "--repo", str(tmp_path)],
+    )
+    assert result.exit_code == 1
+    assert "not valid UTF-8" in result.stdout
+    assert "withdrew" not in result.stdout
+    assert (store.judge_dir("merged", 1) / "PROMOTED").exists()
+    assert store.traces_path.read_bytes() == before
+
+
+def _damage_verdicts(store: Store) -> None:
+    path = store.judge_dir("merged", 1) / "verdicts.jsonl"
+    path.write_text(path.read_text() + "{not json\n")
+
+
+def test_ingest_refuses_while_a_promoted_judges_verdicts_cannot_be_read_and_names_the_way_out(
+    tmp_path: Path,
+):
+    store = _promoted_judge(tmp_path)
+    src = _corpus_file(tmp_path, store)
+    _damage_verdicts(store)
+    result = runner.invoke(app, ["ingest", str(src), "--repo", str(tmp_path)])
+    assert result.exit_code == 1
+    assert len(result.stdout.strip().splitlines()) == 1
+    assert "--withdraw-promotions" in result.stdout
+    assert (store.judge_dir("merged", 1) / "PROMOTED").exists()
+
+
+def test_withdraw_promotions_gets_ingest_and_labels_past_a_judge_whose_verdicts_cannot_be_read(
+    tmp_path: Path,
+):
+    store = _promoted_judge(tmp_path)
+    src = _corpus_file(tmp_path, store)
+    _damage_verdicts(store)
+    result = runner.invoke(
+        app, ["ingest", str(src), "--withdraw-promotions", "--repo", str(tmp_path)]
+    )
+    assert result.exit_code == 0, result.stdout
+    assert not (store.judge_dir("merged", 1) / "PROMOTED").exists()
+
+    store = _promoted_judge(tmp_path / "labels")
+    _damage_verdicts(store)
+    labels_path = write_labels_file(
+        tmp_path,
+        [{"trace_id": "later", "label": True, "critique": "new", "annotator": "andres"}],
+    )
+    result = runner.invoke(
+        app,
+        ["label-import", "merged", "--path", str(labels_path), "--withdraw-promotions",
+         "--repo", str(tmp_path / "labels")],
+    )
+    assert result.exit_code == 0, result.stdout
+    assert not (store.judge_dir("merged", 1) / "PROMOTED").exists()
+
+    from axial.core.reviews import create_session, read_session, write_session
+
+    store = _promoted_judge(tmp_path / "reviews")
+    _damage_verdicts(store)
+    trace = next(t for t in store.read_traces() if t.trace_id == "test-000")
+    create_session(store, [trace], name="again")
+    reviews = read_session(store, "again")
+    for review in reviews:
+        review.verdict = "fail"
+        review.critique = "still merged"
+        review.annotator = "andres"
+        review.status = "done"
+    write_session(store, "again", reviews)
+    args = ["label-from-reviews", "merged", "again", "--repo", str(tmp_path / "reviews")]
+    refused = runner.invoke(app, args)
+    assert refused.exit_code == 1
+    assert "--withdraw-promotions" in refused.stdout
+    result = runner.invoke(app, [*args, "--withdraw-promotions"])
+    assert result.exit_code == 0, result.stdout
+    assert not (store.judge_dir("merged", 1) / "PROMOTED").exists()
+
+
+def test_a_relabelled_few_shot_example_passes_the_label_commands_and_the_gate_refuses(
+    tmp_path: Path,
+):
+    """The limit the README states: the guard covers the verdicts a judge was scored on,
+    and a few-shot example has none, so its relabel goes through and the prompt
+    fingerprint stops the judge at the gate, as before."""
+    from measure_helpers import build_promoted_judge
+
+    store = Store(tmp_path)
+    build_promoted_judge(store, few_shot_ids=["train-0"])
+    labels_path = write_labels_file(
+        tmp_path,
+        [{"trace_id": "train-0", "label": False, "critique": "fine", "annotator": "andres"}],
+    )
+    result = runner.invoke(
+        app, ["label-import", "merged", "--path", str(labels_path), "--repo", str(tmp_path)]
+    )
+    assert result.exit_code == 0, result.stdout
+    gated = runner.invoke(app, ["gate", "merged", "--version", "1", "--repo", str(tmp_path)])
+    assert gated.exit_code == 1
+    assert "not the prompt it was promoted with" in gated.stdout
+
+
+def test_promote_refuses_a_damaged_corpus_in_one_line_for_a_judge_without_examples(
+    tmp_path: Path,
+):
+    store = _promoted_judge(tmp_path)
+    (store.judge_dir("merged", 1) / "PROMOTED").unlink()
+    store.traces_path.write_text("not json\n")
+    result = runner.invoke(app, ["promote", "merged", "1", "--repo", str(tmp_path)])
+    assert result.exit_code == 1
+    assert len(result.stdout.strip().splitlines()) == 1
+    assert result.stdout.count("traces.jsonl") == 1
+
+
+def test_label_import_refuses_while_a_promoted_judges_verdicts_cannot_be_read(tmp_path: Path):
+    store = _promoted_judge(tmp_path)
+    _damage_verdicts(store)
+    labels_path = write_labels_file(
+        tmp_path,
+        [{"trace_id": "later", "label": True, "critique": "new", "annotator": "andres"}],
+    )
+    result = runner.invoke(
+        app, ["label-import", "merged", "--path", str(labels_path), "--repo", str(tmp_path)]
+    )
+    assert result.exit_code == 1
+    assert len(result.stdout.strip().splitlines()) == 1
+    assert "--withdraw-promotions" in result.stdout
+    assert (store.judge_dir("merged", 1) / "PROMOTED").exists()
+
+
+def test_label_import_keeps_the_promotion_when_the_labels_file_cannot_be_read(tmp_path: Path):
+    """The existing labels are read before any promotion is withdrawn, so a damaged
+    labels.jsonl refuses the import and leaves the judge promoted."""
+    store = _promoted_judge(tmp_path)
+    labels_file = store.dataset_dir("merged") / "labels.jsonl"
+    labels_file.write_text(labels_file.read_text() + "{not json\n")
+    labels_path = write_labels_file(
+        tmp_path,
+        [{"trace_id": "test-000", "label": False, "critique": "fine", "annotator": "andres"}],
+    )
+    result = runner.invoke(
+        app,
+        ["label-import", "merged", "--path", str(labels_path), "--withdraw-promotions",
+         "--repo", str(tmp_path)],
+    )
+    assert result.exit_code == 1
+    assert "withdrew" not in result.stdout
+    assert (store.judge_dir("merged", 1) / "PROMOTED").exists()
+
+
+def test_ingest_says_what_was_withdrawn_when_the_write_then_fails(tmp_path: Path):
+    """A promotion withdrawn before a write that fails is reported as such: nothing was
+    written, so `axial promote` restores it, and no note says the data changed."""
+    store = _promoted_judge(tmp_path)
+    src = _corpus_file(tmp_path, store, **{"test-000": "GOOD"})
+    store.traces_path.unlink()
+    store.traces_path.mkdir()
+    result = runner.invoke(
+        app, ["ingest", str(src), "--withdraw-promotions", "--repo", str(tmp_path)]
+    )
+    assert result.exit_code == 1
+    assert "no longer describe the data" not in result.stdout
+    assert "merged v1" in result.stdout
+    assert "axial promote" in result.stdout
+    assert "can be read" in result.stdout
+
+
+def test_label_import_says_what_was_withdrawn_when_the_write_then_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    store = _promoted_judge(tmp_path)
+    labels_path = write_labels_file(
+        tmp_path,
+        [{"trace_id": "test-000", "label": False, "critique": "fine", "annotator": "andres"}],
+    )
+    original = Store.write_jsonl
+
+    def refuse_labels(self: Store, path: Path, rows: list[dict[str, object]]) -> None:
+        if Path(path).name == "labels.jsonl":
+            raise PermissionError(13, "Permission denied", str(path))
+        original(self, path, rows)
+
+    monkeypatch.setattr(Store, "write_jsonl", refuse_labels)
+    result = runner.invoke(
+        app,
+        ["label-import", "merged", "--path", str(labels_path), "--withdraw-promotions",
+         "--repo", str(tmp_path)],
+    )
+    assert result.exit_code == 1
+    assert "no longer describe the data" not in result.stdout
+    assert "merged v1" in result.stdout
+    assert "axial promote" in result.stdout
+    assert "can be read" in result.stdout
+    assert not (store.judge_dir("merged", 1) / "PROMOTED").exists()

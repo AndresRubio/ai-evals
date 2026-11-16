@@ -18,7 +18,7 @@ from pydantic import BaseModel, ConfigDict, field_validator
 from axial.analysis.dataset import Label, Splits
 from axial.core.model import Model, is_probability
 from axial.core.store import Store
-from axial.core.traces import Trace
+from axial.core.traces import Trace, trace_sha256
 from axial.errors import InvariantViolation
 from axial.judge.spec import (
     JudgeSpec,
@@ -28,6 +28,9 @@ from axial.judge.spec import (
     refuse_a_verdict_first_template,
     resolve_few_shot,
 )
+
+# The verdict row's field for `trace_sha256` of the trace it judged.
+TRACE_HASH_KEY = "trace_sha256"
 
 
 def parse_verdict(text: str) -> bool:
@@ -280,6 +283,9 @@ def run_judge(
                 "probability": outcome.probability,
                 "raw": outcome.raw,
                 "prompt_sha256": fingerprint,
+                # What was judged, beside `truth`, what it was scored against, so
+                # `promote` can tell when the corpus or the labels have moved on.
+                TRACE_HASH_KEY: trace_sha256(trace),
             }
         )
 

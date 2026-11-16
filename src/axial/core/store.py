@@ -152,6 +152,30 @@ class Store:
         versions = [int(m.group(1)) for m in matches if m]
         return max(versions) if versions else None
 
+    def judge_versions(self) -> list[tuple[str, int]]:
+        """Every judge on disk as `(mode, version)`, sorted.
+
+        As in `latest_judge_version`, only `v<digits>` is a version, and only a
+        directory is a judge. A name under `judges/` that is not a valid mode name was
+        not made by axial and is left alone.
+        """
+        root = self.root / "judges"
+        if not root.is_dir():
+            return []
+        found: list[tuple[str, int]] = []
+        for mode_dir in root.iterdir():
+            if not mode_dir.is_dir():
+                continue
+            try:
+                validate_name(mode_dir.name, "mode")
+            except AxialError:
+                continue
+            for entry in mode_dir.iterdir():
+                match = VERSION_RE.fullmatch(entry.name)
+                if match and entry.is_dir():
+                    found.append((mode_dir.name, int(match.group(1))))
+        return sorted(found)
+
     def next_judge_version(self, mode: str) -> int:
         return (self.latest_judge_version(mode) or 0) + 1
 
@@ -387,15 +411,21 @@ class Store:
         return hashlib.sha256(data).hexdigest()
 
     # --- traces --------------------------------------------------------
+    def check_traces(self, traces: Iterable[Trace]) -> None:
+        """Refuse what `write_traces` would refuse: a trace holding a lone surrogate. A
+        caller with a side effect to run before the write, such as withdrawing a
+        promotion, checks first so a refusal leaves no trace."""
+        for trace in traces:
+            problem = lone_surrogate(trace.input, trace.output)
+            if problem:
+                raise AxialError(f"trace {trace.trace_id!r} has {problem}")
+
     def write_traces(self, traces: Iterable[Trace]) -> None:
         """Replace the corpus with `traces`, refusing all of them if one holds a lone
         surrogate. `ingest` already refuses one in a file as it reads the row; this
         catches an adapter's traces, which skip the file readers."""
         traces = list(traces)
-        for trace in traces:
-            problem = lone_surrogate(trace.input, trace.output)
-            if problem:
-                raise AxialError(f"trace {trace.trace_id!r} has {problem}")
+        self.check_traces(traces)
         self.write_jsonl(self.traces_path, [t.model_dump() for t in traces])
 
     def read_traces(self) -> list[Trace]:

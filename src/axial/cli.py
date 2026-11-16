@@ -11,7 +11,9 @@ import typer
 from pydantic import ValidationError
 
 from axial.analysis.dataset import (
+    Label,
     add_labels,
+    check_labels,
     class_balance_report,
     labels_from_reviews,
     make_splits,
@@ -32,7 +34,13 @@ from axial.judge.alignment import (
     find_disagreements,
     write_alignment,
 )
-from axial.judge.promotion import check_promotion
+from axial.judge.promotion import (
+    check_promotion,
+    guard_promotions,
+    promotions_hit_by_labels,
+    promotions_hit_by_traces,
+    unwritten_note,
+)
 from axial.judge.promotion import promote as do_promote
 from axial.judge.run import kept_rows, read_errors, read_verdicts, run_judge
 from axial.judge.spec import (
@@ -56,6 +64,12 @@ RepoOption = typer.Option(".", "--repo", help="Repository root holding .axial/")
 # might be `fastapi.Path` — a module-level singleton sidesteps that false positive,
 # exactly as its own message suggests.
 LabelPathOption = typer.Option(..., help="JSONL of {trace_id, label, critique, annotator}")
+WithdrawPromotionsOption = typer.Option(
+    False,
+    "--withdraw-promotions",
+    help="Write the change even where it alters a trace or label a promoted judge was "
+    "scored on, and withdraw that judge's promotion until it is judged again.",
+)
 # Same B008 false positive, for `measure`'s batch file.
 BatchTracesOption = typer.Option(
     ..., "--traces", help="JSONL or CSV of new traces to measure; never written to .axial/traces"
@@ -138,20 +152,37 @@ def init(repo: str = RepoOption) -> None:
 def ingest(
     path: Path,
     adapter: str = typer.Option(None, "--adapter", help="Name of a registered adapter"),
+    withdraw_promotions: bool = WithdrawPromotionsOption,
     repo: str = RepoOption,
 ) -> None:
-    """Load traces from a JSONL or CSV file, or through a registered adapter."""
+    """Load traces from a JSONL or CSV file, or through a registered adapter.
+
+    The file replaces the corpus. A promoted judge whose judged traces it would drop or
+    change makes it refuse, unless --withdraw-promotions is passed.
+    """
     store = Store(repo)
     try:
         traces = do_ingest(path, adapter=adapter)
     except (OSError, ValueError) as exc:
         _fail(f"could not read {path}: {_one_line(exc)}")
     try:
-        store.write_traces(traces)
+        # Before any promotion is withdrawn, so a trace the corpus refuses withdraws none.
+        store.check_traces(traces)
+        hits = promotions_hit_by_traces(store, traces)
     except AxialError as exc:  # an adapter's trace the corpus refuses; nothing was written
         _fail(f"could not ingest {path}: {exc}")
     except OSError as exc:
-        _fail(f"could not write {store.traces_path}: {exc}")
+        _fail(f"could not check the promoted judges against {path}: {_one_line(exc)}")
+    try:
+        notes = guard_promotions(store, hits, withdraw=withdraw_promotions)
+    except (AxialError, OSError) as exc:  # a refusal; nothing was written
+        _fail(f"could not ingest {path}: {exc}")
+    try:
+        store.write_traces(traces)
+    except OSError as exc:
+        _fail(f"could not write {store.traces_path}: {exc}{unwritten_note(hits)}")
+    for note in notes:
+        typer.echo(note)
     typer.echo(f"ingested {len(traces)} traces into {store.traces_path}")
 
 
@@ -281,17 +312,36 @@ def taxonomy(repo: str = RepoOption) -> None:
         typer.echo(f"  {mode.id}: {mode.name} (prevalence {mode.prevalence})")
 
 
+def _record_labels(store: Store, mode: str, labels: list[Label], withdraw: bool) -> None:
+    """Add `labels` to `mode`, refusing those that would flip what a promoted judge was
+    scored against or, with `withdraw`, withdrawing those promotions first, as `ingest`
+    does for traces. The labels, and the labels already recorded, are read and checked
+    before anything is withdrawn, so a label `add_labels` refuses, or a damaged labels
+    file, withdraws nothing."""
+    check_labels(labels)
+    read_labels(store, mode)
+    hits = promotions_hit_by_labels(store, mode, labels)
+    notes = guard_promotions(store, hits, withdraw=withdraw)
+    try:
+        add_labels(store, mode, labels)
+    except OSError as exc:
+        _fail(f"could not write the labels for {mode}: {_one_line(exc)}{unwritten_note(hits)}")
+    for note in notes:
+        typer.echo(note)
+
+
 @app.command("label-import")
 def label_import(
     mode: str = ModeArgument,
     path: Path = LabelPathOption,
+    withdraw_promotions: bool = WithdrawPromotionsOption,
     repo: str = RepoOption,
 ) -> None:
     """Import human labels you made elsewhere."""
     store = Store(repo)
     try:
         labels, ignored = read_label_file(store, path)
-        add_labels(store, mode, labels)
+        _record_labels(store, mode, labels, withdraw_promotions)
     except AxialError as exc:
         _fail(str(exc))
     except (OSError, ValueError) as exc:
@@ -304,6 +354,7 @@ def label_import(
 def label_from_reviews(
     mode: str = ModeArgument,
     sessions: list[str] = SessionsArgument,
+    withdraw_promotions: bool = WithdrawPromotionsOption,
     repo: str = RepoOption,
 ) -> None:
     """Convert completed `annotate` reviews into labels for one failure mode.
@@ -318,7 +369,7 @@ def label_from_reviews(
     try:
         reviews = [r for name in sessions for r in read_session(store, name, missing_ok=False)]
         labels, skipped = labels_from_reviews(reviews)
-        add_labels(store, mode, labels)
+        _record_labels(store, mode, labels, withdraw_promotions)
     except AxialError as exc:
         _fail(str(exc))
     except (OSError, ValueError) as exc:

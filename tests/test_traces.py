@@ -14,6 +14,34 @@ def test_compute_trace_id_is_stable_and_short():
     assert a != compute_trace_id("in", "other")
 
 
+def test_trace_sha256_covers_the_input_and_output_a_judge_reads():
+    from axial.core.traces import trace_sha256
+
+    base = Trace(trace_id="a", input="in", output="out")
+    assert trace_sha256(base) == trace_sha256(base.model_copy())
+    assert len(trace_sha256(base)) == 64
+    assert trace_sha256(base) != trace_sha256(base.model_copy(update={"output": "other"}))
+    assert trace_sha256(base) != trace_sha256(base.model_copy(update={"input": "other"}))
+
+
+def test_trace_sha256_ignores_the_id_and_metadata_a_judge_never_reads():
+    from axial.core.traces import trace_sha256
+
+    base = Trace(trace_id="a", input="in", output="out")
+    moved = base.model_copy(update={"trace_id": "b", "metadata": {"span_id": "abc"}})
+    assert trace_sha256(base) == trace_sha256(moved)
+
+
+def test_trace_sha256_changes_when_text_crosses_the_input_output_boundary():
+    """The content id joins the two fields with a NUL byte and can collide here (see the
+    strict xfail in test_capabilities_intake_traces); this hash must not."""
+    from axial.core.traces import trace_sha256
+
+    left = Trace(trace_id="a", input="a\x00b", output="c")
+    right = Trace(trace_id="a", input="a", output="b\x00c")
+    assert trace_sha256(left) != trace_sha256(right)
+
+
 def test_ingest_jsonl_uses_source_id_when_present(tmp_path: Path):
     p = tmp_path / "t.jsonl"
     p.write_text(json.dumps({"trace_id": "abc", "input": "i", "output": "o"}) + "\n")
