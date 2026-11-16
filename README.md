@@ -397,7 +397,8 @@ Two properties worth understanding before trusting a batch:
   benchmark and is given to you. Different problem.
 - **Langfuse, Opik, LangSmith, Braintrust, Phoenix** — trace storage and judge running;
   Braintrust itself is closed-source SaaS built around the open `autoevals` scorer
-  library, and Phoenix ships under Elastic License 2.0, which isn't OSI-approved.
+  library, and Phoenix's server ships under Elastic License 2.0, which isn't
+  OSI-approved, while its client is Apache-2.0.
   Langfuse and Opik are the ones with side-by-side human annotation queues, the closest
   any of the five get; none of them scaffold judge/human alignment as a gated step.
 - **EvalGen** (Shankar et al., UIST 2024) — demonstrated the judge-alignment step
