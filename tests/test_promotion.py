@@ -679,3 +679,137 @@ def test_the_refusal_says_a_trace_gone_from_the_corpus_must_be_ingested_again(tm
         _promote_again(store)
     assert "ingest" in str(caught.value)
     assert "drops its verdict" in str(caught.value)
+
+
+# --- what the second review found ----------------------------------------------------
+
+
+def test_a_legacy_row_is_stale_once_any_copy_it_could_have_judged_is_dropped(tmp_path: Path):
+    """A row with no hash is compared with every copy its id held in the corpus being
+    replaced, since any of them may be the one it judged. Adding a copy keeps them all;
+    dropping one, even after an earlier ingest added another, does not."""
+    from axial.judge.promotion import promotions_hit_by_traces
+
+    store = Store(tmp_path)
+    _promoted_before_trace_hashes(store)
+    with_copy = _with_second_copy(store, "test-000", "GOOD")
+    assert promotions_hit_by_traces(store, with_copy) == []
+    store.write_traces(with_copy)
+    only_the_copy = [t for t in with_copy if not (t.trace_id == "test-000" and t.output == "BAD")]
+    hits = promotions_hit_by_traces(store, only_the_copy)
+    assert {(s.trace_id, s.reason) for s in hits[0].stale} == {("test-000", "changed")}
+
+
+def test_a_promoted_judge_whose_verdicts_file_is_missing_counts_as_hit(tmp_path: Path):
+    from axial.judge.promotion import promotions_hit_by_labels, promotions_hit_by_traces
+
+    store = Store(tmp_path)
+    _promoted(store)
+    corpus = store.read_traces()
+    (store.judge_dir("merged", 1) / "verdicts.jsonl").unlink()
+    for hits in (
+        promotions_hit_by_traces(store, corpus),
+        promotions_hit_by_labels(store, "merged", [_label("test-000", True)]),
+    ):
+        assert [(h.mode, h.version) for h in hits] == [("merged", 1)]
+        assert hits[0].unreadable is not None
+        assert "verdicts.jsonl" in hits[0].unreadable
+
+
+def test_the_unreadable_refusal_also_names_every_other_judge_the_flag_would_withdraw(
+    tmp_path: Path,
+):
+    from axial.judge.promotion import guard_promotions, promotions_hit_by_traces
+
+    store = Store(tmp_path)
+    _promoted(store, version=1)
+    _promoted(store, version=2)
+    path = store.judge_dir("merged", 2) / "verdicts.jsonl"
+    path.write_text(path.read_text() + "{not json\n")
+    hits = promotions_hit_by_traces(store, _with_trace(store, "test-000", output="GOOD"))
+    with pytest.raises(InvariantViolation) as caught:
+        guard_promotions(store, hits, withdraw=False)
+    message = str(caught.value)
+    assert "\n" not in message
+    assert "merged v2" in message
+    assert "merged v1" in message
+
+
+def test_an_unpromoted_judge_with_unreadable_verdicts_is_not_guarded(tmp_path: Path):
+    """The nearest valid input to the unreadable refusal: the same damage on a judge
+    that is not promoted leaves nothing to protect."""
+    from axial.judge.promotion import promotions_hit_by_traces
+
+    store = Store(tmp_path)
+    _promoted(store)
+    (store.judge_dir("merged", 1) / "PROMOTED").unlink()
+    _damage_verdicts(store)
+    assert promotions_hit_by_traces(store, store.read_traces()) == []
+
+
+def test_the_guard_refusal_and_the_withdrawal_note_say_a_dropped_trace_must_be_ingested(
+    tmp_path: Path,
+):
+    from axial.judge.promotion import guard_promotions, promotions_hit_by_traces
+
+    store = Store(tmp_path)
+    _promoted(store)
+    hits = promotions_hit_by_traces(
+        store, [t for t in store.read_traces() if t.trace_id != "test-000"]
+    )
+    with pytest.raises(InvariantViolation) as caught:
+        guard_promotions(store, hits, withdraw=False)
+    assert "drops its verdict" in str(caught.value)
+    notes = guard_promotions(store, hits, withdraw=True)
+    assert any("drops its verdict" in note for note in notes)
+
+
+# --- what the third review found -----------------------------------------------------
+
+
+def test_a_promoted_judge_whose_verdicts_file_is_empty_counts_as_hit(tmp_path: Path):
+    """A promotion was earned on verdicts, so a file that holds none has lost them, as a
+    missing one has."""
+    from axial.judge.promotion import promotions_hit_by_traces
+
+    store = Store(tmp_path)
+    _promoted(store)
+    corpus = store.read_traces()
+    (store.judge_dir("merged", 1) / "verdicts.jsonl").write_text("")
+    hits = promotions_hit_by_traces(store, corpus)
+    assert [(h.mode, h.version) for h in hits] == [("merged", 1)]
+    assert hits[0].unreadable is not None
+
+
+def test_an_unpromoted_judge_with_no_verdicts_is_not_guarded(tmp_path: Path):
+    """The nearest valid input to the missing and empty refusals: a version never run, or
+    run on nothing, is not promoted and leaves nothing to protect."""
+    from axial.judge.promotion import promotions_hit_by_traces
+
+    store = Store(tmp_path)
+    _promoted(store)
+    (store.judge_dir("merged", 1) / "PROMOTED").unlink()
+    verdicts = store.judge_dir("merged", 1) / "verdicts.jsonl"
+    verdicts.write_text("")
+    assert promotions_hit_by_traces(store, store.read_traces()) == []
+    verdicts.unlink()
+    assert promotions_hit_by_traces(store, store.read_traces()) == []
+
+
+def test_the_unreadable_refusal_says_why_each_other_judge_would_be_withdrawn(tmp_path: Path):
+    from axial.judge.promotion import guard_promotions, promotions_hit_by_traces
+
+    store = Store(tmp_path)
+    _promoted(store, version=1)
+    _promoted(store, version=2)
+    _promoted(store, version=3)
+    for version in (2, 3):
+        path = store.judge_dir("merged", version) / "verdicts.jsonl"
+        path.write_text(path.read_text() + "{not json\n")
+    hits = promotions_hit_by_traces(store, _with_trace(store, "test-000", output="GOOD"))
+    with pytest.raises(InvariantViolation) as caught:
+        guard_promotions(store, hits, withdraw=False)
+    message = str(caught.value)
+    assert "\n" not in message
+    assert "merged v1, which this change makes stale" in message
+    assert "merged v3, whose verdicts cannot be read either" in message

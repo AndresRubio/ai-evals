@@ -1432,3 +1432,85 @@ def test_promote_refuses_a_damaged_corpus_in_one_line_for_a_judge_without_exampl
     assert result.exit_code == 1
     assert len(result.stdout.strip().splitlines()) == 1
     assert result.stdout.count("traces.jsonl") == 1
+
+
+def test_label_import_refuses_while_a_promoted_judges_verdicts_cannot_be_read(tmp_path: Path):
+    store = _promoted_judge(tmp_path)
+    _damage_verdicts(store)
+    labels_path = write_labels_file(
+        tmp_path,
+        [{"trace_id": "later", "label": True, "critique": "new", "annotator": "andres"}],
+    )
+    result = runner.invoke(
+        app, ["label-import", "merged", "--path", str(labels_path), "--repo", str(tmp_path)]
+    )
+    assert result.exit_code == 1
+    assert len(result.stdout.strip().splitlines()) == 1
+    assert "--withdraw-promotions" in result.stdout
+    assert (store.judge_dir("merged", 1) / "PROMOTED").exists()
+
+
+def test_label_import_keeps_the_promotion_when_the_labels_file_cannot_be_read(tmp_path: Path):
+    """The existing labels are read before any promotion is withdrawn, so a damaged
+    labels.jsonl refuses the import and leaves the judge promoted."""
+    store = _promoted_judge(tmp_path)
+    labels_file = store.dataset_dir("merged") / "labels.jsonl"
+    labels_file.write_text(labels_file.read_text() + "{not json\n")
+    labels_path = write_labels_file(
+        tmp_path,
+        [{"trace_id": "test-000", "label": False, "critique": "fine", "annotator": "andres"}],
+    )
+    result = runner.invoke(
+        app,
+        ["label-import", "merged", "--path", str(labels_path), "--withdraw-promotions",
+         "--repo", str(tmp_path)],
+    )
+    assert result.exit_code == 1
+    assert "withdrew" not in result.stdout
+    assert (store.judge_dir("merged", 1) / "PROMOTED").exists()
+
+
+def test_ingest_says_what_was_withdrawn_when_the_write_then_fails(tmp_path: Path):
+    """A promotion withdrawn before a write that fails is reported as such: nothing was
+    written, so `axial promote` restores it, and no note says the data changed."""
+    store = _promoted_judge(tmp_path)
+    src = _corpus_file(tmp_path, store, **{"test-000": "GOOD"})
+    store.traces_path.unlink()
+    store.traces_path.mkdir()
+    result = runner.invoke(
+        app, ["ingest", str(src), "--withdraw-promotions", "--repo", str(tmp_path)]
+    )
+    assert result.exit_code == 1
+    assert "no longer describe the data" not in result.stdout
+    assert "merged v1" in result.stdout
+    assert "axial promote" in result.stdout
+    assert "can be read" in result.stdout
+
+
+def test_label_import_says_what_was_withdrawn_when_the_write_then_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    store = _promoted_judge(tmp_path)
+    labels_path = write_labels_file(
+        tmp_path,
+        [{"trace_id": "test-000", "label": False, "critique": "fine", "annotator": "andres"}],
+    )
+    original = Store.write_jsonl
+
+    def refuse_labels(self: Store, path: Path, rows: list[dict[str, object]]) -> None:
+        if Path(path).name == "labels.jsonl":
+            raise PermissionError(13, "Permission denied", str(path))
+        original(self, path, rows)
+
+    monkeypatch.setattr(Store, "write_jsonl", refuse_labels)
+    result = runner.invoke(
+        app,
+        ["label-import", "merged", "--path", str(labels_path), "--withdraw-promotions",
+         "--repo", str(tmp_path)],
+    )
+    assert result.exit_code == 1
+    assert "no longer describe the data" not in result.stdout
+    assert "merged v1" in result.stdout
+    assert "axial promote" in result.stdout
+    assert "can be read" in result.stdout
+    assert not (store.judge_dir("merged", 1) / "PROMOTED").exists()

@@ -39,6 +39,7 @@ from axial.judge.promotion import (
     guard_promotions,
     promotions_hit_by_labels,
     promotions_hit_by_traces,
+    unwritten_note,
 )
 from axial.judge.promotion import promote as do_promote
 from axial.judge.run import kept_rows, read_errors, read_verdicts, run_judge
@@ -173,13 +174,15 @@ def ingest(
     except OSError as exc:
         _fail(f"could not check the promoted judges against {path}: {_one_line(exc)}")
     try:
-        for note in guard_promotions(store, hits, withdraw=withdraw_promotions):
-            typer.echo(note)
-        store.write_traces(traces)
-    except AxialError as exc:  # a refusal; nothing was written
+        notes = guard_promotions(store, hits, withdraw=withdraw_promotions)
+    except (AxialError, OSError) as exc:  # a refusal; nothing was written
         _fail(f"could not ingest {path}: {exc}")
+    try:
+        store.write_traces(traces)
     except OSError as exc:
-        _fail(f"could not write {store.traces_path}: {exc}")
+        _fail(f"could not write {store.traces_path}: {exc}{unwritten_note(hits)}")
+    for note in notes:
+        typer.echo(note)
     typer.echo(f"ingested {len(traces)} traces into {store.traces_path}")
 
 
@@ -312,13 +315,19 @@ def taxonomy(repo: str = RepoOption) -> None:
 def _record_labels(store: Store, mode: str, labels: list[Label], withdraw: bool) -> None:
     """Add `labels` to `mode`, refusing those that would flip what a promoted judge was
     scored against or, with `withdraw`, withdrawing those promotions first, as `ingest`
-    does for traces. The labels are checked before anything is withdrawn, so a label
-    `add_labels` refuses withdraws nothing."""
+    does for traces. The labels, and the labels already recorded, are read and checked
+    before anything is withdrawn, so a label `add_labels` refuses, or a damaged labels
+    file, withdraws nothing."""
     check_labels(labels)
+    read_labels(store, mode)
     hits = promotions_hit_by_labels(store, mode, labels)
-    for note in guard_promotions(store, hits, withdraw=withdraw):
+    notes = guard_promotions(store, hits, withdraw=withdraw)
+    try:
+        add_labels(store, mode, labels)
+    except OSError as exc:
+        _fail(f"could not write the labels for {mode}: {_one_line(exc)}{unwritten_note(hits)}")
+    for note in notes:
         typer.echo(note)
-    add_labels(store, mode, labels)
 
 
 @app.command("label-import")

@@ -111,9 +111,9 @@ The refusals are the product.
   write nothing. With `--withdraw-promotions` they write it and withdraw those
   promotions, so the gate fails until the judge is judged again and promoted. The
   traces or labels are checked first, so one the command refuses anyway withdraws
-  nothing. A promoted judge whose `verdicts.jsonl` cannot be read stops these commands
-  as well, since nothing says what it was scored on, until `--withdraw-promotions`
-  withdraws it; its gate already fails. New traces, new metadata and a new critique
+  nothing. A promoted judge whose `verdicts.jsonl` is missing, cannot be read or holds
+  no verdicts stops these commands as well, since nothing says what it was scored on,
+  until `--withdraw-promotions` withdraws it; its gate already fails. New traces, new metadata and a new critique
   under the same label go through. So does a change to a few-shot example, which has
   no verdict of its own: the gate then refuses the judge through its prompt
   fingerprint, as it did before. A file edited by hand under `.axial/` goes past these

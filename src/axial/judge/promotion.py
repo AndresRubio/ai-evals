@@ -319,8 +319,8 @@ class PromotionHit(NamedTuple):
     mode: str
     version: int
     stale: list[StaleVerdict]
-    # Why its verdicts.jsonl could not be read, naming the file, when it could not: then
-    # nothing says what the judge was scored on, so any change counts as hitting it.
+    # Why its verdicts.jsonl is missing, unreadable or empty, naming the file, when it is:
+    # then nothing says what the judge was scored on, so any change counts as hitting it.
     unreadable: str | None = None
 
 
@@ -351,14 +351,16 @@ def _hashes_by_id(traces: Iterable[Trace]) -> dict[str, set[str]]:
 def _trace_problem(
     row: Mapping[str, Any], corpus: Mapping[str, set[str]], judged: set[str]
 ) -> str | None:
-    """Why no trace under the row's id in `corpus` (hashes by id) is one the row judged,
-    whose hashes are `judged` (empty when nothing recorded them), or `None` when one is."""
+    """Why the row's id in `corpus` (hashes by id) no longer holds every trace the row
+    may have judged, whose hashes are `judged` (empty when nothing recorded them), or
+    `None` when it does. A row's own hash is one trace; a row with none may have judged
+    any copy its id held, so every one of them has to survive."""
     now = corpus.get(str(row["trace_id"]))
     if now is None:
         return "missing"
     if not judged:
         return "unhashed"
-    if now.isdisjoint(judged):
+    if not judged <= now:
         return "changed"
     return None
 
@@ -392,16 +394,23 @@ def _verdict_rows(store: Store, mode: str, version: int) -> list[dict[str, Any]]
 def _guarded_rows(
     store: Store, mode: str, version: int
 ) -> tuple[list[dict[str, Any]], PromotionHit | None]:
-    """A promoted judge's verdict rows, or, when its verdicts.jsonl cannot be read, the
-    hit that says so. Its gate already fails then, as the file no longer matches its
-    marker, so a change is refused only until `--withdraw-promotions` withdraws it."""
+    """A promoted judge's verdict rows, or, when its verdicts.jsonl is missing, cannot be
+    read or holds none, the hit that says so. Its gate already fails then, as the file
+    no longer matches its marker, so a change is refused only until
+    `--withdraw-promotions` withdraws it."""
     path = store.judge_dir(mode, version) / "verdicts.jsonl"
+    if not path.exists():
+        return [], PromotionHit(mode, version, [], unreadable=f"{path}: no such file")
     try:
-        return read_verdicts(store, path), None
+        rows = read_verdicts(store, path)
     except MalformedFile as exc:
         return [], PromotionHit(mode, version, [], unreadable=str(exc))
     except OSError as exc:
         return [], PromotionHit(mode, version, [], unreadable=f"{path}: {exc.strerror}")
+    if not rows:
+        # Promotion was earned on verdicts, so a file with none has lost them.
+        return [], PromotionHit(mode, version, [], unreadable=f"{path}: holds no verdicts")
+    return rows, None
 
 
 def stale_verdicts(store: Store, mode: str, version: int) -> list[StaleVerdict]:
@@ -442,9 +451,9 @@ def promotions_hit_by_traces(store: Store, traces: list[Trace]) -> list[Promotio
     replaced: dict[str, set[str]] | None = None
     hits: list[PromotionHit] = []
     for mode, version in _promoted_judges(store):
-        rows, unreadable = _guarded_rows(store, mode, version)
-        if unreadable:
-            hits.append(unreadable)
+        rows, broken = _guarded_rows(store, mode, version)
+        if broken:
+            hits.append(broken)
             continue
         stale: list[StaleVerdict] = []
         for row in rows:
@@ -471,9 +480,9 @@ def promotions_hit_by_labels(store: Store, mode: str, labels: list[Label]) -> li
     incoming = {lbl.trace_id: lbl.label for lbl in labels}
     hits: list[PromotionHit] = []
     for judge_mode, version in _promoted_judges(store, mode):
-        rows, unreadable = _guarded_rows(store, judge_mode, version)
-        if unreadable:
-            hits.append(unreadable)
+        rows, broken = _guarded_rows(store, judge_mode, version)
+        if broken:
+            hits.append(broken)
             continue
         stale = [
             StaleVerdict(str(row["trace_id"]), _split_of(row), reason)
@@ -541,18 +550,33 @@ def guard_promotions(store: Store, hits: list[PromotionHit], *, withdraw: bool) 
 
     Called before the change is written, as `run_judge` deletes PROMOTED before it
     rewrites the verdicts: a write that then fails leaves a judge unpromoted, and `axial
-    promote` restores it while its verdicts still match the data.
+    promote` restores it while its verdicts still match the data. The notes it returns
+    describe a written change, so they are shown once the write succeeds; a failed write
+    says what was withdrawn with `unwritten_note` instead.
     """
     if not hits:
         return []
     if not withdraw:
         for hit in hits:
             if hit.unreadable:
+                # One line, so a damaged file reads as one refusal naming it once.
+                others = [
+                    f"{h.mode} v{h.version}, "
+                    + (
+                        "whose verdicts cannot be read either"
+                        if h.unreadable
+                        else "which this change makes stale"
+                    )
+                    for h in hits
+                    if h is not hit
+                ]
+                also = f"; that also withdraws {'; '.join(others)}" if others else ""
                 raise InvariantViolation(
                     f"the verdicts of promoted judge {hit.mode} v{hit.version} cannot be "
                     f"read ({hit.unreadable}), so whether this change alters what it was "
                     "scored on cannot be checked. Nothing was written. Pass "
-                    "--withdraw-promotions to withdraw its promotion and write the change."
+                    "--withdraw-promotions to withdraw its promotion and write the change"
+                    f"{also}."
                 )
         lines = [
             line
@@ -586,6 +610,19 @@ def guard_promotions(store: Store, hits: list[PromotionHit], *, withdraw: bool) 
             + _missing_note(hit.stale)
         )
     return notes
+
+
+def unwritten_note(hits: list[PromotionHit]) -> str:
+    """What to add to a failed write's message once `guard_promotions` withdrew `hits`:
+    the notes it returned say the data changed, and it did not."""
+    if not hits:
+        return ""
+    judges = ", ".join(f"{hit.mode} v{hit.version}" for hit in hits)
+    return (
+        f". The promotion of {judges} was withdrawn first and nothing was written; "
+        "`axial promote` restores a judge whose verdicts can be read and still match the "
+        "data"
+    )
 
 
 def promote(
