@@ -13,6 +13,7 @@ from pydantic import ValidationError
 from axial.analysis.dataset import (
     Label,
     add_labels,
+    check_labels,
     class_balance_report,
     labels_from_reviews,
     make_splits,
@@ -164,14 +165,18 @@ def ingest(
     except (OSError, ValueError) as exc:
         _fail(f"could not read {path}: {_one_line(exc)}")
     try:
+        # Before any promotion is withdrawn, so a trace the corpus refuses withdraws none.
+        store.check_traces(traces)
         hits = promotions_hit_by_traces(store, traces)
-    except (OSError, ValueError) as exc:  # a promoted judge's verdicts.jsonl is unreadable
+    except AxialError as exc:  # an adapter's trace the corpus refuses; nothing was written
+        _fail(f"could not ingest {path}: {exc}")
+    except OSError as exc:
         _fail(f"could not check the promoted judges against {path}: {_one_line(exc)}")
     try:
         for note in guard_promotions(store, hits, withdraw=withdraw_promotions):
             typer.echo(note)
         store.write_traces(traces)
-    except AxialError as exc:  # a refusal, or a trace the corpus refuses; nothing was written
+    except AxialError as exc:  # a refusal; nothing was written
         _fail(f"could not ingest {path}: {exc}")
     except OSError as exc:
         _fail(f"could not write {store.traces_path}: {exc}")
@@ -304,12 +309,16 @@ def taxonomy(repo: str = RepoOption) -> None:
         typer.echo(f"  {mode.id}: {mode.name} (prevalence {mode.prevalence})")
 
 
-def _guard_labels(store: Store, mode: str, labels: list[Label], withdraw: bool) -> None:
-    """Refuse labels that would flip what a promoted judge was scored against, or, with
-    `withdraw`, withdraw those promotions first, as `ingest` does for traces."""
+def _record_labels(store: Store, mode: str, labels: list[Label], withdraw: bool) -> None:
+    """Add `labels` to `mode`, refusing those that would flip what a promoted judge was
+    scored against or, with `withdraw`, withdrawing those promotions first, as `ingest`
+    does for traces. The labels are checked before anything is withdrawn, so a label
+    `add_labels` refuses withdraws nothing."""
+    check_labels(labels)
     hits = promotions_hit_by_labels(store, mode, labels)
     for note in guard_promotions(store, hits, withdraw=withdraw):
         typer.echo(note)
+    add_labels(store, mode, labels)
 
 
 @app.command("label-import")
@@ -323,8 +332,7 @@ def label_import(
     store = Store(repo)
     try:
         labels, ignored = read_label_file(store, path)
-        _guard_labels(store, mode, labels, withdraw_promotions)
-        add_labels(store, mode, labels)
+        _record_labels(store, mode, labels, withdraw_promotions)
     except AxialError as exc:
         _fail(str(exc))
     except (OSError, ValueError) as exc:
@@ -352,8 +360,7 @@ def label_from_reviews(
     try:
         reviews = [r for name in sessions for r in read_session(store, name, missing_ok=False)]
         labels, skipped = labels_from_reviews(reviews)
-        _guard_labels(store, mode, labels, withdraw_promotions)
-        add_labels(store, mode, labels)
+        _record_labels(store, mode, labels, withdraw_promotions)
     except AxialError as exc:
         _fail(str(exc))
     except (OSError, ValueError) as exc:

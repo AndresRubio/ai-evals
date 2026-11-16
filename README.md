@@ -109,13 +109,18 @@ The refusals are the product.
   is made instead: `axial ingest`, `label-import` and `label-from-reviews` refuse to
   drop or change a trace, or flip a label, that a promoted judge was scored on, and
   write nothing. With `--withdraw-promotions` they write it and withdraw those
-  promotions, so the gate fails until the judge is judged again and promoted. New
-  traces, new metadata and a new critique under the same label go through. A file
-  edited by hand under `.axial/` goes past these commands, and the gate keeps passing
-  until the judge is next promoted, when `promote` refuses. A judge promoted before
-  verdict rows recorded the hash keeps gating, and these commands check it against
-  the corpus they replace, but `promote` refuses its rows until each split is judged
-  again.
+  promotions, so the gate fails until the judge is judged again and promoted. The
+  traces or labels are checked first, so one the command refuses anyway withdraws
+  nothing. A promoted judge whose `verdicts.jsonl` cannot be read stops these commands
+  as well, since nothing says what it was scored on, until `--withdraw-promotions`
+  withdraws it; its gate already fails. New traces, new metadata and a new critique
+  under the same label go through. So does a change to a few-shot example, which has
+  no verdict of its own: the gate then refuses the judge through its prompt
+  fingerprint, as it did before. A file edited by hand under `.axial/` goes past these
+  commands, and the gate keeps passing until the judge is next promoted, when
+  `promote` refuses. A judge promoted before verdict rows recorded the hash keeps
+  gating, and these commands check it against the corpus they replace, but `promote`
+  refuses its rows until each split is judged again.
 - **Gates compare intervals, not point estimates.** `gate --batch` gates on batches
   that `measure` graded: `--max-rate` fails when the upper end of a batch's corrected
   failure rate interval is above the ceiling, and `--baseline-batch` fails when the

@@ -521,3 +521,161 @@ def test_a_judge_promoted_before_trace_hashes_counts_as_hit_when_the_old_corpus_
     hits = promotions_hit_by_traces(store, corpus)
     assert [(h.mode, h.version) for h in hits] == [("merged", 1)]
     assert {s.reason for s in hits[0].stale} == {"unhashed"}
+
+
+# --- what the first review found -----------------------------------------------------
+
+
+def _judge_split_again(store: Store, split: str) -> None:
+    from measure_helpers import MEASURE_MODE, judge_reply
+
+    from axial.analysis.dataset import Splits, read_labels
+    from axial.core.model import FakeModel
+    from axial.judge.run import run_judge
+    from axial.judge.spec import JudgeSpec
+
+    corpus = store.read_traces()
+    splits = Splits.load(store, MEASURE_MODE)
+    wanted = set(getattr(splits, split))
+    run_judge(
+        store,
+        JudgeSpec.load(store, MEASURE_MODE, 1),
+        [t for t in corpus if t.trace_id in wanted],
+        read_labels(store, MEASURE_MODE),
+        splits,
+        FakeModel(judge_reply, model="fake-judge"),
+        split=split,
+        corpus=corpus,
+    )
+
+
+def _with_second_copy(store: Store, trace_id: str, output: str) -> list:
+    corpus = store.read_traces()
+    original = next(t for t in corpus if t.trace_id == trace_id)
+    return [*corpus, original.model_copy(update={"output": output})]
+
+
+def test_promote_takes_a_judge_whose_corpus_holds_two_traces_under_one_id(tmp_path: Path):
+    """`axial judge` grades every copy of a repeated id, so each verdict is checked
+    against every copy: one of them is the trace it judged."""
+    store = Store(tmp_path)
+    _promoted(store)
+    store.write_traces(_with_second_copy(store, "test-001", "BAD again"))
+    _judge_split_again(store, "test")
+    _promote_again(store)
+    assert (store.judge_dir("merged", 1) / "PROMOTED").exists()
+
+
+def test_a_corpus_that_keeps_every_judged_copy_of_a_repeated_id_hits_nothing(tmp_path: Path):
+    from axial.judge.promotion import promotions_hit_by_traces
+
+    store = Store(tmp_path)
+    _promoted(store)
+    store.write_traces(_with_second_copy(store, "test-001", "BAD again"))
+    _judge_split_again(store, "test")
+    _promote_again(store)
+    assert promotions_hit_by_traces(store, store.read_traces()) == []
+    corpus = [t for t in store.read_traces() if t.output != "BAD again"]
+    hits = promotions_hit_by_traces(store, corpus)
+    assert {(s.trace_id, s.reason) for s in hits[0].stale} == {("test-001", "changed")}
+
+
+def _damage_verdicts(store: Store) -> Path:
+    path = store.judge_dir("merged", 1) / "verdicts.jsonl"
+    path.write_text(path.read_text() + "{not json\n")
+    return path
+
+
+def test_a_promoted_judge_whose_verdicts_cannot_be_read_counts_as_hit(tmp_path: Path):
+    from axial.judge.promotion import promotions_hit_by_labels, promotions_hit_by_traces
+
+    store = Store(tmp_path)
+    _promoted(store)
+    corpus = store.read_traces()
+    _damage_verdicts(store)
+    for hits in (
+        promotions_hit_by_traces(store, corpus),
+        promotions_hit_by_labels(store, "merged", [_label("test-000", True)]),
+    ):
+        assert [(h.mode, h.version) for h in hits] == [("merged", 1)]
+        assert hits[0].unreadable is not None
+        assert "verdicts.jsonl" in hits[0].unreadable
+
+
+def test_the_guard_refuses_an_unreadable_judge_in_one_line_naming_the_flag(tmp_path: Path):
+    from axial.judge.promotion import guard_promotions, promotions_hit_by_traces
+
+    store = Store(tmp_path)
+    _promoted(store)
+    corpus = store.read_traces()
+    _damage_verdicts(store)
+    with pytest.raises(InvariantViolation) as caught:
+        guard_promotions(store, promotions_hit_by_traces(store, corpus), withdraw=False)
+    message = str(caught.value)
+    assert "\n" not in message
+    assert message.count("verdicts.jsonl") == 1
+    assert "--withdraw-promotions" in message
+    assert (store.judge_dir("merged", 1) / "PROMOTED").exists()
+
+
+def test_withdrawing_an_unreadable_judge_removes_its_marker(tmp_path: Path):
+    from axial.judge.promotion import guard_promotions, promotions_hit_by_traces
+
+    store = Store(tmp_path)
+    _promoted(store)
+    corpus = store.read_traces()
+    _damage_verdicts(store)
+    notes = guard_promotions(store, promotions_hit_by_traces(store, corpus), withdraw=True)
+    assert not (store.judge_dir("merged", 1) / "PROMOTED").exists()
+    assert any("merged v1" in note and "could not be read" in note for note in notes)
+
+
+def test_the_refusal_names_three_traces_per_split_and_reason_and_counts_the_rest(
+    tmp_path: Path,
+):
+    from axial.analysis.dataset import add_labels
+
+    store = Store(tmp_path)
+    _promoted(store)
+    flipped = [f"test-{i:03d}" for i in range(5)]
+    add_labels(store, "merged", [_label(t, False) for t in flipped])
+    with pytest.raises(InvariantViolation) as caught:
+        _promote_again(store)
+    line = next(x for x in str(caught.value).splitlines() if "relabelled" in x)
+    assert "5 trace(s)" in line
+    assert "(test-000, test-001, test-002, ...)" in line
+    assert "test-003" not in line
+
+
+def test_a_stale_row_with_no_split_is_named_and_sent_to_a_fresh_version(tmp_path: Path):
+    from measure_helpers import MEASURE_MODE
+
+    store = Store(tmp_path)
+    _promoted(store)
+    path = store.judge_dir(MEASURE_MODE, 1) / "verdicts.jsonl"
+    rows = store._read_jsonl(path)
+    store.write_jsonl(
+        path,
+        [
+            {k: v for k, v in row.items() if k != "split"} if row["trace_id"] == "test-000" else row
+            for row in rows
+        ],
+    )
+    _relabel(store, "test-000", False)
+    with pytest.raises(InvariantViolation) as caught:
+        _promote_again(store)
+    message = str(caught.value)
+    assert "rows with no split: 1 trace(s) relabelled after judging (test-000)" in message
+    assert "`axial judge --new`" in message
+
+
+def test_the_refusal_says_a_trace_gone_from_the_corpus_must_be_ingested_again(tmp_path: Path):
+    """Judging the split without the trace drops its verdict, so the advice says how to
+    bring it back as well."""
+    store = Store(tmp_path)
+    _promoted(store)
+    store.write_traces([t for t in store.read_traces() if t.trace_id != "test-000"])
+    with pytest.raises(InvariantViolation) as caught:
+        _promote_again(store)
+    assert "ingest" in str(caught.value)
+    assert "drops its verdict" in str(caught.value)

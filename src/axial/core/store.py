@@ -411,15 +411,21 @@ class Store:
         return hashlib.sha256(data).hexdigest()
 
     # --- traces --------------------------------------------------------
+    def check_traces(self, traces: Iterable[Trace]) -> None:
+        """Refuse what `write_traces` would refuse: a trace holding a lone surrogate. A
+        caller with a side effect to run before the write, such as withdrawing a
+        promotion, checks first so a refusal leaves no trace."""
+        for trace in traces:
+            problem = lone_surrogate(trace.input, trace.output)
+            if problem:
+                raise AxialError(f"trace {trace.trace_id!r} has {problem}")
+
     def write_traces(self, traces: Iterable[Trace]) -> None:
         """Replace the corpus with `traces`, refusing all of them if one holds a lone
         surrogate. `ingest` already refuses one in a file as it reads the row; this
         catches an adapter's traces, which skip the file readers."""
         traces = list(traces)
-        for trace in traces:
-            problem = lone_surrogate(trace.input, trace.output)
-            if problem:
-                raise AxialError(f"trace {trace.trace_id!r} has {problem}")
+        self.check_traces(traces)
         self.write_jsonl(self.traces_path, [t.model_dump() for t in traces])
 
     def read_traces(self) -> list[Trace]:

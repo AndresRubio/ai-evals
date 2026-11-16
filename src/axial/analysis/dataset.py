@@ -233,9 +233,16 @@ def _labels_path(store: Store, mode: str) -> Path:
     return store.dataset_dir(mode) / "labels.jsonl"
 
 
-def add_labels(store: Store, mode: str, labels: list[Label]) -> None:
+def check_labels(labels: list[Label]) -> None:
+    """Refuse the first label `add_labels` would refuse: no annotator, one that looks
+    like a model, or an empty critique. A caller with a side effect to run before the
+    write, such as withdrawing a promotion, checks first so a refusal leaves no trace."""
     for label in labels:
         _check_human(label)
+
+
+def add_labels(store: Store, mode: str, labels: list[Label]) -> None:
+    check_labels(labels)
     existing = {lbl.trace_id: lbl for lbl in read_labels(store, mode)}
     for label in labels:
         existing[label.trace_id] = label

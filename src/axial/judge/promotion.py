@@ -319,6 +319,9 @@ class PromotionHit(NamedTuple):
     mode: str
     version: int
     stale: list[StaleVerdict]
+    # Why its verdicts.jsonl could not be read, naming the file, when it could not: then
+    # nothing says what the judge was scored on, so any change counts as hitting it.
+    unreadable: str | None = None
 
 
 # How each reason reads after "N trace(s)".
@@ -336,19 +339,34 @@ def _split_of(row: Mapping[str, Any]) -> str | None:
     return split if split is None else str(split)
 
 
+def _hashes_by_id(traces: Iterable[Trace]) -> dict[str, set[str]]:
+    """Each id's `trace_sha256`s. Nothing refuses a repeated id, and `axial judge` grades
+    every copy, so an id can hold several traces and a verdict judged one of them."""
+    hashes: dict[str, set[str]] = {}
+    for trace in traces:
+        hashes.setdefault(trace.trace_id, set()).add(trace_sha256(trace))
+    return hashes
+
+
 def _trace_problem(
-    row: Mapping[str, Any], corpus: Mapping[str, Trace], judged: str | None
+    row: Mapping[str, Any], corpus: Mapping[str, set[str]], judged: set[str]
 ) -> str | None:
-    """Why the row's trace in `corpus` is not the trace it judged, whose hash is `judged`
-    (`None` when nothing recorded it), or `None` when it still is."""
-    trace = corpus.get(str(row["trace_id"]))
-    if trace is None:
+    """Why no trace under the row's id in `corpus` (hashes by id) is one the row judged,
+    whose hashes are `judged` (empty when nothing recorded them), or `None` when one is."""
+    now = corpus.get(str(row["trace_id"]))
+    if now is None:
         return "missing"
-    if judged is None:
+    if not judged:
         return "unhashed"
-    if trace_sha256(trace) != judged:
+    if now.isdisjoint(judged):
         return "changed"
     return None
+
+
+def _judged(row: Mapping[str, Any]) -> set[str]:
+    """The hash the row recorded of the trace it judged, as a set, empty if none."""
+    judged = row.get(TRACE_HASH_KEY)
+    return {str(judged)} if judged is not None else set()
 
 
 def _label_problem(row: Mapping[str, Any], labels: Mapping[str, bool]) -> str | None:
@@ -371,6 +389,21 @@ def _verdict_rows(store: Store, mode: str, version: int) -> list[dict[str, Any]]
     return read_verdicts(store, store.judge_dir(mode, version) / "verdicts.jsonl")
 
 
+def _guarded_rows(
+    store: Store, mode: str, version: int
+) -> tuple[list[dict[str, Any]], PromotionHit | None]:
+    """A promoted judge's verdict rows, or, when its verdicts.jsonl cannot be read, the
+    hit that says so. Its gate already fails then, as the file no longer matches its
+    marker, so a change is refused only until `--withdraw-promotions` withdraws it."""
+    path = store.judge_dir(mode, version) / "verdicts.jsonl"
+    try:
+        return read_verdicts(store, path), None
+    except MalformedFile as exc:
+        return [], PromotionHit(mode, version, [], unreadable=str(exc))
+    except OSError as exc:
+        return [], PromotionHit(mode, version, [], unreadable=f"{path}: {exc.strerror}")
+
+
 def stale_verdicts(store: Store, mode: str, version: int) -> list[StaleVerdict]:
     """The verdicts of judge `mode` v`version` that no longer describe the corpus and
     labels on disk: their trace is gone or its text changed, their label changed, or
@@ -378,13 +411,11 @@ def stale_verdicts(store: Store, mode: str, version: int) -> list[StaleVerdict]:
     rows = _verdict_rows(store, mode, version)
     if not rows:
         return []
-    corpus = {t.trace_id: t for t in store.read_traces()}
+    corpus = _hashes_by_id(store.read_traces())
     labels = {lbl.trace_id: lbl.label for lbl in read_labels(store, mode)}
     stale: list[StaleVerdict] = []
     for row in rows:
-        reason = _trace_problem(row, corpus, row.get(TRACE_HASH_KEY)) or _label_problem(
-            row, labels
-        )
+        reason = _trace_problem(row, corpus, _judged(row)) or _label_problem(row, labels)
         if reason:
             stale.append(StaleVerdict(str(row["trace_id"]), _split_of(row), reason))
     return stale
@@ -407,20 +438,24 @@ def promotions_hit_by_traces(store: Store, traces: list[Trace]) -> list[Promotio
     it judged that is left, and counts as stale when that corpus cannot be read or does
     not hold its trace, since then nothing says what it judged.
     """
-    new = {t.trace_id: t for t in traces}
-    replaced: dict[str, str] | None = None
+    new = _hashes_by_id(traces)
+    replaced: dict[str, set[str]] | None = None
     hits: list[PromotionHit] = []
     for mode, version in _promoted_judges(store):
+        rows, unreadable = _guarded_rows(store, mode, version)
+        if unreadable:
+            hits.append(unreadable)
+            continue
         stale: list[StaleVerdict] = []
-        for row in _verdict_rows(store, mode, version):
-            judged = row.get(TRACE_HASH_KEY)
-            if judged is None:
+        for row in rows:
+            judged = _judged(row)
+            if not judged:
                 if replaced is None:
                     try:
-                        replaced = {t.trace_id: trace_sha256(t) for t in store.read_traces()}
+                        replaced = _hashes_by_id(store.read_traces())
                     except (OSError, ValueError):  # unreadable, so nothing can be compared
                         replaced = {}
-                judged = replaced.get(str(row["trace_id"]))
+                judged = replaced.get(str(row["trace_id"]), set())
             reason = _trace_problem(row, new, judged)
             if reason:
                 stale.append(StaleVerdict(str(row["trace_id"]), _split_of(row), reason))
@@ -436,9 +471,13 @@ def promotions_hit_by_labels(store: Store, mode: str, labels: list[Label]) -> li
     incoming = {lbl.trace_id: lbl.label for lbl in labels}
     hits: list[PromotionHit] = []
     for judge_mode, version in _promoted_judges(store, mode):
+        rows, unreadable = _guarded_rows(store, judge_mode, version)
+        if unreadable:
+            hits.append(unreadable)
+            continue
         stale = [
             StaleVerdict(str(row["trace_id"]), _split_of(row), reason)
-            for row in _verdict_rows(store, judge_mode, version)
+            for row in rows
             if str(row["trace_id"]) in incoming
             and (reason := _label_problem(row, incoming)) is not None
         ]
@@ -465,6 +504,17 @@ def _stale_lines(stale: list[StaleVerdict], prefix: str = "") -> list[str]:
             f"  - {prefix}{where}: {len(ids)} trace(s) {_STALE_REASONS[reason]} ({named})"
         )
     return lines
+
+
+def _missing_note(stale: list[StaleVerdict]) -> str:
+    """For verdicts whose trace left the corpus: judging their split again without the
+    trace drops the verdict, so say how to bring the trace back too."""
+    if not any(verdict.reason == "missing" for verdict in stale):
+        return ""
+    return (
+        " A trace no longer in the corpus is judged again only once it is ingested "
+        "again; judging its split without it drops its verdict."
+    )
 
 
 def _rerun_advice(mode: str, version: int, splits: Iterable[str | None]) -> str:
@@ -496,11 +546,20 @@ def guard_promotions(store: Store, hits: list[PromotionHit], *, withdraw: bool) 
     if not hits:
         return []
     if not withdraw:
+        for hit in hits:
+            if hit.unreadable:
+                raise InvariantViolation(
+                    f"the verdicts of promoted judge {hit.mode} v{hit.version} cannot be "
+                    f"read ({hit.unreadable}), so whether this change alters what it was "
+                    "scored on cannot be checked. Nothing was written. Pass "
+                    "--withdraw-promotions to withdraw its promotion and write the change."
+                )
         lines = [
             line
             for hit in hits
             for line in _stale_lines(hit.stale, prefix=f"{hit.mode} v{hit.version}, ")
         ]
+        stale = [verdict for hit in hits for verdict in hit.stale]
         raise InvariantViolation(
             "this change would alter what promoted judges were scored on, so their "
             "promotions would no longer describe the data:\n"
@@ -508,14 +567,23 @@ def guard_promotions(store: Store, hits: list[PromotionHit], *, withdraw: bool) 
             + "\nNothing was written. Pass --withdraw-promotions to write it and withdraw "
             "these promotions; `axial promote` then refuses each judge until the splits "
             "named above are judged again."
+            + _missing_note(stale)
         )
     notes = []
     for hit in hits:
         (store.judge_dir(hit.mode, hit.version) / "PROMOTED").unlink(missing_ok=True)
+        if hit.unreadable:
+            notes.append(
+                f"withdrew the promotion of {hit.mode} v{hit.version}: its verdicts could "
+                f"not be read ({hit.unreadable}). Restore the file, or run `axial judge "
+                "--new` to score a fresh version."
+            )
+            continue
         notes.append(
             f"withdrew the promotion of {hit.mode} v{hit.version}: {len(hit.stale)} of its "
             "verdicts no longer describe the data. "
             + _rerun_advice(hit.mode, hit.version, (s.split for s in hit.stale))
+            + _missing_note(hit.stale)
         )
     return notes
 
@@ -551,6 +619,7 @@ def promote(
             + "\n".join(_stale_lines(stale_rows))
             + "\n"
             + _rerun_advice(mode, version, (s.split for s in stale_rows))
+            + _missing_note(stale_rows)
         )
     check = check_promotion(dev, test, thresholds)
     if not check.ok:
