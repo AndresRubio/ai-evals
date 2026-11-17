@@ -38,7 +38,7 @@ It's a Node/JS-ecosystem tool at its core — Python teams have to context-switc
 
 ## Relation to axial
 
-- **promptfoo / OpenAI Evals / lm-eval-harness / HELM**: you write the assertion or task spec *first*. There's no workflow step for "I don't yet know what 'good' means for my traces — help me discover it."
+- **promptfoo / OpenAI Evals / lm-eval-harness / HELM**: you write the assertion or task spec *first*. None has a workflow step for "I don't yet know what 'good' means for my traces; help me discover it."
 
 - **The "pytest for evals" tools (DeepEval, pytest-evals, promptfoo)**: are good at the *last mile* (gate CI on a fixed judge/assertion) but contribute nothing to the *first mile* (how did you decide the assertion was right, and how do you know the judge agrees with your humans at an acceptable rate before you trust it in CI).
 

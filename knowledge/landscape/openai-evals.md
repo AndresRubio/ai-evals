@@ -38,7 +38,7 @@ The open-source repo is semi-abandoned relative to the hosted API — OpenAI's o
 
 ## Relation to axial
 
-- **promptfoo / OpenAI Evals / lm-eval-harness / HELM**: you write the assertion or task spec *first*. There's no workflow step for "I don't yet know what 'good' means for my traces — help me discover it."
+- **promptfoo / OpenAI Evals / lm-eval-harness / HELM**: you write the assertion or task spec *first*. None has a workflow step for "I don't yet know what 'good' means for my traces; help me discover it."
 
 No dependency.
 
