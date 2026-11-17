@@ -38,7 +38,7 @@ Younger platform relative to LangSmith/Langfuse — smaller integration ecosyste
 
 ## Relation to axial
 
-- **LangSmith / Langfuse / Opik / Weave / Braintrust / Phoenix**: excellent at storing traces, running datasets, and wiring up "an" LLM-as-judge — but the judge-authoring UX is almost universally "write a judge prompt and ship it," not "systematically derive the judge's rubric from a labeled sample and measure judge/human agreement (Cohen's kappa, TPR/TNR) before trusting it." A few (Langfuse, Opik) let you attach human annotation queues and LLM judges *side by side*, which is the closest any tool gets — but none automate or even scaffold the *alignment* step (comparing judge verdicts to human labels, flagging disagreement, iterating the rubric) as a first-class, guided workflow. That alignment step is exactly what EvalGen's research prototype demonstrated and what practitioners currently do by hand in spreadsheets/notebooks.
+- **LangSmith / Langfuse / Opik / Weave / Braintrust / Phoenix**: excellent at storing traces, running datasets and wiring up "an" LLM-as-judge. Their judge-authoring path is almost always "write a judge prompt and ship it"; deriving the judge's rubric from a labelled sample and measuring judge/human agreement (Cohen's kappa, TPR/TNR) before trusting it is rare. A few (Langfuse, Opik) let you attach human annotation queues and LLM judges *side by side*, the closest any tool gets, but none automates or scaffolds the *alignment* step (comparing judge verdicts to human labels, flagging disagreement, iterating the rubric) as a guided workflow. That step is what EvalGen's research prototype demonstrated and what practitioners do by hand in spreadsheets and notebooks.
 
 No dependency.
 

@@ -22,7 +22,7 @@
 ## landscape
 
 - [anthropic-cookbook](knowledge/landscape/anthropic-cookbook.md): Anthropic's eval notebooks and guidance, rubrics and Claude as judge; recipes to copy, nothing to install (2026-09-17)
-- [arize-phoenix](knowledge/landscape/arize-phoenix.md): Arize's OpenTelemetry-based observability and eval library, source-available under Elastic License 2.0 (2026-09-17)
+- [arize-phoenix](knowledge/landscape/arize-phoenix.md): Arize's OpenTelemetry-based observability and eval library; the server and evals library are source-available under Elastic License 2.0, the client Apache-2.0 (2026-11-17)
 - [braintrust-autoevals](knowledge/landscape/braintrust-autoevals.md): Braintrust's closed eval platform and autoevals, its open scorer library for heuristic, embedding and LLM-judge scores (2026-09-17)
 - [deepeval](knowledge/landscape/deepeval.md): Pytest-style LLM eval library with 60+ built-in metrics and a paid Confident AI dashboard above it (2026-09-17)
 - [dspy](knowledge/landscape/dspy.md): Stanford's framework that treats an eval metric as the optimisation objective for prompts and few-shots (2026-09-17)
@@ -31,12 +31,12 @@
 - [evidently](knowledge/landscape/evidently.md): Open-source ML and LLM evaluation and monitoring; Reports and Tests, descriptors, LLM judges, tracing, scheduled evals (2026-10-07)
 - [great-expectations](knowledge/landscape/great-expectations.md): Data-quality contracts for pipelines, with expectation suites, checkpoints that stop a run, and Data Docs as the record (2026-10-07)
 - [harbor](knowledge/landscape/harbor.md): Terminal-Bench's harness for running agents on tasks in fresh sandboxes, scored by per-task verifiers and LLM judges its docs never compare with human labels (2026-10-29)
-- [helm](knowledge/landscape/helm.md): Stanford CRFM's holistic foundation-model benchmark framework, in maintenance mode since June 2026 (2026-09-17)
+- [helm](knowledge/landscape/helm.md): Stanford CRFM's holistic foundation-model benchmark framework, in maintenance mode since June 2026 (2026-11-17)
 - [inspect-ai](knowledge/landscape/inspect-ai.md): UK AISI's open harness for model and agent evals, with datasets, solvers, scorers, sandboxed agents and a local log viewer (2026-10-07)
 - [landscape-overview](knowledge/landscape/landscape-overview.md): Two families of eval tools, benchmarking and application evals, and why none closes the error-analysis-first gap (2026-10-29)
 - [langfuse](knowledge/landscape/langfuse.md): Open-source LLM engineering platform for tracing, datasets, evals and annotation queues; MIT since June 2025 (2026-09-17)
 - [langsmith](knowledge/landscape/langsmith.md): LangChain's closed eval and tracing platform, with open evaluator classes in the client libraries (2026-09-17)
-- [lm-evaluation-harness](knowledge/landscape/lm-evaluation-harness.md): EleutherAI's standard harness for reproducible few-shot benchmark evaluation of foundation models (2026-09-17)
+- [lm-evaluation-harness](knowledge/landscape/lm-evaluation-harness.md): EleutherAI's standard harness for reproducible few-shot benchmark evaluation of foundation models (2026-11-17)
 - [openai-evals](knowledge/landscape/openai-evals.md): OpenAI's slowing open-source eval registry and the hosted Evals API its docs now steer users to (2026-09-17)
 - [opik](knowledge/landscape/opik.md): Comet's open-source observability and evaluation platform with pytest integration and a prompt optimizer (2026-09-17)
 - [promptfoo](knowledge/landscape/promptfoo.md): CLI and Node library for prompt and model testing and red-teaming, driven by a YAML config of prompts, providers, tests and asserts (2026-09-17)
