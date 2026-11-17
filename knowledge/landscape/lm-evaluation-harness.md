@@ -21,7 +21,7 @@ sources:
   - url: https://arxiv.org/abs/2405.14782
     read: 2026-11-11
 license: MIT
-related: [landscape-overview]
+related: [landscape-overview, helm]
 ---
 
 # lm-evaluation-harness (EleutherAI)
@@ -48,7 +48,9 @@ Decontamination is documented and not wired in. The docs describe a 13-gram over
 
 ## Biggest complaint
 
-Task-YAML system is powerful but arcane to extend correctly (templating/answer-extraction edge cases). Installing the PyPI package (`lm-eval`) was discouraged in favour of an editable clone, which is how the README installs it (`pip install -e .`), because internals moved fast. With nothing committed to `main` since 2026-09-14 (see Maturity), that reason has weakened.
+Task-YAML system is powerful but arcane to extend correctly (templating/answer-extraction edge cases)
+
+The 2026-09-17 version also said installing the PyPI package (`lm-eval`) was discouraged in favour of an editable clone because internals moved fast, and it records no practitioner source for that. The README's install section starts from a clone (`pip install -e .`) and adds model backends as PyPI extras such as `lm_eval[hf]`. With nothing committed to `main` since 2026-09-14 (see Maturity), the fast-moving reason has weakened.
 
 ## Relation to axial
 
@@ -56,7 +58,7 @@ With promptfoo, OpenAI Evals, lm-eval-harness and HELM you write the assertion o
 
 lm-eval-harness and HELM solve a different problem (a fixed benchmark with known ground truth), where error analysis first doesn't apply the same way. There is no "discover your own failure taxonomy" step, because the taxonomy (the benchmark) is handed to you.
 
-One thing carries over. With `--log_samples` the harness writes a SHA-256 of each sample's document, prompt and target, and rolls the samples' hashes into one per task. A run that uses a chat template or a system instruction also records their hashes, with or without the flag. That is the precedent for binding a judge's verdict to the exact input it judged.
+One thing carries over. With `--log_samples` the harness records a SHA-256 of each sample's document, prompt and target, and rolls the samples' hashes into one per task. A run that uses a chat template or a system instruction also records their hashes, with or without the flag. That is the precedent for binding a judge's verdict to the exact input it judged.
 
 What it lacks is statistics beyond a standard error. With `bootstrap_iters` above zero (`simple_evaluate` defaults to 100000), it gives a closed-form standard error for `mean` and `acc_all`, a bootstrapped one for a fixed list of metrics (median, F1, Matthews correlation, perplexity, BLEU and others), and none for the rest; at zero it gives none at all. It reports no confidence intervals and no paired comparisons, where `axial` reports Wilson intervals and paired differences.
 
@@ -68,4 +70,4 @@ No dependency.
 
 2026-11-16: the 2026-09-17 version called the project very active on a v0.4.x line with about 13k stars. Nothing has been committed to `main` since 2026-09-14, so Maturity now gives the latest release, the pre-release and that date.
 
-2026-11-17: the 2026-09-17 version said installing from PyPI is discouraged because of how fast internals move. With `main` idle since 2026-09-14, Biggest complaint now gives that as the reason at the time and says it has weakened.
+2026-11-17: the 2026-09-17 version said installing from PyPI is discouraged because of how fast internals move. With `main` idle since 2026-09-14, Biggest complaint now reports that as the earlier version's claim, says no practitioner source is recorded for it, and says the reason has weakened.

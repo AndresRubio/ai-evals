@@ -26,7 +26,7 @@ related: [landscape-overview]
 
 ## What it is
 
-Python observability + eval library from Arize, with OpenTelemetry-based tracing. The server (`arize-phoenix`) and the evals library (`arize-phoenix-evals`) are source-available under Elastic License 2.0; the client (`arize-phoenix-client`) and the OpenTelemetry package (`arize-phoenix-otel`) are Apache-2.0. The licence above is the server's and the evals library's.
+Python observability + eval library from Arize, with OpenTelemetry-based tracing. The server (`arize-phoenix`) and the evals library (`arize-phoenix-evals`) are source-available under Elastic License 2.0; the client (`arize-phoenix-client`) and the OpenTelemetry package (`arize-phoenix-otel`) are Apache-2.0. The frontmatter `license` field covers the server and the evals library.
 
 ## Core abstraction
 
