@@ -319,8 +319,9 @@ class PromotionHit(NamedTuple):
     mode: str
     version: int
     stale: list[StaleVerdict]
-    # Why its verdicts.jsonl is missing, unreadable or empty, naming the file, when it is:
-    # then nothing says what the judge was scored on, so any change counts as hitting it.
+    # Set when its verdicts.jsonl gives no rows to check: a clause that names the file and
+    # says it is missing, cannot be read (and why) or holds no verdicts. Nothing then says
+    # what the judge was scored on, so any change counts as hitting it.
     unreadable: str | None = None
 
 
@@ -400,16 +401,15 @@ def _guarded_rows(
     `--withdraw-promotions` withdraws it."""
     path = store.judge_dir(mode, version) / "verdicts.jsonl"
     if not path.exists():
-        return [], PromotionHit(mode, version, [], unreadable=f"{path}: no such file")
+        return [], PromotionHit(mode, version, [], unreadable=f"{path} is missing")
     try:
         rows = read_verdicts(store, path)
-    except MalformedFile as exc:
-        return [], PromotionHit(mode, version, [], unreadable=str(exc))
-    except OSError as exc:
-        return [], PromotionHit(mode, version, [], unreadable=f"{path}: {exc.strerror}")
+    except (MalformedFile, OSError) as exc:
+        why = exc.detail if isinstance(exc, MalformedFile) else exc.strerror
+        return [], PromotionHit(mode, version, [], unreadable=f"{path} cannot be read ({why})")
     if not rows:
         # Promotion was earned on verdicts, so a file with none has lost them.
-        return [], PromotionHit(mode, version, [], unreadable=f"{path}: holds no verdicts")
+        return [], PromotionHit(mode, version, [], unreadable=f"{path} holds no verdicts")
     return rows, None
 
 
@@ -552,18 +552,22 @@ def guard_promotions(store: Store, hits: list[PromotionHit], *, withdraw: bool) 
     rewrites the verdicts: a write that then fails leaves a judge unpromoted, and `axial
     promote` restores it while its verdicts still match the data. The notes it returns
     describe a written change, so they are shown once the write succeeds; a failed write
-    says what was withdrawn with `unwritten_note` instead.
+    says what was withdrawn with `unwritten_note` instead. A marker that cannot be
+    deleted stops the withdrawal with an OSError that says the same of the judges
+    withdrawn before it.
     """
     if not hits:
         return []
     if not withdraw:
         for hit in hits:
             if hit.unreadable:
-                # One line, so a damaged file reads as one refusal naming it once.
+                # One line, so a damaged file reads as one refusal naming it once. The
+                # other judges' files may be missing, damaged or empty, and "cannot be
+                # checked" is true of all three.
                 others = [
                     f"{h.mode} v{h.version}, "
                     + (
-                        "whose verdicts cannot be read either"
+                        "whose verdicts cannot be checked either"
                         if h.unreadable
                         else "which this change makes stale"
                     )
@@ -572,11 +576,10 @@ def guard_promotions(store: Store, hits: list[PromotionHit], *, withdraw: bool) 
                 ]
                 also = f"; that also withdraws {'; '.join(others)}" if others else ""
                 raise InvariantViolation(
-                    f"the verdicts of promoted judge {hit.mode} v{hit.version} cannot be "
-                    f"read ({hit.unreadable}), so whether this change alters what it was "
-                    "scored on cannot be checked. Nothing was written. Pass "
-                    "--withdraw-promotions to withdraw its promotion and write the change"
-                    f"{also}."
+                    f"{hit.unreadable}, so whether this change alters what promoted judge "
+                    f"{hit.mode} v{hit.version} was scored on cannot be checked. Nothing "
+                    "was written. Pass --withdraw-promotions to withdraw its promotion and "
+                    f"write the change{also}."
                 )
         lines = [
             line
@@ -594,13 +597,25 @@ def guard_promotions(store: Store, hits: list[PromotionHit], *, withdraw: bool) 
             + _missing_note(stale)
         )
     notes = []
+    withdrawn: list[PromotionHit] = []
     for hit in hits:
-        (store.judge_dir(hit.mode, hit.version) / "PROMOTED").unlink(missing_ok=True)
+        marker = store.judge_dir(hit.mode, hit.version) / "PROMOTED"
+        try:
+            marker.unlink(missing_ok=True)
+        except OSError as exc:
+            raise OSError(
+                f"could not withdraw the promotion of {hit.mode} v{hit.version} "
+                f"({marker}: {exc.strerror})"
+                + (
+                    unwritten_note(withdrawn)
+                    or ". No promotion was withdrawn and nothing was written"
+                )
+            ) from exc
+        withdrawn.append(hit)
         if hit.unreadable:
             notes.append(
-                f"withdrew the promotion of {hit.mode} v{hit.version}: its verdicts could "
-                f"not be read ({hit.unreadable}). Restore the file, or run `axial judge "
-                "--new` to score a fresh version."
+                f"withdrew the promotion of {hit.mode} v{hit.version}: {hit.unreadable}. "
+                "Restore the file, or run `axial judge --new` to score a fresh version."
             )
             continue
         notes.append(
@@ -613,8 +628,9 @@ def guard_promotions(store: Store, hits: list[PromotionHit], *, withdraw: bool) 
 
 
 def unwritten_note(hits: list[PromotionHit]) -> str:
-    """What to add to a failed write's message once `guard_promotions` withdrew `hits`:
-    the notes it returned say the data changed, and it did not."""
+    """What to add to the message of a write, or of a later withdrawal, that failed once
+    `guard_promotions` had withdrawn `hits`: its notes say the data changed, and it did
+    not."""
     if not hits:
         return ""
     judges = ", ".join(f"{hit.mode} v{hit.version}" for hit in hits)
@@ -635,6 +651,13 @@ def promote(
 ) -> None:
     directory = store.judge_dir(mode, version)
     fingerprint = current_prompt_sha256(store, _load_spec(store, mode, version))
+    if not _verdict_rows(store, mode, version):
+        # `dev` and `test` are the caller's, so they do not show the judge was ever run,
+        # and a marker would bind the hash of a missing or empty verdicts.jsonl.
+        raise InvariantViolation(
+            f"judge {mode} v{version} cannot be promoted: it has no verdicts. Run `axial "
+            f"judge {mode} --version {version} --split dev` and `--split test` first."
+        )
     stale = _splits_from_another_prompt(store, directory, fingerprint)
     if stale:
         named = [split for split in stale if split is not None]
