@@ -550,7 +550,9 @@ def guard_promotions(store: Store, hits: list[PromotionHit], *, withdraw: bool) 
 
     Called before the change is written, as `run_judge` deletes PROMOTED before it
     rewrites the verdicts: a write that then fails leaves a judge unpromoted, and `axial
-    promote` restores it while its verdicts still match the data. The notes it returns
+    promote` restores it while its verdicts still match the data. A judge whose
+    verdicts.jsonl gives no rows cannot be restored until the file is back. The notes it
+    returns
     describe a written change, so they are shown once the write succeeds; a failed write
     says what was withdrawn with `unwritten_note` instead. A marker that cannot be
     deleted stops the withdrawal with an OSError that says the same of the judges
@@ -627,18 +629,38 @@ def guard_promotions(store: Store, hits: list[PromotionHit], *, withdraw: bool) 
     return notes
 
 
+def _listed(names: list[str]) -> str:
+    """`names` as a sentence lists them: "a", "a and b", "a, b and c"."""
+    if len(names) < 2:
+        return "".join(names)
+    return f"{', '.join(names[:-1])} and {names[-1]}"
+
+
 def unwritten_note(hits: list[PromotionHit]) -> str:
     """What to add to the message of a write, or of a later withdrawal, that failed once
     `guard_promotions` had withdrawn `hits`: its notes say the data changed, and it did
-    not."""
+    not. It offers `axial promote` only when some judge among `hits` still has its
+    verdicts. A judge whose verdicts.jsonl gives no rows gets a sentence of its own, as
+    `axial promote` refuses it until the file is back, and the note ends with the way
+    back that the withdrawal note gives."""
     if not hits:
         return ""
-    judges = ", ".join(f"{hit.mode} v{hit.version}" for hit in hits)
-    return (
-        f". The promotion of {judges} was withdrawn first and nothing was written; "
-        "`axial promote` restores a judge whose verdicts can be read and still match the "
-        "data"
+    judges = _listed([f"{hit.mode} v{hit.version}" for hit in hits])
+    subject = (
+        f"The promotion of {judges} was"
+        if len(hits) == 1
+        else f"The promotions of {judges} were"
     )
+    note = f". {subject} withdrawn first and nothing was written"
+    lost = [hit for hit in hits if hit.unreadable]
+    if len(lost) < len(hits):
+        note += "; `axial promote` restores a judge whose verdicts still match the data"
+    for hit in lost:
+        note += f". `axial promote` cannot restore {hit.mode} v{hit.version} while {hit.unreadable}"
+    if lost:
+        files = "that file" if len(lost) == 1 else "those files"
+        note += f". Restore {files}, or run `axial judge --new` to score a fresh version"
+    return note
 
 
 def promote(

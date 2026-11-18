@@ -987,3 +987,124 @@ def test_a_withdrawal_that_fails_on_the_first_judge_says_none_was_withdrawn(tmp_
     assert "merged v2" not in message
     for version in (1, 2):
         assert (store.judge_dir("merged", version) / "PROMOTED").exists()
+
+
+def _stale_hit(version: int):
+    from axial.judge.promotion import PromotionHit, StaleVerdict
+
+    return PromotionHit("merged", version, [StaleVerdict("test-000", "test", "relabelled")])
+
+
+@pytest.mark.parametrize(
+    ("versions", "subject"),
+    [
+        ((1,), "The promotion of merged v1 was withdrawn first"),
+        ((1, 2), "The promotions of merged v1 and merged v2 were withdrawn first"),
+        ((1, 2, 3), "The promotions of merged v1, merged v2 and merged v3 were withdrawn first"),
+    ],
+)
+def test_the_note_for_an_unwritten_change_lists_the_withdrawn_judges_as_a_sentence(
+    versions: tuple[int, ...], subject: str
+):
+    """Each judge here still has its verdicts, so the note offers `axial promote` and
+    names no judge it cannot restore."""
+    from axial.judge.promotion import unwritten_note
+
+    note = unwritten_note([_stale_hit(version) for version in versions])
+    assert note.startswith(f". {subject} and nothing was written; ")
+    assert note.endswith("`axial promote` restores a judge whose verdicts still match the data")
+    assert "cannot restore" not in note
+
+
+def test_the_note_for_an_unwritten_change_names_each_judge_promote_cannot_restore():
+    from axial.judge.promotion import PromotionHit, unwritten_note
+
+    note = unwritten_note(
+        [
+            PromotionHit("merged", 1, [], unreadable="a/verdicts.jsonl holds no verdicts"),
+            _stale_hit(2),
+            PromotionHit("merged", 3, [], unreadable="b/verdicts.jsonl is missing"),
+        ]
+    )
+    assert "The promotions of merged v1, merged v2 and merged v3 were withdrawn first" in note
+    assert note.endswith(
+        "; `axial promote` restores a judge whose verdicts still match the data. `axial "
+        "promote` cannot restore merged v1 while a/verdicts.jsonl holds no verdicts. `axial "
+        "promote` cannot restore merged v3 while b/verdicts.jsonl is missing. Restore those "
+        "files, or run `axial judge --new` to score a fresh version"
+    )
+
+
+def test_the_note_for_an_unwritten_change_offers_promote_for_no_judge_that_lost_its_verdicts():
+    """The one withdrawn judge has no verdicts, so the note does not state what `axial
+    promote` restores: it says what stands in the way and how to get past it."""
+    from axial.judge.promotion import PromotionHit, unwritten_note
+
+    note = unwritten_note(
+        [PromotionHit("merged", 1, [], unreadable="a/verdicts.jsonl holds no verdicts")]
+    )
+    assert note == (
+        ". The promotion of merged v1 was withdrawn first and nothing was written. `axial "
+        "promote` cannot restore merged v1 while a/verdicts.jsonl holds no verdicts. Restore "
+        "that file, or run `axial judge --new` to score a fresh version"
+    )
+
+
+def test_the_note_for_an_unwritten_change_offers_promote_for_none_of_several_lost_judges():
+    """Two judges were withdrawn and neither has verdicts, so the sentence on what `axial
+    promote` restores is left out, as it is for one such judge."""
+    from axial.judge.promotion import PromotionHit, unwritten_note
+
+    note = unwritten_note(
+        [
+            PromotionHit("merged", 1, [], unreadable="a/verdicts.jsonl holds no verdicts"),
+            PromotionHit("merged", 2, [], unreadable="b/verdicts.jsonl is missing"),
+        ]
+    )
+    assert note == (
+        ". The promotions of merged v1 and merged v2 were withdrawn first and nothing was "
+        "written. `axial promote` cannot restore merged v1 while a/verdicts.jsonl holds no "
+        "verdicts. `axial promote` cannot restore merged v2 while b/verdicts.jsonl is "
+        "missing. Restore those files, or run `axial judge --new` to score a fresh version"
+    )
+
+
+@pytest.mark.parametrize(
+    ("state", "clause"),
+    [
+        ("empty", "holds no verdicts"),
+        ("missing", "is missing"),
+        ("damaged", "cannot be read (invalid JSON on line "),
+    ],
+)
+def test_a_failed_withdrawal_names_the_judge_promote_cannot_restore_and_why(
+    tmp_path: Path, state: str, clause: str
+):
+    """v1 lost its promotion because its verdicts file gives nothing to check, then v2's
+    marker could not be deleted. v1 is the only judge withdrawn, so the error does not
+    say what `axial promote` restores: it names v1, what is wrong with its file and the
+    way back, and `promote` does refuse v1 as it is."""
+    from axial.errors import MalformedFile
+    from axial.judge.promotion import promotions_hit_by_traces
+
+    store = Store(tmp_path)
+    _promoted(store, version=1)
+    _promoted(store, version=2)
+    corpus = store.read_traces()
+    path = store.judge_dir("merged", 1) / "verdicts.jsonl"
+    if state == "empty":
+        path.write_text("")
+    elif state == "missing":
+        path.unlink()
+    else:
+        _damage_verdicts(store)
+    (lost,) = promotions_hit_by_traces(store, corpus)
+    message = _withdraw_with_a_locked_judge(store, [lost, _stale_hit(2)], locked_version=2)
+    assert "\n" not in message
+    assert "The promotion of merged v1 was withdrawn first and nothing was written" in message
+    assert f"`axial promote` cannot restore merged v1 while {path} {clause}" in message
+    assert "Restore that file, or run `axial judge --new`" in message
+    assert "`axial promote` restores" not in message
+    with pytest.raises((InvariantViolation, MalformedFile)):
+        promote(store, "merged", 1, perfect(), perfect(), Thresholds())
+    assert not (store.judge_dir("merged", 1) / "PROMOTED").exists()
