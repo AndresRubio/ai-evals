@@ -1,9 +1,10 @@
 import json
+import os
 from pathlib import Path
 
 import pytest
 from promotion_helpers import stamp_run
-from typer.testing import CliRunner
+from typer.testing import CliRunner, Result
 
 from axial.cli import app
 from axial.core.store import Store
@@ -1484,13 +1485,15 @@ def test_ingest_says_what_was_withdrawn_when_the_write_then_fails(tmp_path: Path
     assert "no longer describe the data" not in result.stdout
     assert "merged v1" in result.stdout
     assert "axial promote" in result.stdout
-    assert "can be read" in result.stdout
+    assert "restores a judge whose verdicts still match the data" in result.stdout
+    assert "cannot restore" not in result.stdout
 
 
-def test_label_import_says_what_was_withdrawn_when_the_write_then_fails(
+def _import_a_label_whose_write_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
-    store = _promoted_judge(tmp_path)
+) -> Result:
+    """The result of `label-import --withdraw-promotions` for one relabelled trace, with
+    the write of labels.jsonl refused."""
     labels_path = write_labels_file(
         tmp_path,
         [{"trace_id": "test-000", "label": False, "critique": "fine", "annotator": "andres"}],
@@ -1503,14 +1506,125 @@ def test_label_import_says_what_was_withdrawn_when_the_write_then_fails(
         original(self, path, rows)
 
     monkeypatch.setattr(Store, "write_jsonl", refuse_labels)
-    result = runner.invoke(
+    return runner.invoke(
         app,
         ["label-import", "merged", "--path", str(labels_path), "--withdraw-promotions",
          "--repo", str(tmp_path)],
     )
+
+
+def test_label_import_says_what_was_withdrawn_when_the_write_then_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    store = _promoted_judge(tmp_path)
+    result = _import_a_label_whose_write_fails(tmp_path, monkeypatch)
     assert result.exit_code == 1
     assert "no longer describe the data" not in result.stdout
     assert "merged v1" in result.stdout
     assert "axial promote" in result.stdout
-    assert "can be read" in result.stdout
+    assert "restores a judge whose verdicts still match the data" in result.stdout
+    assert "cannot restore" not in result.stdout
     assert not (store.judge_dir("merged", 1) / "PROMOTED").exists()
+
+
+def test_ingest_does_not_offer_promote_for_a_judge_with_no_verdicts_when_the_write_fails(
+    tmp_path: Path,
+):
+    """The judge's verdicts file was emptied, so its promotion is withdrawn before a write
+    that fails. The message says `axial promote` cannot restore that judge, why, and the
+    way back, and `axial promote` then refuses it."""
+    store = _promoted_judge(tmp_path)
+    src = _corpus_file(tmp_path, store)
+    verdicts = store.judge_dir("merged", 1) / "verdicts.jsonl"
+    verdicts.write_text("")
+    store.traces_path.unlink()
+    store.traces_path.mkdir()
+    result = runner.invoke(
+        app, ["ingest", str(src), "--withdraw-promotions", "--repo", str(tmp_path)]
+    )
+    assert result.exit_code == 1
+    assert len(result.stdout.strip().splitlines()) == 1
+    assert (
+        f"`axial promote` cannot restore merged v1 while {verdicts} holds no verdicts"
+        in result.stdout
+    )
+    assert "Restore that file, or run `axial judge --new`" in result.stdout
+    assert "`axial promote` restores" not in result.stdout
+    again = runner.invoke(app, ["promote", "merged", "1", "--repo", str(tmp_path)])
+    assert again.exit_code == 1
+    assert "no dev verdicts for merged v1" in again.stdout
+    assert not (store.judge_dir("merged", 1) / "PROMOTED").exists()
+
+
+def test_label_import_does_not_offer_promote_for_a_judge_with_no_verdicts_when_the_write_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """`label-import` and `label-from-reviews` record labels through one function, so the
+    judge with an emptied verdicts file goes through the first of them here."""
+    store = _promoted_judge(tmp_path)
+    verdicts = store.judge_dir("merged", 1) / "verdicts.jsonl"
+    verdicts.write_text("")
+    result = _import_a_label_whose_write_fails(tmp_path, monkeypatch)
+    assert result.exit_code == 1
+    assert len(result.stdout.strip().splitlines()) == 1
+    assert (
+        f"`axial promote` cannot restore merged v1 while {verdicts} holds no verdicts"
+        in result.stdout
+    )
+    assert "Restore that file, or run `axial judge --new`" in result.stdout
+    assert "`axial promote` restores" not in result.stdout
+    assert not (store.judge_dir("merged", 1) / "PROMOTED").exists()
+
+
+@pytest.mark.parametrize("command", ["ingest", "label-import", "label-from-reviews"])
+def test_a_withdrawal_that_fails_partway_tells_the_user_which_promotion_is_already_gone(
+    tmp_path: Path, command: str
+):
+    """Two promoted judges are hit and the second one's marker cannot be deleted. One
+    line names it, names the judge withdrawn before it, and says nothing was written."""
+    from measure_helpers import build_promoted_judge
+    from skip_helpers import skip_off_ci
+
+    if os.geteuid() == 0:
+        skip_off_ci("root deletes a file whatever its directory's mode")
+    store = _promoted_judge(tmp_path)
+    build_promoted_judge(store, version=2)
+    if command == "ingest":
+        src = _corpus_file(tmp_path, store, **{"test-000": "GOOD"})
+        args = ["ingest", str(src)]
+        written = store.traces_path
+    elif command == "label-import":
+        labels_path = write_labels_file(
+            tmp_path,
+            [{"trace_id": "test-000", "label": False, "critique": "fine", "annotator": "andres"}],
+        )
+        args = ["label-import", "merged", "--path", str(labels_path)]
+        written = store.dataset_dir("merged") / "labels.jsonl"
+    else:
+        from axial.core.reviews import create_session, read_session, write_session
+
+        trace = next(t for t in store.read_traces() if t.trace_id == "test-000")
+        create_session(store, [trace], name="again")
+        reviews = read_session(store, "again")
+        for review in reviews:
+            review.verdict = "pass"
+            review.critique = "fine after all"
+            review.annotator = "andres"
+            review.status = "done"
+        write_session(store, "again", reviews)
+        args = ["label-from-reviews", "merged", "again"]
+        written = store.dataset_dir("merged") / "labels.jsonl"
+    before = written.read_bytes()
+    locked = store.judge_dir("merged", 2)
+    locked.chmod(0o555)
+    try:
+        result = runner.invoke(app, [*args, "--withdraw-promotions", "--repo", str(tmp_path)])
+    finally:
+        locked.chmod(0o755)
+    assert result.exit_code == 1
+    assert len(result.stdout.strip().splitlines()) == 1
+    assert "could not withdraw the promotion of merged v2" in result.stdout
+    assert "The promotion of merged v1 was withdrawn first and nothing was written" in result.stdout
+    assert written.read_bytes() == before
+    assert not (store.judge_dir("merged", 1) / "PROMOTED").exists()
+    assert (locked / "PROMOTED").exists()

@@ -1,9 +1,11 @@
 """The promotion gate: check_promotion, promote and require_promoted."""
 
+import os
 from pathlib import Path
 
 import pytest
 from promotion_helpers import stamp_run
+from skip_helpers import skip_off_ci
 
 from axial.core.config import Thresholds
 from axial.core.store import Store
@@ -59,16 +61,24 @@ def test_a_large_dev_to_test_gap_is_blocked():
     assert any("gap" in r.lower() for r in check.reasons)
 
 
+def _run_with_one_verdict(store: Store) -> None:
+    """A hand-written run of merged v1 that holds one verdict, the least `promote` takes."""
+    directory = store.judge_dir("merged", 1)
+    directory.mkdir(parents=True, exist_ok=True)
+    store.write_jsonl(directory / "verdicts.jsonl", [{"trace_id": "t0", "verdict": True}])
+    stamp_run(store, "merged", 1)
+
+
 def test_promote_writes_a_marker_for_a_good_judge(tmp_path: Path):
     store = Store(tmp_path)
-    stamp_run(store, "merged", 1)
+    _run_with_one_verdict(store)
     promote(store, "merged", 1, perfect(), perfect(), Thresholds())
     assert (store.judge_dir("merged", 1) / "PROMOTED").exists()
 
 
 def test_promote_refuses_a_judge_below_the_bar(tmp_path: Path):
     store = Store(tmp_path)
-    stamp_run(store, "merged", 1)
+    _run_with_one_verdict(store)
     with pytest.raises(InvariantViolation, match="TPR"):
         promote(store, "merged", 1, useless(), useless(), Thresholds())
     assert not (store.judge_dir("merged", 1) / "PROMOTED").exists()
@@ -193,7 +203,7 @@ def test_require_promoted_refuses_an_unpromoted_or_edited_judge(tmp_path: Path):
     with pytest.raises(InvariantViolation, match="has not been promoted"):
         require_promoted(store, "merged", 1)
 
-    stamp_run(store, "merged", 1)
+    _run_with_one_verdict(store)
     promote(store, "merged", 1, perfect(), perfect(), Thresholds())
     (directory / "judge.yaml").write_text("mode: merged\nprompt_template: edited\n")
     with pytest.raises(InvariantViolation, match="judge.yaml has changed"):
@@ -627,7 +637,7 @@ def test_withdrawing_an_unreadable_judge_removes_its_marker(tmp_path: Path):
     _damage_verdicts(store)
     notes = guard_promotions(store, promotions_hit_by_traces(store, corpus), withdraw=True)
     assert not (store.judge_dir("merged", 1) / "PROMOTED").exists()
-    assert any("merged v1" in note and "could not be read" in note for note in notes)
+    assert any("merged v1" in note and "cannot be read" in note for note in notes)
 
 
 def test_the_refusal_names_three_traces_per_split_and_reason_and_counts_the_rest(
@@ -812,4 +822,289 @@ def test_the_unreadable_refusal_says_why_each_other_judge_would_be_withdrawn(tmp
     message = str(caught.value)
     assert "\n" not in message
     assert "merged v1, which this change makes stale" in message
-    assert "merged v3, whose verdicts cannot be read either" in message
+    assert "merged v3, whose verdicts cannot be checked either" in message
+
+
+# --- the gaps left open when the guard merged -----------------------------------------
+
+
+@pytest.mark.parametrize("content", [None, "", "\n"], ids=["missing", "empty", "blank lines"])
+def test_promote_refuses_a_judge_whose_verdicts_file_is_missing_or_holds_no_rows(
+    tmp_path: Path, content: str | None
+):
+    """`promote` takes its alignments from the caller, so alignments that clear the bar do
+    not show the judge was ever run. With no verdict row there is nothing to bind the
+    marker to, and the refusal says how to get some."""
+    store = Store(tmp_path)
+    stamp_run(store, "merged", 1)
+    directory = store.judge_dir("merged", 1)
+    if content is not None:
+        (directory / "verdicts.jsonl").write_text(content)
+    with pytest.raises(InvariantViolation) as caught:
+        promote(store, "merged", 1, perfect(), perfect(), Thresholds())
+    message = str(caught.value)
+    assert "merged v1 cannot be promoted: it has no verdicts" in message
+    assert "`axial judge merged --version 1 --split dev` and `--split test`" in message
+    assert not (directory / "PROMOTED").exists()
+
+
+def _refusal_and_note(store: Store, corpus: list) -> tuple[str, str]:
+    """What the guard says of the one promoted judge `corpus` hits: its refusal, then
+    the note once the promotion is withdrawn."""
+    from axial.judge.promotion import guard_promotions, promotions_hit_by_traces
+
+    hits = promotions_hit_by_traces(store, corpus)
+    with pytest.raises(InvariantViolation) as caught:
+        guard_promotions(store, hits, withdraw=False)
+    (note,) = guard_promotions(store, hits, withdraw=True)
+    return str(caught.value), note
+
+
+def test_the_guard_says_an_empty_verdicts_file_holds_no_verdicts(tmp_path: Path):
+    """The file was read and held nothing, so neither message says it cannot be read."""
+    store = Store(tmp_path)
+    _promoted(store)
+    corpus = store.read_traces()
+    path = store.judge_dir("merged", 1) / "verdicts.jsonl"
+    path.write_text("")
+    for message in _refusal_and_note(store, corpus):
+        assert f"{path} holds no verdicts" in message
+        assert "be read" not in message
+
+
+def test_the_guard_says_a_missing_verdicts_file_is_missing(tmp_path: Path):
+    store = Store(tmp_path)
+    _promoted(store)
+    corpus = store.read_traces()
+    path = store.judge_dir("merged", 1) / "verdicts.jsonl"
+    path.unlink()
+    for message in _refusal_and_note(store, corpus):
+        assert f"{path} is missing" in message
+        assert "be read" not in message
+
+
+def test_the_guard_says_a_damaged_verdicts_file_cannot_be_read_and_why(tmp_path: Path):
+    """The judge has 26 dev and 100 test verdicts, so the damaged line is line 127."""
+    store = Store(tmp_path)
+    _promoted(store)
+    corpus = store.read_traces()
+    path = _damage_verdicts(store)
+    for message in _refusal_and_note(store, corpus):
+        assert f"{path} cannot be read (invalid JSON on line 127, column 2: " in message
+
+
+def test_the_guard_says_why_a_verdicts_file_it_may_not_open_cannot_be_read(tmp_path: Path):
+    if os.geteuid() == 0:
+        skip_off_ci("root reads a file whatever its mode")
+    store = Store(tmp_path)
+    _promoted(store)
+    corpus = store.read_traces()
+    path = store.judge_dir("merged", 1) / "verdicts.jsonl"
+    path.chmod(0)
+    try:
+        messages = _refusal_and_note(store, corpus)
+    finally:
+        path.chmod(0o644)
+    for message in messages:
+        assert f"{path} cannot be read (Permission denied)" in message
+
+
+def test_the_refusal_does_not_call_another_judges_empty_verdicts_file_unreadable(
+    tmp_path: Path,
+):
+    """The judges the flag would also withdraw are listed after the first one. An emptied
+    file among them was read too, so the list says only that it cannot be checked."""
+    from axial.judge.promotion import guard_promotions, promotions_hit_by_traces
+
+    store = Store(tmp_path)
+    _promoted(store, version=1)
+    _promoted(store, version=2)
+    corpus = store.read_traces()
+    _damage_verdicts(store)
+    (store.judge_dir("merged", 2) / "verdicts.jsonl").write_text("")
+    with pytest.raises(InvariantViolation) as caught:
+        guard_promotions(store, promotions_hit_by_traces(store, corpus), withdraw=False)
+    message = str(caught.value)
+    assert "\n" not in message
+    assert "merged v2, whose verdicts cannot be checked either" in message
+
+
+def _two_stale_judges(store: Store) -> list:
+    """Two promoted judges, v1 then v2, each hit by a change."""
+    from axial.judge.promotion import PromotionHit, StaleVerdict
+
+    hits = []
+    for version in (1, 2):
+        _promoted(store, version=version)
+        hits.append(
+            PromotionHit("merged", version, [StaleVerdict("test-000", "test", "relabelled")])
+        )
+    return hits
+
+
+def _withdraw_with_a_locked_judge(store: Store, hits: list, locked_version: int) -> str:
+    """The message of the OSError `guard_promotions` raises when it cannot delete the
+    marker of `locked_version`, whose directory is read-only for the call."""
+    from axial.judge.promotion import guard_promotions
+
+    if os.geteuid() == 0:
+        skip_off_ci("root deletes a file whatever its directory's mode")
+    locked = store.judge_dir("merged", locked_version)
+    locked.chmod(0o555)
+    try:
+        with pytest.raises(OSError) as caught:
+            guard_promotions(store, hits, withdraw=True)
+    finally:
+        locked.chmod(0o755)
+    return str(caught.value)
+
+
+def test_a_withdrawal_that_fails_partway_names_the_promotions_already_withdrawn(
+    tmp_path: Path,
+):
+    """v1's marker is deleted before v2's cannot be: the error names v2 as the one that
+    failed and v1 as withdrawn, and says how v1 gets its promotion back."""
+    store = Store(tmp_path)
+    hits = _two_stale_judges(store)
+    message = _withdraw_with_a_locked_judge(store, hits, locked_version=2)
+    marker = store.judge_dir("merged", 2) / "PROMOTED"
+    assert "\n" not in message
+    assert f"could not withdraw the promotion of merged v2 ({marker}: Permission denied)" in message
+    assert "The promotion of merged v1 was withdrawn first and nothing was written" in message
+    assert "`axial promote` restores" in message
+    assert not (store.judge_dir("merged", 1) / "PROMOTED").exists()
+    assert marker.exists()
+
+
+def test_a_withdrawal_that_fails_on_the_first_judge_says_none_was_withdrawn(tmp_path: Path):
+    """The nearest case to the one above: nothing was withdrawn before the failure, so
+    the error claims no withdrawal and every marker is still there."""
+    store = Store(tmp_path)
+    hits = _two_stale_judges(store)
+    message = _withdraw_with_a_locked_judge(store, hits, locked_version=1)
+    assert "could not withdraw the promotion of merged v1" in message
+    assert "No promotion was withdrawn and nothing was written" in message
+    assert "merged v2" not in message
+    for version in (1, 2):
+        assert (store.judge_dir("merged", version) / "PROMOTED").exists()
+
+
+def _stale_hit(version: int):
+    from axial.judge.promotion import PromotionHit, StaleVerdict
+
+    return PromotionHit("merged", version, [StaleVerdict("test-000", "test", "relabelled")])
+
+
+@pytest.mark.parametrize(
+    ("versions", "subject"),
+    [
+        ((1,), "The promotion of merged v1 was withdrawn first"),
+        ((1, 2), "The promotions of merged v1 and merged v2 were withdrawn first"),
+        ((1, 2, 3), "The promotions of merged v1, merged v2 and merged v3 were withdrawn first"),
+    ],
+)
+def test_the_note_for_an_unwritten_change_lists_the_withdrawn_judges_as_a_sentence(
+    versions: tuple[int, ...], subject: str
+):
+    """Each judge here still has its verdicts, so the note offers `axial promote` and
+    names no judge it cannot restore."""
+    from axial.judge.promotion import unwritten_note
+
+    note = unwritten_note([_stale_hit(version) for version in versions])
+    assert note.startswith(f". {subject} and nothing was written; ")
+    assert note.endswith("`axial promote` restores a judge whose verdicts still match the data")
+    assert "cannot restore" not in note
+
+
+def test_the_note_for_an_unwritten_change_names_each_judge_promote_cannot_restore():
+    from axial.judge.promotion import PromotionHit, unwritten_note
+
+    note = unwritten_note(
+        [
+            PromotionHit("merged", 1, [], unreadable="a/verdicts.jsonl holds no verdicts"),
+            _stale_hit(2),
+            PromotionHit("merged", 3, [], unreadable="b/verdicts.jsonl is missing"),
+        ]
+    )
+    assert "The promotions of merged v1, merged v2 and merged v3 were withdrawn first" in note
+    assert note.endswith(
+        "; `axial promote` restores a judge whose verdicts still match the data. `axial "
+        "promote` cannot restore merged v1 while a/verdicts.jsonl holds no verdicts. `axial "
+        "promote` cannot restore merged v3 while b/verdicts.jsonl is missing. Restore those "
+        "files, or run `axial judge --new` to score a fresh version"
+    )
+
+
+def test_the_note_for_an_unwritten_change_offers_promote_for_no_judge_that_lost_its_verdicts():
+    """The one withdrawn judge has no verdicts, so the note does not state what `axial
+    promote` restores: it says what stands in the way and how to get past it."""
+    from axial.judge.promotion import PromotionHit, unwritten_note
+
+    note = unwritten_note(
+        [PromotionHit("merged", 1, [], unreadable="a/verdicts.jsonl holds no verdicts")]
+    )
+    assert note == (
+        ". The promotion of merged v1 was withdrawn first and nothing was written. `axial "
+        "promote` cannot restore merged v1 while a/verdicts.jsonl holds no verdicts. Restore "
+        "that file, or run `axial judge --new` to score a fresh version"
+    )
+
+
+def test_the_note_for_an_unwritten_change_offers_promote_for_none_of_several_lost_judges():
+    """Two judges were withdrawn and neither has verdicts, so the sentence on what `axial
+    promote` restores is left out, as it is for one such judge."""
+    from axial.judge.promotion import PromotionHit, unwritten_note
+
+    note = unwritten_note(
+        [
+            PromotionHit("merged", 1, [], unreadable="a/verdicts.jsonl holds no verdicts"),
+            PromotionHit("merged", 2, [], unreadable="b/verdicts.jsonl is missing"),
+        ]
+    )
+    assert note == (
+        ". The promotions of merged v1 and merged v2 were withdrawn first and nothing was "
+        "written. `axial promote` cannot restore merged v1 while a/verdicts.jsonl holds no "
+        "verdicts. `axial promote` cannot restore merged v2 while b/verdicts.jsonl is "
+        "missing. Restore those files, or run `axial judge --new` to score a fresh version"
+    )
+
+
+@pytest.mark.parametrize(
+    ("state", "clause"),
+    [
+        ("empty", "holds no verdicts"),
+        ("missing", "is missing"),
+        ("damaged", "cannot be read (invalid JSON on line "),
+    ],
+)
+def test_a_failed_withdrawal_names_the_judge_promote_cannot_restore_and_why(
+    tmp_path: Path, state: str, clause: str
+):
+    """v1 lost its promotion because its verdicts file gives nothing to check, then v2's
+    marker could not be deleted. v1 is the only judge withdrawn, so the error does not
+    say what `axial promote` restores: it names v1, what is wrong with its file and the
+    way back, and `promote` does refuse v1 as it is."""
+    from axial.errors import MalformedFile
+    from axial.judge.promotion import promotions_hit_by_traces
+
+    store = Store(tmp_path)
+    _promoted(store, version=1)
+    _promoted(store, version=2)
+    corpus = store.read_traces()
+    path = store.judge_dir("merged", 1) / "verdicts.jsonl"
+    if state == "empty":
+        path.write_text("")
+    elif state == "missing":
+        path.unlink()
+    else:
+        _damage_verdicts(store)
+    (lost,) = promotions_hit_by_traces(store, corpus)
+    message = _withdraw_with_a_locked_judge(store, [lost, _stale_hit(2)], locked_version=2)
+    assert "\n" not in message
+    assert "The promotion of merged v1 was withdrawn first and nothing was written" in message
+    assert f"`axial promote` cannot restore merged v1 while {path} {clause}" in message
+    assert "Restore that file, or run `axial judge --new`" in message
+    assert "`axial promote` restores" not in message
+    with pytest.raises((InvariantViolation, MalformedFile)):
+        promote(store, "merged", 1, perfect(), perfect(), Thresholds())
+    assert not (store.judge_dir("merged", 1) / "PROMOTED").exists()
