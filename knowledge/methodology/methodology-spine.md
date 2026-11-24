@@ -2,10 +2,12 @@
 name: methodology-spine
 description: The thirteen-step error-analysis-first loop from instrumentation to production monitoring, with each step's artifact
 shelf: methodology
-updated: 2026-09-17
+updated: 2026-11-24
 sources:
   - url: https://hamel.dev/blog/posts/evals-faq/
     read: 2026-09-17
+  - url: https://hamel.dev/notes/llm/evals/flashcards/
+    read: 2026-11-24
   - url: https://hamel.dev/blog/posts/llm-judge/
     read: 2026-09-17
   - url: https://hamel.dev/blog/posts/field-guide/
@@ -34,7 +36,7 @@ sources:
     read: 2026-09-17
   - url: https://developers.openai.com/cookbook/examples/evaluation/building_resilient_prompts_using_an_evaluation_flywheel
     read: 2026-09-17
-related: [numbers-and-rules-of-thumb, mechanizable-vs-human, points-of-disagreement]
+related: [numbers-and-rules-of-thumb, mechanizable-vs-human, points-of-disagreement, debugging-conversations-and-agents, guardrails]
 ---
 
 # The methodology spine
@@ -53,11 +55,15 @@ All the practitioner sources converge on the same loop. Husain and Shankar name 
 ## Step 2b — Synthetic bootstrap (when real data is thin)
 **Artifact:** a **dimension table + tuple set + generated queries + real traces**. The recipe (Field Guide, LLM-judge post, FAQ): define dimensions — **features × scenarios × personas** — then write ~20 tuples by hand, then scale by LLM in two stages: (1) generate structured tuples, (2) convert each tuple to a natural-language query. Cross-product-then-filter guarantees coverage; direct LLM generation is more realistic but misses rare scenarios. Generate **user inputs only**, never outputs — run the synthetic inputs through the real system to capture full traces. Real-estate example dimensions: features {property search, market analysis, scheduling, follow-up} × scenarios {exact match, multiple matches, no match, invalid criteria} × personas {first-time buyer, investor, luxury client, relocating family}. Verify the generated scenario actually triggers the intended case. Unreliable for: complex domain content (legal/medical), low-resource languages, unverifiable domains, high-stakes settings, underrepresented user groups.
 
+Husain's *Synthetic Data* flashcard (2025-11-30) adds three habits and one prohibition. When you have real logs or traces, seed the generation with them and ask the model to explicitly inject changes, such as a new constraint or a modified variable, to get realistic edge cases. Define a schema for the output, generate many candidates, and filter to keep the highest-quality, challenging ones. Raise complexity in steps: start with simple queries and ask the model to add constraints or complex formatting. Do not prompt zero-shot without structured input. Its example is "Generate 50 test cases", which it says tends to yield generic, repetitive inputs.
+
 ## Step 3 — Open coding
-**Artifact:** a **spreadsheet of free-text observations, one row per trace**. A human reads traces and writes open-ended notes on what went wrong. Two rules: (a) focus on the **first upstream failure** — errors compound, so early failures are the real ones; (b) do **not** write a rubric first. Husain is explicit that a pre-written rubric obstructs discovery and causes reviewers to miss problems outside it. Stop at **theoretical saturation** — when new traces stop producing new failure modes or changing existing ones.
+**Artifact:** a **spreadsheet of free-text observations, one row per trace**. A human reads traces and writes open-ended notes on what went wrong. Two rules: (a) focus on the **first upstream failure**: errors compound, so early failures are the real ones; (b) do **not** write a rubric first. Husain is explicit that a pre-written rubric obstructs discovery and causes reviewers to miss problems outside it. Stop at **theoretical saturation**, when new traces stop producing new failure modes or changing existing ones. For a conversation or a multi-step agent, where the first failure sits somewhere inside a long trace, see [debugging-conversations-and-agents](debugging-conversations-and-agents.md).
 
 ## Step 4 — Axial coding
 **Artifact:** a **failure taxonomy with counts**. Group the open codes into categories, then count frequency per category (pivot table). This is where prioritization comes from. NurtureBoss example: three categories — conversation flow, handoff failures, rescheduling — accounted for **over 60%** of all problems; fixing date handling moved success from **33% → 95%**. LLMs may propose the first-pass grouping (typically 5–6 categories, per the Lenny's interview) but a human must validate it.
+
+Husain's *Error Analysis* flashcard draws the loop with a fourth box after axial coding: re-code the traces with the refined failure modes, then add new traces and go round again. It states saturation as two conditions, no new failure modes and no changes in re-coding. Its rule of thumb is about 100 high-quality, diverse traces, real or synthetic, coded with pass/fail and failure modes.
 
 ## Step 5 — Fix the obvious things first
 **Artifact:** an updated prompt/pipeline. Husain: many "failures" are just preferences you never specified (length, format, step-by-step reasoning). Do not build an expensive evaluator for something a prompt line fixes. Only persistent failures — ones you iterate on repeatedly — earn an automated evaluator.
@@ -69,6 +75,10 @@ All the practitioner sources converge on the same loop. Husain and Shankar name 
 3. **Human review** — gold standard, doesn't scale.
 Anthropic's agent guide adds the crucial agent-specific rule: grade the **outcome/final state**, not the trajectory. An agent can say "your flight is booked" without a reservation existing; and rigid path-checking punishes valid approaches the designer didn't anticipate. Grade transcripts only as a secondary signal.
 
+Two of Husain's flashcards give a test to apply before an evaluator is built. *When to Write an Eval* asks two questions in order. Has the failure been observed in error analysis? If not, stay away: evals should target errors you observe or induce. How much iteration will the fix need? If little, the value is unclear, and the card asks whether a code assertion would do or whether to fix it and move on. If a lot, the value is high, and an expensive evaluator such as an LLM judge may be feasible. *Don't Use Generic Eval Metrics* lists five properties of a good metric: it measures an error you have observed, it relates to a non-trivial issue you will iterate on, it is scoped to a specific failure, it has a binary outcome, and it is verifiable, which for an LLM judge means human labels.
+
+The *Types of Automated Evals* flashcard names a third automated type beside code assertions and LLM judges: guardrails, which run in the request path and block a failure before it reaches the user. They are a deployment mode with rules of their own; see [guardrails](../procedures/guardrails.md).
+
 ## Step 7 — Label a ground-truth set (binary + critique)
 **Artifact:** a **labeled dataset**: `{trace, binary verdict, written critique}`. The single domain expert ("**benevolent dictator**") labels. Format is **pass/fail + a detailed critique** explaining the reasoning — terse critiques are the common mistake; the critique should be detailed enough that a new employee understands the judgment. Critiques are load-bearing twice over: they become few-shot examples for the judge, and they surface criteria drift.
 
@@ -76,13 +86,13 @@ Anthropic's agent guide adds the crucial agent-specific rule: grade the **outcom
 **Artifact:** **train / dev / test manifests**. Husain's split: **train 10–20%** (examples that may appear in the judge prompt), **dev 40–45%** (refining), **test 40–45%** (frozen, final). Target **30–50 Pass and 30–50 Fail examples in each of dev and test** where possible.
 
 ## Step 9 — Build and align the judge
-**Artifact:** an **aligned judge** + an **alignment report**. Iterate: seed the prompt with 3–5 diverse expert examples (with the same external context the judge will have at runtime), run against dev labels, inspect disagreements, revise, repeat. Measure **TPR and TNR separately** — never raw agreement. Husain's worked argument: at a 5% error rate, a judge that predicts "Pass" always scores 95% agreement and catches 0% of errors. Context discipline: give the judge only what that failure mode needs; full traces by default cause "context rot" and make the judge worse. Validate context choices by ablation — remove one element at a time, see if alignment moves.
+**Artifact:** an **aligned judge** + an **alignment report**. Iterate: seed the prompt with 3 to 5 diverse expert examples (with the same external context the judge will have at runtime), run against dev labels, inspect disagreements, revise, repeat. Measure **TPR and TNR separately**, never raw agreement. Husain's worked argument: at a 5% error rate, a judge that predicts "Pass" always scores 95% agreement and catches 0% of errors. Context discipline: give the judge only what that failure mode needs; full traces by default cause "context rot" and make the judge worse. Validate context choices by ablation: remove one element at a time, see if alignment moves. The *How to Trust a LLM Judge* flashcard says to aim for a high TPR and TNR and gives above 90% as its example; the targets are collected in [numbers-and-rules-of-thumb](numbers-and-rules-of-thumb.md).
 
 ## Step 10 — Error analysis on the judge's output
 **Artifact:** **error rates sliced by dimension** (feature × scenario × persona) and a **root-cause classification**. Husain reports this is often ~15 minutes of spreadsheet work over ~20 failed interactions across 4–5 root-cause buckets. This tells you where to spend engineering effort — and whether a specialized second judge or a code assertion is warranted.
 
 ## Step 11 — CI gate
-**Artifact:** a **frozen regression set + threshold config**. Husain's CI profile: small purpose-built datasets (100+ examples) covering core features, regression tests for fixed bugs, and known edge cases; **favour deterministic assertions over LLM judges in CI** for cost reasons since it runs constantly. Anthropic: run on every agent change and model upgrade; handle non-determinism with repeated runs and report **pass@k** (at least one of k succeeds) or **pass^k** (all k succeed) depending on whether the product needs one working answer or consistency. Monitor **saturation** — 100% pass rate means the eval has stopped giving signal and should be retired or de-prioritized.
+**Artifact:** a **frozen regression set + threshold config**. Husain's CI profile: small purpose-built datasets (100+ examples) covering core features, regression tests for fixed bugs, and known edge cases; **favour deterministic assertions over LLM judges in CI** for cost reasons since it runs constantly. Anthropic: run on every agent change and model upgrade; handle non-determinism with repeated runs and report **pass@k** (at least one of k succeeds) or **pass^k** (all k succeed) depending on whether the product needs one working answer or consistency. Monitor **saturation**: a 100% pass rate means the eval has stopped giving signal and should be retired or de-prioritized. The *AI Eval Mistakes* flashcard gives a second remedy: a perfect score on all evals often means they are saturated or too easy, so add hard test cases to keep guiding improvement.
 
 ## Step 12 — Production monitoring
 **Artifact:** **sampled online scores with confidence intervals**. Production has no reference outputs, so it leans on reference-free evaluators (LLM judges) run asynchronously on sampled live traces. Husain: track confidence intervals; if the **lower bound crosses your threshold, investigate**. The loop closes here — new patterns found in production get error-analyzed and promoted into the CI dataset.

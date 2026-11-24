@@ -2,10 +2,20 @@
 name: numbers-and-rules-of-thumb
 description: Effort, cadence, sample sizes and agreement thresholds the practitioners quote, and who quotes which
 shelf: methodology
-updated: 2026-10-30
+updated: 2026-11-24
 sources:
   - url: https://hamel.dev/blog/posts/evals-faq/
     read: 2026-09-17
+  - url: https://hamel.dev/notes/llm/evals/flashcards/
+    read: 2026-11-24
+  - url: https://github.com/ai-evals-course/evals-skills/blob/main/skills/validate-evaluator/SKILL.md
+    read: 2026-11-24
+  - url: https://www.randalolson.com/2026/10/14/when-to-use-a-decision-model-instead-of-an-llm/
+    read: 2026-11-24
+  - url: https://hightouch.com/blog/llm-judges-identity-resolution
+    read: 2026-11-24
+  - url: https://strandsagents.com/blog/amazon-saves-millions-replacing-sonnet-with-strands-decider/
+    read: 2026-11-24
   - url: https://hamel.dev/blog/posts/llm-judge/
     read: 2026-09-17
   - url: https://hamel.dev/blog/posts/field-guide/
@@ -56,6 +66,7 @@ related: [methodology-spine, decision-model-thresholds]
 | **30–50 Pass + 30–50 Fail** | in each of dev and test | Husain, FAQ + LLM-judge post |
 | **~50/50 pass–fail** | aim for balanced classes | Husain, LLM-judge post |
 | **100+ examples** | size of the repeatable/CI eval set | Husain, FAQ |
+| **~20% / ~40% / ~40%** | train / dev / test for a judge's labelled set. The FAQ and the course's `validate-evaluator` skill give ranges around the same split, 10 to 20, 40 to 45 and 40 to 45 | Husain, *How to Trust a LLM Judge* flashcard, 2025-11-30 |
 | **~20 tuples by hand** | before scaling synthetic generation | Husain, FAQ |
 | **3–5 few-shot examples** | minimum in the judge prompt | Husain, LLM-judge post |
 | **20–50 tasks** | "a great start" for agent evals, drawn from real failures | Anthropic, *Demystifying evals for AI agents*, 2026-01-09 |
@@ -70,6 +81,7 @@ related: [methodology-spine, decision-model-thresholds]
 - **>90% agreement in 3 iterations** — what the Honeycomb judge took to converge (Husain, LLM-judge post; also cited in Field Guide).
 - **Critiques raise agreement 15–20%** when used as few-shot examples (Field Guide, 2025-03-24).
 - **Report TPR and TNR separately**; raw agreement is misleading under class imbalance (Husain, repeatedly).
+- **TPR and TNR both above 90%** is the target, and **both above 80%** the minimum acceptable, in the course's `validate-evaluator` skill (read 2026-11-24). The *How to Trust a LLM Judge* flashcard says to aim for a high TPR and TNR and gives above 90% as its example. `axial`'s default floors, `min_tpr` and `min_tnr`, are 0.85, between the two. The skill and the flashcard count opposite classes as positive ([points-of-disagreement](points-of-disagreement.md), item k); the target is the same for both rates, so it reads the same either way.
 - **Cohen's κ** for inter-annotator agreement — it corrects for chance. Eugene Yan's product-evals post targets **0.4–0.6 as substantial, >0.7 as excellent**, and notes **human–human κ is often only 0.2–0.3**, so that's the realistic ceiling. (Note: his LLM-evaluators survey uses the conventional scale where 0.41–0.60 is only "moderate" — the two posts are not perfectly consistent.)
 - **F1 0.571 → 0.722 on dev, 0.727 on test** — AlignEval's demonstrated optimization gain (Eugene Yan, 2024-10).
 - Judge biases with numbers (Eugene Yan, *Evaluating the Effectiveness of LLM-Evaluators*, 2024-08): position bias 50% (gpt-3.5) to 70% (claude-v1); **verbosity bias >90%** preference for longer answers in both; self-enhancement +25% (claude-v1) and +10% (gpt-4); gpt-4 hit **85% agreement with human experts on MT-Bench**; gpt-3.5-turbo managed only **30–60% recall** on factual inconsistency; gpt-4 κ=0.84 and llama-3-70b κ=0.79 on reference-based QA vs **human–human κ=0.97**.
@@ -84,3 +96,10 @@ From Husain and Saha, *How To Use Decision Models for Evals* (2026-10-20), on 98
 - **0.50** is the default threshold, and on this set it costs two models much of their recall: Clef Flash catches **21%** of failures at 0.50 and tunes to **0.055**; Liquid d1 catches **46%** and tunes to about **0.10**.
 - **80% precision and 80% recall** as minimums, set before comparing models; only OpenAI Decisions (GPT-6 Luna) met both in all **100** training splits, at held-out F1 **0.865** for **3.72¢ per 100 runs**. Perplexity Decider is the cheapest of the three candidates at **0.82¢**, held-out F1 **0.787**.
 - **Brier 0.187 → 0.188** for Jev and **0.159 → 0.164** for OpenAI after Platt scaling; an exploratory refit directly on probabilities gave OpenAI **0.154**. The authors read that as the result depending on the fitting method, so measure a calibration step before keeping it.
+
+From three other write-ups, read 2026-11-24. Detail and caveats are in the same entry.
+- The median LLM scores **30 points** above the median decision model on knowledge questions and **19** above it on hard reasoning. On safety classification and tool-call routing the two medians are **within 2 points** (Olson, 2026-10-15, on the Artificial Analysis Decision Index as of 2026-10-14: 11 decision models, 15 LLM configurations, 4 tasks).
+- On those two tied tasks a typical decision model answers in **about 0.2 seconds** against more than 1 second for a typical LLM, and the median decision model costs **5 to 6 times** less (Olson).
+- Jev first, with its scores between 0.30 and 0.90 passed to Claude Opus 5.5, sends on **22%** of cases and reaches **98.8%** accuracy at **$0.88 per 1,000**. Opus alone scores 99.0% at $3.86, and Jev alone at a 0.50 cutoff 95.6% at $0.05 (Hightouch, 2026-11-04, on 1,000 synthetic identities).
+- Amazon moved a ticket-labelling job from Claude Sonnet 4.6 to Strands Decider for **98%** less per ticket, about $0.0005 against $0.0222, and **897 ms** per call against 4,215 ms (Onstott and Jaiswal on the Strands Agents blog, 2026-11-09).
+- In the same post, sending the same content with its JSON keys in a different order moved that decision model's output probabilities by **up to 0.19**.

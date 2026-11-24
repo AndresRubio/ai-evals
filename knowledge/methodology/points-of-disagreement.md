@@ -2,10 +2,16 @@
 name: points-of-disagreement
 description: Where the practitioner sources disagree on method, numbers and judge design
 shelf: methodology
-updated: 2026-10-30
+updated: 2026-11-24
 sources:
   - url: https://hamel.dev/blog/posts/evals-faq/
     read: 2026-09-17
+  - url: https://hamel.dev/notes/llm/evals/flashcards/
+    read: 2026-11-24
+  - url: https://github.com/ai-evals-course/evals-skills/blob/main/skills/validate-evaluator/SKILL.md
+    read: 2026-11-24
+  - url: https://hamel.dev/blog/posts/evals-faq/how-do-i-evaluate-agentic-workflows.html
+    read: 2026-11-24
   - url: https://hamelhusain.substack.com/p/its-hard-to-eval-is-a-product-smell
     read: 2026-09-17
   - url: https://hamel.dev/blog/posts/decision-model-evals/
@@ -32,7 +38,7 @@ sources:
     read: 2026-09-17
   - url: https://www.sh-reya.com/blog/ai-engineering-short/
     read: 2026-09-17
-related: [methodology-spine, decision-model-thresholds, evals-skills]
+related: [methodology-spine, decision-model-thresholds, evals-skills, debugging-conversations-and-agents]
 ---
 
 # Points of disagreement
@@ -59,10 +65,13 @@ Husain: one **benevolent dictator** domain expert for most small/medium companie
 Husain is skeptical of automated prompt optimization — writing prompts is how you externalize requirements, and optimizers hill-climb a fixed metric so they structurally cannot discover new failure modes; he permits it only for the "final mile" once good evals exist. Shankar's own **SPADE** does exactly the thing he's wary of — synthesizing assertions automatically from prompt version history — and reports real gains. Her **EvalGen** is a middle position: generate candidate Python functions and grader prompts, then use human grades on a subset to *select* among them.
 
 **h) Trajectory vs outcome.**
-Anthropic: grade what the agent produced, not the path, to avoid punishing valid unanticipated approaches. Husain's error-analysis method is fundamentally trajectory-based — find the **first upstream failure**. Not strictly contradictory (diagnosis vs scoring) but they pull tooling in different directions: one wants full-trace rendering, the other wants final-state assertions.
+Anthropic: grade what the agent produced, not the path, to avoid punishing valid unanticipated approaches. Husain's error-analysis method is fundamentally trajectory-based: find the **first upstream failure**. Not strictly contradictory (diagnosis vs scoring) but they pull tooling in different directions: one wants full-trace rendering, the other wants final-state assertions. Husain and Shankar's FAQ answer on agentic workflows (read 2026-11-24) orders the two instead of choosing: judge end-to-end task success first, treating the agent as a black box, then run step-level diagnostics on the workflows that fail most. See [debugging-conversations-and-agents](debugging-conversations-and-agents.md).
 
 **i) Is rigorous eval for everyone?**
 Shankar (*In Defense of AI Evals, for Everyone*, 2025-09-05) concedes ground to the anti-eval camp: teams in well-represented domains (coding agents) can lean on upstream model providers, and experienced teams with deep domain intuition can substitute continuous dogfooding plus error analysis for formal metrics. Her line is that newcomers and teams without data backgrounds cannot. Husain's framing in *"It's Hard to Eval" Is a Product Smell* (2026-06-29) goes further sideways: if verification is hard, that's a **product design defect** — surface intermediate artifacts, anchor outputs to vetted references with diffs, make outputs reviewable in small units — fix the product rather than building a heroic eval.
 
 **j) Floors on precision, or on TPR and TNR.**
 Husain's judge-alignment writing reports TPR and TNR beside raw agreement, and so does the course's `validate-evaluator` skill ([evals-skills](../landscape/evals-skills.md)). Husain and Saha's decision-model post (2026-10-20) sets its minimums on precision and recall instead and picks thresholds by F1, while telling readers not to use F1 just because the post did. The choice matters when the labelled set's failure rate differs from production's. Recall is TPR, but precision moves with prevalence: their set is 62% failures, where a judge with TPR 0.9 and TNR 0.9 has precision 0.94, and at a 5% failure rate the same judge has precision 0.32. Precision is the right floor when the labelled set has production's failure rate; TPR and TNR are the floors that carry over when it does not. `axial` gates on TPR and TNR ([decision-model-thresholds](decision-model-thresholds.md)).
+
+**k) Which class is positive.**
+The same authors' materials use both conventions. The *How to Trust a LLM Judge* flashcard (2025-11-30) defines a true positive as a correctly identified error and a true negative as a trace correctly marked as having no error, so a failure is the positive class and TPR is the share of real failures the judge catches. The course's `validate-evaluator` skill (read 2026-11-24) defines TPR as the share of human Pass labels the judge also passes, so Pass is the positive class and its TPR is the flashcard's TNR. `axial` counts a failure as positive, as the flashcard does. Both sources set the same target for both rates, so the target survives the swap. A reported rate does not: "TPR 0.95, TNR 0.80" is a judge that misses few failures under one convention and one that misses a fifth of them under the other. Say which class is positive whenever the two rates are quoted.

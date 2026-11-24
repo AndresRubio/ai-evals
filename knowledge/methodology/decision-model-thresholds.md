@@ -2,17 +2,25 @@
 name: decision-model-thresholds
 description: Tune a decision model's threshold on held-out folds and check its calibration before it judges, per Husain and Saha (2026-10), and how axial does it
 shelf: methodology
-updated: 2026-10-30
+updated: 2026-11-24
 sources:
   - url: https://hamel.dev/blog/posts/decision-model-evals/
     read: 2026-10-21
+  - url: https://www.randalolson.com/2026/10/14/when-to-use-a-decision-model-instead-of-an-llm/
+    read: 2026-11-24
+  - url: https://hightouch.com/blog/llm-judges-identity-resolution
+    read: 2026-11-24
+  - url: https://strandsagents.com/blog/amazon-saves-millions-replacing-sonnet-with-strands-decider/
+    read: 2026-11-24
+  - url: https://hamel.dev/blog/posts/evals-faq/whats-the-difference-between-guardrails-evaluators.html
+    read: 2026-11-24
   - url: https://hamel.dev/blog/posts/decision-model-evals/charts/chart-data.json
     read: 2026-10-22
   - url: https://hamel.dev/blog/posts/decision-model-evals/charts/threshold-selection-audit.json
     read: 2026-10-22
   - url: https://hamel.dev/blog/posts/decision-model-evals/charts/calibration-reliability-data.json
     read: 2026-10-22
-related: [numbers-and-rules-of-thumb, points-of-disagreement, methodology-spine]
+related: [numbers-and-rules-of-thumb, points-of-disagreement, methodology-spine, guardrails]
 ---
 
 # Decision model thresholds
@@ -32,7 +40,11 @@ model that scores every failure 0.40 and every pass 0.10 separates them perfectl
 1. Finish the judge prompt before comparing models. Every model got the same criteria;
    Jev got them in its structured question format.
 2. Label pass/fail by hand. The set is 98 production traces from an apartment-leasing
-   agent (100 less two internal QA traces), 61 with a failure and 37 without.
+   agent (100 less two internal QA traces), 61 with a failure and 37 without. A footnote
+   gives the 61 as 39 failures from the original human review plus 22 discoveries from
+   Braintrust and Arize that the authors validated by hand. The post's text says the
+   dataset and the broad failure-finding task are the ones from their prior post on
+   automated evals.
 3. Set minimums first, 80% precision and 80% recall, and drop any model that cannot
    reach both.
 4. Tune each model's threshold before comparing models. For the three candidates, the
@@ -101,7 +113,108 @@ One dataset and one broad task. They expect narrower tasks to narrow the gaps be
 models. The calibration groups hold about 20 traces each, too few to pin down a failure
 rate. Prices and model versions are from October 2026. The Jev prompt experiment was
 small and manual, and they did not try GEPA (an automated prompt optimizer). Equal
-weighting of precision and recall through F1 is a simplification they name.
+weighting of precision and recall through F1 is a simplification they name. They point
+to the F-beta score for weighting one over the other, beta below 1 for precision and
+above 1 for recall, and say that optimizing a different metric could lead to different
+thresholds and results.
+
+## When a decision model fits
+
+The post gives one habit for choosing a model, written in the first person: start
+with a larger model that performs acceptably on the task, then try smaller ones to see
+whether they match it for less. OpenAI Decisions gave their highest F1 at the highest cost, which they read
+as a sign that harder eval tasks may justify paying more for an LLM. For a wider
+comparison they cite Olson.
+
+Olson (*When to use a decision model instead of an LLM*, published 2026-10-15) reads
+the Artificial Analysis Decision Index as it stood on 2026-10-14. It ran 11 decision models and 15
+LLM configurations on four tasks, with the LLMs answering through structured outputs.
+Its blended score ranks most LLMs above every decision model. Split by task:
+
+| Task | Median LLM against median decision model |
+|---|---|
+| Knowledge questions | 30 points higher |
+| Hard reasoning | 19 points higher |
+| Safety classification | within 2 points |
+| Tool-call routing | within 2 points |
+
+The best decision model beats every LLM tested at safety classification. On tool-call
+routing only Claude Opus 5.5 beats the best decision models, at 50 or more times the
+cost per task. On those two tasks every decision model answers faster than every LLM,
+0.06 to 0.54 seconds against 1.1 to 17, and the median decision model costs 5 to 6
+times less, though the cost ranges overlap.
+
+One pair holds the model fixed. GPT-6 Luna as a decision model scores 48.5 on the
+index in 0.17 seconds. As an LLM with reasoning off it scores 49.6 in 1.1 seconds, and
+with reasoning on, 55 to 61 in 1.5 to 2.2 seconds. Olson concludes that the decision
+format costs little accuracy and that what is given up is the accuracy reasoning buys.
+The speed and Luna figures are from his chart descriptions.
+
+His rule is to use a decision model for routing, triage, moderation, intent detection
+and tool-or-no-tool calls, especially when the input holds everything needed to decide
+and latency or volume matters, and an LLM when the answer depends on facts the input
+does not contain or on multi-step reasoning. He reports that Artificial Analysis found
+decision models overconfident on the knowledge and reasoning tasks and better
+calibrated on tool calling and classification, and says their probabilities are most
+useful for setting escalation thresholds on the tasks they are built for.
+
+## Escalating the unsure cases
+
+A decision model's score can route a case as well as label it: accept the confident
+answers and send the rest to a stronger judge. Hightouch (Jin, Desai and Mackenzie,
+2026-11-04) tested this for grading identity resolution, the question being whether a
+merged profile holds more than one person. The set is 1,000 synthetic identities built
+with pseudopeople, half of them over-merged, so accuracy is against the generator's
+answer key.
+
+| Setup | Accuracy | Cost per 1,000 | Time per identity |
+|---|---|---|---|
+| Claude Opus 5.5 alone | 99.0% | $3.86 | 2.2 s |
+| GPT-6 Luna alone, 0.50 cutoff | 97.3% | $0.10 | 0.17 s |
+| Jev alone, 0.50 cutoff | 95.6% | $0.05 | 0.15 s |
+| Jev, then Opus on scores from 0.30 to 0.90 (22% of cases) | 98.8% | $0.88 | 0.63 s |
+| Luna, then Opus on scores from 0.10 to 0.90 (6% of cases) | 98.5% | $0.33 | 0.30 s |
+
+On a second set built only from hard cases, such as twins, a junior and a senior, and
+typos in a birth date, Opus alone scores 95.1% at $5.39 per 1,000. Jev then Opus
+scores 95.3% at $2.94 and Luna then Opus 91.6% at $1.15. Alone, at tuned cutoffs, Jev
+scores 89.1% and Luna 88.8%.
+
+The authors put the difference down to calibration. Most of Jev's mistakes come with
+scores near 0.50, so the band sends them on. Most of Luna's come in the 0.90 to 1.00
+bucket, so the band lets them through. On the harder set the Jev pair sends more cases
+to Opus without any change to the harness, which costs more and keeps it level with
+Opus alone.
+This is the same check as step 5 of the method above, with a consequence attached: an
+overconfident model cannot say which of its answers to escalate.
+
+What the post does not establish: the data is synthetic, the cutoffs (0.60 for Jev,
+0.70 for Luna) were chosen to maximise accuracy, and it mentions no held-out set for
+them or for the escalation band. The costs and latencies are the authors' own setup.
+
+Husain and Shankar's FAQ makes the same suggestion for an inline check: a slow LLM
+judge might be feasible in a cascade that runs on the minority of borderline cases
+([guardrails](../procedures/guardrails.md)).
+
+## Running the old and the new side by side
+
+Onstott and Jaiswal (Strands Agents blog, 2026-11-09) describe replacing Claude Sonnet
+4.6 with Strands Decider for labelling tickets into 20 categories at Amazon. The post
+is on the vendor's blog about its own model, and the task is production classification
+and not judging. What carries over to changing a judge's model is the rollout.
+
+A three-way setting, read on every message, chose between the old model only, both in
+parallel with the old model's answer applied and the two compared, and the new model
+only. The authors say that running both on real traffic and judging every
+disagreement told them more than any offline eval would have, and that going back was
+a 45-second configuration change. They report a cost per ticket of about $0.0005
+against $0.0222 and 897 ms per call against 4,215 ms.
+
+Two cautions from the same post. Sending the same content with its JSON keys in a
+different order moved the output probabilities by up to 0.19, so they now sort the
+keys, and they advise checking this before comparing runs. And they list when a
+decision model probably cannot replace the LLM: the labels need explanation text, the
+catalogue changes weekly, or the useful context does not fit in a few thousand tokens.
 
 ## In axial
 
@@ -127,6 +240,9 @@ weighting of precision and recall through F1 is a simplification they name.
   and the Brier score need no new model calls. `axial align` prints the Brier score
   beside the base-rate reference. Calibration curves and Platt scaling are not
   implemented.
+- A judge is one model, named in its `judge.yaml`. Nothing routes a low-confidence
+  verdict to a second model, so escalation is not implemented, and neither is a
+  weighted tradeoff such as F-beta in `tune-threshold`.
 
 Run on the post's published scores as dev verdicts (2026-10-22), `tune-threshold` finds
 no threshold reaching TPR and TNR of 0.85 for any of the six models. OpenAI comes
