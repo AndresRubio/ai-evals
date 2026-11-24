@@ -21,7 +21,7 @@ sources:
   - url: https://hamel.dev/blog/posts/field-guide/
     read: 2026-09-17
   - url: https://hamel.dev/blog/posts/decision-model-evals/
-    read: 2026-10-21
+    read: 2026-11-24
   - url: https://www.lennysnewsletter.com/p/why-ai-evals-are-the-hottest-new-skill
     read: 2026-09-17
   - url: https://arxiv.org/abs/2401.03038

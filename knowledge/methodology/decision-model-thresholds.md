@@ -5,7 +5,7 @@ shelf: methodology
 updated: 2026-11-24
 sources:
   - url: https://hamel.dev/blog/posts/decision-model-evals/
-    read: 2026-10-21
+    read: 2026-11-24
   - url: https://www.randalolson.com/2026/10/14/when-to-use-a-decision-model-instead-of-an-llm/
     read: 2026-11-24
   - url: https://hightouch.com/blog/llm-judges-identity-resolution
