@@ -30,6 +30,15 @@ group in `pyproject.toml` through which `axial` depends on the tool; absent mean
 dependency). `license` and `extra` are landscape-only: the check rejects either on
 another shelf. Any other key is unknown and the check rejects it.
 
+`read` is the day the whole source was fetched and read in full. A copy served from a
+cache carries the day the copy was fetched. A keyword search of the source, or a read of
+one section of a page, leaves the date as it was. For a source of many pages, such as a
+repository or a docs site, the date covers the pages the file's claims rest on, each
+read in full. A date written in the body, as in `(read 2026-10-07)`, means the same for
+the pages it names. This meaning holds for dates added or moved from 2026-11-27 on.
+Nothing records how the older dates were read. The check tests only that `read` is a
+date, so the commit message says how a source was read when it adds or moves one.
+
 Links between files are relative Markdown links so GitHub renders them. The check
 resolves them.
 

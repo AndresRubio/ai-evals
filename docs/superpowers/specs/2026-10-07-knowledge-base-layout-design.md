@@ -139,7 +139,7 @@ sources:
 | `description` | One line, at most 160 characters, no trailing period. This is the index line, so it must say what the file answers, not what it is about. |
 | `shelf` | One of `methodology`, `procedures`, `landscape`. Equals the parent directory. |
 | `updated` | Date of the last substantive change to the body. Typo fixes do not move it. |
-| `sources` | Non-empty list of `{url, read}`. `read` is the date the source was read for the claims this file makes. |
+| `sources` | Non-empty list of `{url, read}`. `read` is the date the whole source was fetched and read in full for the claims this file makes. A cached copy carries the date it was fetched, and a keyword search or a read of one section of a page leaves the date as it was. For a source of many pages, such as a repository or a docs site, the date covers the pages the file's claims rest on, each read in full. A date written in the body, as in `(read 2026-10-07)`, means the same for the pages it names. This meaning holds for dates added or moved from 2026-11-27 on. Nothing records how the older dates were read. |
 
 Optional keys:
 
